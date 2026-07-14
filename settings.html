@@ -1,53 +1,110 @@
 {% extends "base.html" %}
 {% block content %}
 <h3 class="mb-4">إعدادات الشركة</h3>
+
 <div class="form-card">
-<form method="post">
+<form method="post" enctype="multipart/form-data">
 <div class="row g-3">
+
 <div class="col-md-6">
-<label>اسم الشركة بالعربية</label>
+<label class="form-label">اسم الشركة بالعربية</label>
 <input class="form-control" name="company_name_ar" value="{{row.company_name_ar}}" required>
 </div>
+
 <div class="col-md-6">
-<label>اسم الشركة بالإنجليزية</label>
+<label class="form-label">اسم الشركة بالإنجليزية</label>
 <input class="form-control" name="company_name_en" value="{{row.company_name_en}}">
 </div>
+
 <div class="col-md-4">
-<label>الرقم الضريبي</label>
+<label class="form-label">الرقم الضريبي</label>
 <input class="form-control" name="vat_number" value="{{row.vat_number}}" maxlength="15">
 </div>
+
 <div class="col-md-4">
-<label>السجل التجاري</label>
+<label class="form-label">السجل التجاري</label>
 <input class="form-control" name="cr_number" value="{{row.cr_number}}">
 </div>
+
 <div class="col-md-2">
-<label>العملة</label>
+<label class="form-label">العملة</label>
 <input class="form-control" name="currency" value="{{row.currency}}">
 </div>
+
 <div class="col-md-2">
-<label>نسبة الضريبة %</label>
+<label class="form-label">نسبة الضريبة %</label>
 <input class="form-control" type="number" step="0.01" name="vat_rate" value="{{row.vat_rate or 15}}">
 </div>
+
 <div class="col-md-12">
-<label>العنوان</label>
+<label class="form-label">العنوان</label>
 <input class="form-control" name="address" value="{{row.address or ''}}">
 </div>
+
 <div class="col-md-4">
-<label>الهاتف</label>
+<label class="form-label">الهاتف</label>
 <input class="form-control" name="phone" value="{{row.phone or ''}}">
 </div>
+
 <div class="col-md-4">
-<label>البريد الإلكتروني</label>
+<label class="form-label">البريد الإلكتروني</label>
 <input class="form-control" type="email" name="email" value="{{row.email or ''}}">
 </div>
+
 <div class="col-md-4">
-<label>رابط شعار الشركة</label>
+<label class="form-label">رابط شعار خارجي (اختياري)</label>
 <input class="form-control" name="logo_url" value="{{row.logo_url or ''}}" placeholder="https://...">
+<small class="text-muted">يُستخدم فقط إذا لم ترفع شعارًا من جهازك.</small>
 </div>
+
+<div class="col-md-7">
+<label class="form-label">رفع شعار الشركة من الجهاز</label>
+<input class="form-control" type="file" name="logo_file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
+<small class="text-muted">PNG أو JPG أو WEBP، بحد أقصى 2 ميجابايت. يفضل PNG بخلفية شفافة.</small>
+</div>
+
+<div class="col-md-5">
+<label class="form-label">معاينة الشعار الحالي</label>
+<div class="logo-preview">
+{% if row.logo_data and row.logo_mime %}
+<img src="data:{{ row.logo_mime }};base64,{{ row.logo_data }}" alt="شعار الشركة">
+{% elif row.logo_url %}
+<img src="{{ row.logo_url }}" alt="شعار الشركة">
+{% else %}
+<span class="text-muted">لا يوجد شعار محفوظ</span>
+{% endif %}
+</div>
+{% if row.logo_data or row.logo_url %}
+<div class="form-check mt-2">
+<input class="form-check-input" type="checkbox" name="remove_logo" value="1" id="removeLogo">
+<label class="form-check-label" for="removeLogo">حذف الشعار الحالي</label>
+</div>
+{% endif %}
+</div>
+
 <div class="col-md-3">
 <button class="btn btn-primary w-100">حفظ الإعدادات</button>
 </div>
+
 </div>
 </form>
 </div>
+
+<style>
+.logo-preview{
+  min-height:130px;
+  border:1px dashed #cbd5e1;
+  border-radius:12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:12px;
+  background:#f8fafc;
+}
+.logo-preview img{
+  max-width:240px;
+  max-height:120px;
+  object-fit:contain;
+}
+</style>
 {% endblock %}

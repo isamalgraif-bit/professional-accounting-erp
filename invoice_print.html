@@ -52,7 +52,9 @@ th{background:#174ea6;color:white}
 <div class="invoice">
 <div class="top">
 <div class="logo">
-{% if company.logo_url %}
+{% if company.logo_data and company.logo_mime %}
+<img src="data:{{ company.logo_mime }};base64,{{ company.logo_data }}" alt="شعار الشركة">
+{% elif company.logo_url %}
 <img src="{{ company.logo_url }}" alt="شعار الشركة">
 {% endif %}
 </div>
@@ -87,41 +89,21 @@ th{background:#174ea6;color:white}
 </div>
 
 
+
 <table>
 <thead>
 <tr>
-<th>#</th>
-<th>المادة / الخدمة</th>
-<th>وصف العملية</th>
-<th>الكمية</th>
-<th>الوحدة</th>
-<th>سعر الوحدة</th>
-<th>الضريبة</th>
-<th>الإجمالي</th>
+<th>م</th><th>المادة</th><th>وصف العملية</th><th>الكمية</th><th>الوحدة</th>
+<th>سعر الوحدة</th><th>ضريبة القيمة المضافة {{ "%.0f"|format(company.vat_rate or 15) }}%</th><th>الإجمالي</th>
 </tr>
 </thead>
 <tbody>
 {% for item in items %}
 <tr>
-<td>{{ loop.index }}</td>
-<td>{{ item.item_name }}</td>
-<td>{{ item.description or '-' }}</td>
-<td>{{ "%.3f"|format(item.quantity) }}</td>
-<td>{{ item.unit }}</td>
-<td>{{ "%.2f"|format(item.unit_price) }}</td>
-<td>{{ "%.2f"|format(item.line_vat) }} ({{ "%.2f"|format(item.vat_rate) }}%)</td>
+<td>{{ loop.index }}</td><td>{{ item.item_name }}</td><td>{{ item.description or '-' }}</td>
+<td>{{ "%.3f"|format(item.quantity) }}</td><td>{{ item.unit }}</td>
+<td>{{ "%.2f"|format(item.unit_price) }}</td><td>{{ "%.2f"|format(item.line_vat) }}</td>
 <td>{{ "%.2f"|format(item.line_total) }}</td>
-</tr>
-{% else %}
-<tr>
-<td>1</td>
-<td>خدمات / مبيعات</td>
-<td>{{ invoice.notes or '-' }}</td>
-<td>1.000</td>
-<td>وحدة</td>
-<td>{{ "%.2f"|format(invoice.subtotal) }}</td>
-<td>{{ "%.2f"|format(invoice.vat) }}</td>
-<td>{{ "%.2f"|format(invoice.total) }}</td>
 </tr>
 {% endfor %}
 </tbody>

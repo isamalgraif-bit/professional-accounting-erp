@@ -62,6 +62,8 @@ def init_db():
             phone VARCHAR(50) DEFAULT '',
             email VARCHAR(255) DEFAULT '',
             logo_url TEXT DEFAULT '',
+            logo_data TEXT DEFAULT '',
+            logo_mime VARCHAR(50) DEFAULT '',
             vat_rate NUMERIC(5,2) DEFAULT 15.00
         )""",
         """CREATE TABLE IF NOT EXISTS branches(
@@ -154,6 +156,8 @@ def init_db():
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS phone VARCHAR(50) DEFAULT ''",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT ''",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS logo_url TEXT DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS logo_data TEXT DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS logo_mime VARCHAR(50) DEFAULT ''",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS vat_rate NUMERIC(5,2) DEFAULT 15.00",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_uuid VARCHAR(64)"
     ]
@@ -238,11 +242,37 @@ def dashboard():
 @app.route("/settings", methods=["GET","POST"])
 @login_required
 def settings():
+    current = row("SELECT * FROM settings WHERE id=1")
+
     if request.method == "POST":
+        logo_data = current["logo_data"] or ""
+        logo_mime = current["logo_mime"] or ""
+
+        uploaded_logo = request.files.get("logo_file")
+        remove_logo = request.form.get("remove_logo") == "1"
+
+        if remove_logo:
+            logo_data = ""
+            logo_mime = ""
+        elif uploaded_logo and uploaded_logo.filename:
+            allowed_mimes = {"image/png", "image/jpeg", "image/webp"}
+            if uploaded_logo.mimetype not in allowed_mimes:
+                flash("صيغة الشعار غير مدعومة. استخدم PNG أو JPG أو WEBP.", "danger")
+                return redirect(url_for("settings"))
+
+            raw = uploaded_logo.read()
+            if len(raw) > 2 * 1024 * 1024:
+                flash("حجم الشعار يجب ألا يتجاوز 2 ميجابايت.", "danger")
+                return redirect(url_for("settings"))
+
+            logo_data = base64.b64encode(raw).decode("ascii")
+            logo_mime = uploaded_logo.mimetype
+
         execute("""UPDATE settings
                    SET company_name_ar=:ar, company_name_en=:en, vat_number=:vat,
                        cr_number=:cr, currency=:cur, address=:address, phone=:phone,
-                       email=:email, logo_url=:logo_url, vat_rate=:vat_rate
+                       email=:email, logo_url=:logo_url, logo_data=:logo_data,
+                       logo_mime=:logo_mime, vat_rate=:vat_rate
                    WHERE id=1""",
                 {"ar": request.form["company_name_ar"],
                  "en": request.form["company_name_en"],
@@ -253,10 +283,14 @@ def settings():
                  "phone": request.form.get("phone", ""),
                  "email": request.form.get("email", ""),
                  "logo_url": request.form.get("logo_url", ""),
+                 "logo_data": logo_data,
+                 "logo_mime": logo_mime,
                  "vat_rate": float(request.form.get("vat_rate", 15) or 15)})
-        flash("تم حفظ إعدادات الشركة", "success")
+
+        flash("تم حفظ إعدادات الشركة والشعار", "success")
         return redirect(url_for("settings"))
-    return render_template("settings.html", row=row("SELECT * FROM settings WHERE id=1"))
+
+    return render_template("settings.html", row=current)
 
 @app.route("/branches", methods=["GET","POST"])
 @login_required
@@ -293,18 +327,55 @@ def suppliers():
 @login_required
 def invoices():
     if request.method == "POST":
-        item_name = request.form["item_name"].strip()
-        description = request.form.get("description", "").strip()
-        quantity = float(request.form.get("quantity", 1) or 1)
-        unit = request.form.get("unit", "وحدة").strip() or "وحدة"
-        unit_price = float(request.form.get("unit_price", 0) or 0)
+        item_names = request.form.getlist("item_name[]")
+        descriptions = request.form.getlist("description[]")
+        quantities = request.form.getlist("quantity[]")
+        units = request.form.getlist("unit[]")
+        unit_prices = request.form.getlist("unit_price[]")
 
         company_settings = row("SELECT vat_rate FROM settings WHERE id=1")
         vat_rate = float(company_settings["vat_rate"] or 15)
 
-        subtotal = round(quantity * unit_price, 2)
-        vat = round(subtotal * vat_rate / 100, 2)
-        total = round(subtotal + vat, 2)
+        prepared_items = []
+        invoice_subtotal = invoice_vat = invoice_total = 0.0
+
+        for index, item_name in enumerate(item_names):
+            item_name = (item_name or "").strip()
+            if not item_name:
+                continue
+
+            description = descriptions[index].strip() if index < len(descriptions) else ""
+            quantity = float(quantities[index] or 0)
+            unit = units[index].strip() if index < len(units) else "وحدة"
+            unit_price = float(unit_prices[index] or 0)
+
+            if quantity <= 0:
+                flash(f"الكمية في البند رقم {index + 1} يجب أن تكون أكبر من صفر", "danger")
+                return redirect(url_for("invoices"))
+
+            line_subtotal = round(quantity * unit_price, 2)
+            line_vat = round(line_subtotal * vat_rate / 100, 2)
+            line_total = round(line_subtotal + line_vat, 2)
+
+            prepared_items.append({
+                "item_name": item_name,
+                "description": description,
+                "quantity": quantity,
+                "unit": unit or "وحدة",
+                "unit_price": unit_price,
+                "vat_rate": vat_rate,
+                "line_subtotal": line_subtotal,
+                "line_vat": line_vat,
+                "line_total": line_total,
+            })
+
+            invoice_subtotal += line_subtotal
+            invoice_vat += line_vat
+            invoice_total += line_total
+
+        if not prepared_items:
+            flash("يجب إضافة بند صحيح واحد على الأقل", "danger")
+            return redirect(url_for("invoices"))
 
         invoice_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
         invoice_uuid = str(uuid.uuid4())
@@ -316,13 +387,12 @@ def invoices():
                    VALUES(
                       :no,:uuid,:cid,:dt,:sub,:vat,:tot,:st,:bid,:notes,:created
                    )""",
-                {"no": invoice_no,
-                 "uuid": invoice_uuid,
+                {"no": invoice_no, "uuid": invoice_uuid,
                  "cid": request.form["customer_id"],
                  "dt": request.form["invoice_date"],
-                 "sub": subtotal,
-                 "vat": vat,
-                 "tot": total,
+                 "sub": round(invoice_subtotal, 2),
+                 "vat": round(invoice_vat, 2),
+                 "tot": round(invoice_total, 2),
                  "st": request.form["status"],
                  "bid": request.form.get("branch_id") or None,
                  "notes": request.form.get("notes", ""),
@@ -330,26 +400,18 @@ def invoices():
 
         invoice_id = row("SELECT id FROM invoices WHERE invoice_no=:no", {"no": invoice_no})["id"]
 
-        execute("""INSERT INTO invoice_items(
-                      invoice_id,item_name,description,quantity,unit,unit_price,
-                      vat_rate,line_subtotal,line_vat,line_total
-                   )
-                   VALUES(
-                      :invoice_id,:item_name,:description,:quantity,:unit,:unit_price,
-                      :vat_rate,:line_subtotal,:line_vat,:line_total
-                   )""",
-                {"invoice_id": invoice_id,
-                 "item_name": item_name,
-                 "description": description,
-                 "quantity": quantity,
-                 "unit": unit,
-                 "unit_price": unit_price,
-                 "vat_rate": vat_rate,
-                 "line_subtotal": subtotal,
-                 "line_vat": vat,
-                 "line_total": total})
+        for item in prepared_items:
+            execute("""INSERT INTO invoice_items(
+                          invoice_id,item_name,description,quantity,unit,unit_price,
+                          vat_rate,line_subtotal,line_vat,line_total
+                       )
+                       VALUES(
+                          :invoice_id,:item_name,:description,:quantity,:unit,:unit_price,
+                          :vat_rate,:line_subtotal,:line_vat,:line_total
+                       )""", {"invoice_id": invoice_id, **item})
 
-        flash("تم إنشاء الفاتورة وإضافة المادة ووصف العملية", "success")
+        flash("تم إنشاء الفاتورة بجميع البنود بنجاح", "success")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
     invoice_rows = rows("""SELECT i.*, c.name customer_name, b.name branch_name
                            FROM invoices i
@@ -361,7 +423,8 @@ def invoices():
         "invoices.html",
         rows=invoice_rows,
         customers=rows("SELECT * FROM customers ORDER BY name"),
-        branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name")
+        branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
+        inventory_items=rows("SELECT * FROM inventory ORDER BY name")
     )
 
 @app.route("/expenses", methods=["GET","POST"])

@@ -21,7 +21,18 @@ body{background:#f5f7fb;font-family:Tahoma,Arial,sans-serif}
 <div class="row">
 {% if session.get('user_id') %}
 <aside class="col-md-2 sidebar">
-<h5 class="mb-4">{{ app_settings.company_name_ar }}</h5>
+
+<div class="text-center mb-4">
+{% if app_settings.logo_data and app_settings.logo_mime %}
+<img src="data:{{ app_settings.logo_mime }};base64,{{ app_settings.logo_data }}"
+     alt="الشعار" style="max-width:150px;max-height:85px;object-fit:contain;margin-bottom:10px">
+{% elif app_settings.logo_url %}
+<img src="{{ app_settings.logo_url }}"
+     alt="الشعار" style="max-width:150px;max-height:85px;object-fit:contain;margin-bottom:10px">
+{% endif %}
+<h5 class="mb-0">{{ app_settings.company_name_ar }}</h5>
+</div>
+
 <a href="{{ url_for('dashboard') }}">لوحة التحكم</a>
 <a href="{{ url_for('customers') }}">العملاء</a>
 <a href="{{ url_for('suppliers') }}">الموردون</a>
