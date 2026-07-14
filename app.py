@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import text
 from functools import wraps
 from datetime import datetime
@@ -11,6 +12,8 @@ import uuid
 from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
+
+APP_VERSION = "1.1.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -42,6 +45,24 @@ def row(query, params=None):
 def execute(query, params=None):
     db.session.execute(text(query), params or {})
     db.session.commit()
+
+def audit(action, entity, details=""):
+    try:
+        db.session.execute(
+            text("""INSERT INTO audit_logs(user_id, username, action, entity, details, created_at)
+                    VALUES(:user_id, :username, :action, :entity, :details, :created_at)"""),
+            {
+                "user_id": session.get("user_id"),
+                "username": session.get("username", "system"),
+                "action": action,
+                "entity": entity,
+                "details": details,
+                "created_at": datetime.now(),
+            },
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 def init_db():
     statements = [
@@ -116,6 +137,16 @@ def init_db():
             line_vat NUMERIC(18,2) NOT NULL DEFAULT 0,
             line_total NUMERIC(18,2) NOT NULL DEFAULT 0
         )""",
+
+        """CREATE TABLE IF NOT EXISTS audit_logs(
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            username VARCHAR(100),
+            action VARCHAR(100) NOT NULL,
+            entity VARCHAR(100) NOT NULL,
+            details TEXT DEFAULT '',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
         """CREATE TABLE IF NOT EXISTS expenses(
             id SERIAL PRIMARY KEY,
             expense_date DATE NOT NULL,
@@ -164,11 +195,15 @@ def init_db():
     for migration in migrations:
         db.session.execute(text(migration))
 
-    db.session.execute(text("""
-        INSERT INTO users(id, username, password, role)
-        VALUES(1,'admin','admin123','admin')
-        ON CONFLICT (id) DO NOTHING
-    """))
+    default_password_hash = generate_password_hash("admin123")
+    db.session.execute(
+        text("""
+            INSERT INTO users(id, username, password, role)
+            VALUES(1,'admin',:password,'admin')
+            ON CONFLICT (id) DO NOTHING
+        """),
+        {"password": default_password_hash}
+    )
     db.session.execute(text("""
         INSERT INTO settings(id)
         VALUES(1)
@@ -198,7 +233,7 @@ def ensure_database():
 @app.context_processor
 def inject_settings():
     settings = row("SELECT * FROM settings WHERE id=1")
-    return {"app_settings": settings}
+    return {"app_settings": settings, "app_version": APP_VERSION}
 
 @app.route("/health")
 def health():
@@ -210,14 +245,81 @@ def login():
     if request.method == "POST":
         username = request.form["username"].strip()
         password = request.form["password"].strip()
-        user = row("SELECT * FROM users WHERE username=:u AND password=:p",
-                   {"u": username, "p": password})
+        user = row("SELECT * FROM users WHERE username=:u", {"u": username})
+
+        password_ok = False
         if user:
+            stored_password = user["password"] or ""
+            if stored_password.startswith(("pbkdf2:", "scrypt:")):
+                password_ok = check_password_hash(stored_password, password)
+            else:
+                # Automatic migration for the old plaintext admin password.
+                password_ok = stored_password == password
+                if password_ok:
+                    execute(
+                        "UPDATE users SET password=:password WHERE id=:id",
+                        {"password": generate_password_hash(password), "id": user["id"]},
+                    )
+
+        if user and password_ok:
             session["user_id"] = user["id"]
             session["username"] = user["username"]
+            audit("LOGIN", "USER", f"تسجيل دخول المستخدم {username}")
             return redirect(url_for("dashboard"))
+
         flash("بيانات الدخول غير صحيحة", "danger")
+
     return render_template("login.html")
+
+@app.route("/change-password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    if request.method == "POST":
+        current_password = request.form["current_password"]
+        new_password = request.form["new_password"]
+        confirm_password = request.form["confirm_password"]
+
+        if len(new_password) < 8:
+            flash("كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل", "danger")
+            return redirect(url_for("change_password"))
+
+        if new_password != confirm_password:
+            flash("تأكيد كلمة المرور غير مطابق", "danger")
+            return redirect(url_for("change_password"))
+
+        user = row("SELECT * FROM users WHERE id=:id", {"id": session["user_id"]})
+        stored_password = user["password"] or ""
+        valid_current = (
+            check_password_hash(stored_password, current_password)
+            if stored_password.startswith(("pbkdf2:", "scrypt:"))
+            else stored_password == current_password
+        )
+
+        if not valid_current:
+            flash("كلمة المرور الحالية غير صحيحة", "danger")
+            return redirect(url_for("change_password"))
+
+        execute(
+            "UPDATE users SET password=:password WHERE id=:id",
+            {"password": generate_password_hash(new_password), "id": session["user_id"]},
+        )
+        audit("UPDATE", "USER", "تم تغيير كلمة المرور")
+        flash("تم تغيير كلمة المرور بنجاح", "success")
+        return redirect(url_for("dashboard"))
+
+    return render_template("change_password.html")
+
+
+@app.route("/audit-logs")
+@login_required
+def audit_logs():
+    logs = rows("""
+        SELECT * FROM audit_logs
+        ORDER BY id DESC
+        LIMIT 300
+    """)
+    return render_template("audit_logs.html", logs=logs)
+
 
 @app.route("/logout")
 def logout():
@@ -287,6 +389,7 @@ def settings():
                  "logo_mime": logo_mime,
                  "vat_rate": float(request.form.get("vat_rate", 15) or 15)})
 
+        audit("UPDATE", "SETTINGS", "تم تحديث إعدادات الشركة والشعار")
         flash("تم حفظ إعدادات الشركة والشعار", "success")
         return redirect(url_for("settings"))
 
@@ -298,6 +401,7 @@ def branches():
     if request.method == "POST":
         execute("INSERT INTO branches(name,city) VALUES(:n,:c)",
                 {"n": request.form["name"], "c": request.form["city"]})
+        audit("CREATE", "BRANCH", f"إضافة فرع: {request.form['name']}")
         flash("تمت إضافة الفرع", "success")
     return render_template("branches.html", rows=rows("SELECT * FROM branches ORDER BY id DESC"))
 
@@ -309,6 +413,7 @@ def customers():
                    VALUES(:n,:v,:p,:e)""",
                 {"n": request.form["name"], "v": request.form["vat_number"],
                  "p": request.form["phone"], "e": request.form["email"]})
+        audit("CREATE", "CUSTOMER", f"إضافة عميل: {request.form['name']}")
         flash("تمت إضافة العميل", "success")
     return render_template("customers.html", rows=rows("SELECT * FROM customers ORDER BY id DESC"))
 
@@ -320,6 +425,7 @@ def suppliers():
                    VALUES(:n,:v,:p,:e)""",
                 {"n": request.form["name"], "v": request.form["vat_number"],
                  "p": request.form["phone"], "e": request.form["email"]})
+        audit("CREATE", "SUPPLIER", f"إضافة مورد: {request.form['name']}")
         flash("تمت إضافة المورد", "success")
     return render_template("suppliers.html", rows=rows("SELECT * FROM suppliers ORDER BY id DESC"))
 
@@ -410,6 +516,7 @@ def invoices():
                           :vat_rate,:line_subtotal,:line_vat,:line_total
                        )""", {"invoice_id": invoice_id, **item})
 
+        audit("CREATE", "INVOICE", f"إنشاء فاتورة: {invoice_no}")
         flash("تم إنشاء الفاتورة بجميع البنود بنجاح", "success")
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
@@ -439,6 +546,7 @@ def expenses():
                 {"dt": request.form["expense_date"], "cat": request.form["category"],
                  "des": request.form["description"], "amt": amount, "vat": vat,
                  "tot": total, "bid": request.form["branch_id"]})
+        audit("CREATE", "EXPENSE", f"إضافة مصروف: {request.form['category']}")
         flash("تم تسجيل المصروف", "success")
     expense_rows = rows("""SELECT e.*, b.name branch_name FROM expenses e
                            LEFT JOIN branches b ON b.id=e.branch_id ORDER BY e.id DESC""")
@@ -455,6 +563,7 @@ def inventory():
                  "q": float(request.form["quantity"] or 0), "u": request.form["unit"],
                  "c": float(request.form["cost"] or 0), "sp": float(request.form["sale_price"] or 0),
                  "rl": float(request.form["reorder_level"] or 0)})
+        audit("CREATE", "INVENTORY", f"إضافة صنف: {request.form['name']}")
         flash("تمت إضافة الصنف", "success")
     return render_template("inventory.html", rows=rows("SELECT * FROM inventory ORDER BY id DESC"))
 
@@ -468,6 +577,7 @@ def employees():
                  "job": request.form["job_title"], "bid": request.form["branch_id"],
                  "sal": float(request.form["basic_salary"] or 0),
                  "allow": float(request.form["allowances"] or 0)})
+        audit("CREATE", "EMPLOYEE", f"إضافة موظف: {request.form['name']}")
         flash("تمت إضافة الموظف", "success")
     employee_rows = rows("""SELECT e.*, b.name branch_name FROM employees e
                             LEFT JOIN branches b ON b.id=e.branch_id ORDER BY e.id DESC""")

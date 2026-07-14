@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+<h3 class="mb-0">سجل العمليات</h3>
+<button class="btn btn-outline-dark" onclick="window.print()">طباعة</button>
+</div>
+<div class="form-card">
+<div class="table-responsive">
+<table class="table table-striped align-middle">
+<thead>
+<tr>
+<th>التاريخ والوقت</th>
+<th>المستخدم</th>
+<th>العملية</th>
+<th>القسم</th>
+<th>التفاصيل</th>
+</tr>
+</thead>
+<tbody>
+{% for log in logs %}
+<tr>
+<td>{{ log.created_at }}</td>
+<td>{{ log.username or '-' }}</td>
+<td>{{ log.action }}</td>
+<td>{{ log.entity }}</td>
+<td>{{ log.details or '-' }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</div>
+<style>
+@media print {.sidebar,.btn{display:none!important} main{width:100%!important}}
+</style>
+{% endblock %}

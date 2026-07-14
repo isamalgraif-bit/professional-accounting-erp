@@ -43,7 +43,10 @@ body{background:#f5f7fb;font-family:Tahoma,Arial,sans-serif}
 <a href="{{ url_for('reports') }}">التقارير والتصدير</a>
 <a href="{{ url_for('branches') }}">الفروع</a>
 <a href="{{ url_for('settings') }}">الإعدادات</a>
+<a href="{{ url_for('audit_logs') }}">سجل العمليات</a>
+<a href="{{ url_for('change_password') }}">تغيير كلمة المرور</a>
 <a href="{{ url_for('logout') }}">تسجيل الخروج</a>
+<div class="text-center mt-4" style="font-size:11px;opacity:.65">الإصدار {{ app_version }}</div>
 </aside>
 <main class="col-md-10 content">
 {% else %}
