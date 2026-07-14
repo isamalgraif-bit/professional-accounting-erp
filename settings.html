@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<h3 class="mb-4">إعدادات الشركة</h3>
+<div class="form-card"><form method="post"><div class="row g-3">
+<div class="col-md-6"><label>اسم الشركة بالعربية</label><input class="form-control" name="company_name_ar" value="{{row.company_name_ar}}"></div>
+<div class="col-md-6"><label>اسم الشركة بالإنجليزية</label><input class="form-control" name="company_name_en" value="{{row.company_name_en}}"></div>
+<div class="col-md-4"><label>الرقم الضريبي</label><input class="form-control" name="vat_number" value="{{row.vat_number}}"></div>
+<div class="col-md-4"><label>السجل التجاري</label><input class="form-control" name="cr_number" value="{{row.cr_number}}"></div>
+<div class="col-md-4"><label>العملة</label><input class="form-control" name="currency" value="{{row.currency}}"></div>
+<div class="col-md-3"><button class="btn btn-primary w-100">حفظ الإعدادات</button></div>
+</div></form></div>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h3 class="mb-4">فواتير المبيعات</h3>
+<div class="form-card mb-4">
+<form method="post"><div class="row g-3">
+<div class="col-md-3"><label>العميل</label><select class="form-select" name="customer_id" required>{% for c in customers %}<option value="{{c.id}}">{{c.name}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="invoice_date" required></div>
+<div class="col-md-2"><label>المبلغ قبل الضريبة</label><input class="form-control" type="number" step="0.01" name="subtotal" required></div>
+<div class="col-md-2"><label>الفرع</label><select class="form-select" name="branch_id">{% for b in branches %}<option value="{{b.id}}">{{b.name}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>مسودة</option><option>معتمدة</option></select></div>
+<div class="col-md-6"><label>ملاحظات</label><input class="form-control" name="notes"></div>
+<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">إنشاء الفاتورة</button></div>
+</div></form>
+</div>
+<div class="form-card">
+<table class="table table-striped"><thead><tr><th>الرقم</th><th>التاريخ</th><th>العميل</th><th>قبل الضريبة</th><th>الضريبة</th><th>الإجمالي</th><th>الحالة</th></tr></thead>
+<tbody>{% for r in rows %}<tr><td>{{r.invoice_no}}</td><td>{{r.invoice_date}}</td><td>{{r.customer_name}}</td><td>{{r.subtotal}}</td><td>{{r.vat}}</td><td>{{r.total}}</td><td>{{r.status}}</td></tr>{% endfor %}</tbody>
+</table>
+</div>
+{% endblock %}

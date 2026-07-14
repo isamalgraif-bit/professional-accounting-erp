@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<h3 class="mb-4">الفروع</h3>
+<div class="form-card mb-4">
+<form method="post"><div class="row g-3">
+<div class="col-md-4"><label>اسم الفرع</label><input class="form-control" name="name" required></div>
+<div class="col-md-4"><label>المدينة</label><input class="form-control" name="city"></div>
+
+<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">حفظ</button></div>
+</div></form>
+</div>
+<div class="form-card">
+<table class="table table-striped"><thead><tr><th>الرقم</th><th>الفرع</th><th>المدينة</th><th>الحالة</th></tr></thead>
+<tbody>{% for r in rows %}<tr><td>{{ r.id }}</td><td>{{ r.name }}</td><td>{{ r.city }}</td><td>{{ 'نشط' if r.active else 'متوقف' }}</td></tr>{% endfor %}</tbody></table>
+</div>
+{% endblock %}

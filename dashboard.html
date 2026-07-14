@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<h3 class="mb-4">لوحة التحكم</h3>
+<div class="row g-3 mb-4">
+<div class="col-md-3"><div class="card card-kpi p-3"><small>المبيعات المعتمدة</small><h4>{{ "%.2f"|format(sales) }} ر.س</h4></div></div>
+<div class="col-md-3"><div class="card card-kpi p-3"><small>إجمالي المصروفات</small><h4>{{ "%.2f"|format(expenses) }} ر.س</h4></div></div>
+<div class="col-md-3"><div class="card card-kpi p-3"><small>عدد العملاء</small><h4>{{ customers }}</h4></div></div>
+<div class="col-md-3"><div class="card card-kpi p-3"><small>الموظفون النشطون</small><h4>{{ employees }}</h4></div></div>
+</div>
+<div class="form-card">
+<h5>آخر الفواتير</h5>
+<table class="table"><thead><tr><th>الرقم</th><th>العميل</th><th>الإجمالي</th><th>الحالة</th></tr></thead>
+<tbody>{% for r in recent %}<tr><td>{{ r.invoice_no }}</td><td>{{ r.customer_name }}</td><td>{{ r.total }}</td><td>{{ r.status }}</td></tr>{% endfor %}</tbody>
+</table>
+</div>
+{% endblock %}
