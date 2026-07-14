@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4"><h3 class="mb-0">المصروفات</h3><a class="btn btn-success" href="{{ url_for('export_expenses') }}">تصدير Excel / CSV</a></div>
+<div class="d-flex justify-content-between align-items-center mb-4"><h3 class="mb-0">المصروفات</h3><a class="btn btn-success" href="{{ url_for('export_expenses') }}">تصدير Excel</a></div>
 <div class="form-card mb-4"><form method="post"><div class="row g-3">
 <div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="expense_date" required></div>
 <div class="col-md-2"><label>التصنيف</label><input class="form-control" name="category" required></div>

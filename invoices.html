@@ -2,28 +2,103 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h3 class="mb-0">فواتير المبيعات</h3>
-  <a class="btn btn-success" href="{{ url_for('export_invoices') }}">تصدير Excel / CSV</a>
+  <a class="btn btn-success" href="{{ url_for('export_invoices') }}">تصدير Excel</a>
 </div>
 
 <div class="form-card mb-4">
-<form method="post"><div class="row g-3">
-<div class="col-md-3"><label>العميل</label><select class="form-select" name="customer_id" required>{% for c in customers %}<option value="{{c.id}}">{{c.name}}</option>{% endfor %}</select></div>
-<div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="invoice_date" required></div>
-<div class="col-md-2"><label>المبلغ قبل الضريبة</label><input class="form-control" type="number" step="0.01" name="subtotal" required></div>
-<div class="col-md-2"><label>الفرع</label><select class="form-select" name="branch_id">{% for b in branches %}<option value="{{b.id}}">{{b.name}}</option>{% endfor %}</select></div>
-<div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>مسودة</option><option>معتمدة</option></select></div>
-<div class="col-md-6"><label>ملاحظات</label><input class="form-control" name="notes"></div>
-<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">إنشاء الفاتورة</button></div>
-</div></form>
+<form method="post">
+<div class="row g-3">
+<div class="col-md-3">
+<label>العميل</label>
+<select class="form-select" name="customer_id" required>
+{% for c in customers %}
+<option value="{{c.id}}">{{c.name}}</option>
+{% endfor %}
+</select>
+</div>
+
+<div class="col-md-2">
+<label>تاريخ الفاتورة</label>
+<input class="form-control" type="date" name="invoice_date" required>
+</div>
+
+<div class="col-md-4">
+<label>المادة / الخدمة</label>
+<input class="form-control" name="item_name"
+       placeholder="مثال: كيبل نحاس 35 مم أو أعمال صيانة" required>
+</div>
+
+<div class="col-md-3">
+<label>وصف العملية</label>
+<input class="form-control" name="description"
+       placeholder="مثال: توريد للمشروع حسب أمر الشراء">
+</div>
+
+<div class="col-md-2">
+<label>الكمية</label>
+<input class="form-control" type="number" step="0.001"
+       min="0.001" name="quantity" value="1" required>
+</div>
+
+<div class="col-md-2">
+<label>الوحدة</label>
+<select class="form-select" name="unit">
+<option>وحدة</option>
+<option>متر</option>
+<option>كجم</option>
+<option>طن</option>
+<option>قطعة</option>
+<option>ساعة</option>
+<option>يوم</option>
+<option>خدمة</option>
+<option>مقطوعية</option>
+</select>
+</div>
+
+<div class="col-md-2">
+<label>سعر الوحدة</label>
+<input class="form-control" type="number" step="0.01"
+       min="0" name="unit_price" required>
+</div>
+
+<div class="col-md-2">
+<label>الحالة</label>
+<select class="form-select" name="status">
+<option>مسودة</option>
+<option>معتمدة</option>
+</select>
+</div>
+
+<div class="col-md-2">
+<label>الفرع</label>
+<select class="form-select" name="branch_id">
+{% for b in branches %}
+<option value="{{b.id}}">{{b.name}}</option>
+{% endfor %}
+</select>
+</div>
+
+<div class="col-md-6">
+<label>ملاحظات عامة على الفاتورة</label>
+<input class="form-control" name="notes">
+</div>
+
+<div class="col-md-2 d-flex align-items-end">
+<button class="btn btn-primary w-100">إنشاء الفاتورة</button>
+</div>
+</div>
+</form>
 </div>
 
 <div class="form-card">
 <div class="table-responsive">
 <table class="table table-striped align-middle">
-<thead><tr>
+<thead>
+<tr>
 <th>الرقم</th><th>التاريخ</th><th>العميل</th><th>قبل الضريبة</th>
 <th>الضريبة</th><th>الإجمالي</th><th>الحالة</th><th>الإجراءات</th>
-</tr></thead>
+</tr>
+</thead>
 <tbody>
 {% for r in rows %}
 <tr>
@@ -35,8 +110,10 @@
 <td>{{"%.2f"|format(r.total)}}</td>
 <td>{{r.status}}</td>
 <td>
-  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_view', invoice_id=r.id) }}">عرض</a>
-  <a class="btn btn-sm btn-outline-dark" target="_blank" href="{{ url_for('invoice_view', invoice_id=r.id) }}?print=1">طباعة / PDF</a>
+<a class="btn btn-sm btn-outline-primary"
+   href="{{ url_for('invoice_view', invoice_id=r.id) }}">عرض</a>
+<a class="btn btn-sm btn-outline-dark" target="_blank"
+   href="{{ url_for('invoice_view', invoice_id=r.id) }}?print=1">طباعة / PDF</a>
 </td>
 </tr>
 {% endfor %}
