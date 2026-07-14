@@ -5,7 +5,7 @@ from functools import wraps
 from datetime import datetime
 import os
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
 
 database_url = os.environ.get("DATABASE_URL", "sqlite:///erp.db")
