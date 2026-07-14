@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>فاتورة {{ invoice.invoice_no }}</title>
+<style>
+body{font-family:Tahoma,Arial,sans-serif;background:#f4f6f8;margin:0;color:#222}
+.toolbar{max-width:900px;margin:20px auto;display:flex;gap:10px}
+.btn{border:0;border-radius:8px;padding:10px 16px;cursor:pointer;text-decoration:none;background:#1d4ed8;color:#fff}
+.btn.secondary{background:#374151}
+.invoice{max-width:900px;margin:0 auto 30px;background:#fff;padding:38px;box-shadow:0 5px 20px rgba(0,0,0,.08)}
+.header{display:flex;justify-content:space-between;gap:20px;border-bottom:2px solid #222;padding-bottom:20px}
+.company h1{margin:0 0 8px;font-size:25px}
+.invoice-title{text-align:left}
+.invoice-title h2{margin:0;font-size:28px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:25px;margin:28px 0}
+.box{border:1px solid #ddd;border-radius:8px;padding:15px}
+.box h3{margin:0 0 10px;font-size:16px}
+table{width:100%;border-collapse:collapse;margin-top:20px}
+th,td{border:1px solid #ddd;padding:12px;text-align:right}
+th{background:#f1f3f5}
+.totals{width:380px;margin:25px 0 0 auto}
+.totals td:first-child{font-weight:bold}
+.grand{font-size:18px;font-weight:bold}
+.notes{margin-top:25px;border-top:1px solid #ddd;padding-top:15px}
+.footer{text-align:center;margin-top:40px;font-size:12px;color:#666}
+@media print{
+ body{background:#fff}
+ .toolbar{display:none}
+ .invoice{box-shadow:none;margin:0;max-width:none;padding:15mm}
+ @page{size:A4;margin:8mm}
+}
+</style>
+</head>
+<body>
+<div class="toolbar">
+<button class="btn" onclick="window.print()">طباعة أو حفظ PDF</button>
+<a class="btn secondary" href="{{ url_for('invoices') }}">العودة للفواتير</a>
+</div>
+
+<div class="invoice">
+<div class="header">
+<div class="company">
+<h1>{{ company.company_name_ar }}</h1>
+<div>{{ company.company_name_en }}</div>
+<div>الرقم الضريبي: {{ company.vat_number or '-' }}</div>
+<div>السجل التجاري: {{ company.cr_number or '-' }}</div>
+</div>
+<div class="invoice-title">
+<h2>فاتورة ضريبية</h2>
+<div>Tax Invoice</div>
+<p><strong>رقم الفاتورة:</strong> {{ invoice.invoice_no }}</p>
+<p><strong>التاريخ:</strong> {{ invoice.invoice_date }}</p>
+<p><strong>الحالة:</strong> {{ invoice.status }}</p>
+</div>
+</div>
+
+<div class="grid">
+<div class="box">
+<h3>بيانات العميل</h3>
+<div><strong>الاسم:</strong> {{ invoice.customer_name }}</div>
+<div><strong>الرقم الضريبي:</strong> {{ invoice.customer_vat or '-' }}</div>
+<div><strong>الهاتف:</strong> {{ invoice.customer_phone or '-' }}</div>
+<div><strong>البريد:</strong> {{ invoice.customer_email or '-' }}</div>
+</div>
+<div class="box">
+<h3>بيانات العملية</h3>
+<div><strong>الفرع:</strong> {{ invoice.branch_name or '-' }}</div>
+<div><strong>العملة:</strong> {{ company.currency }}</div>
+</div>
+</div>
+
+<table>
+<thead>
+<tr><th>البيان</th><th>المبلغ قبل الضريبة</th><th>الضريبة 15%</th><th>الإجمالي</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>خدمات / مبيعات حسب الفاتورة</td>
+<td>{{ "%.2f"|format(invoice.subtotal) }}</td>
+<td>{{ "%.2f"|format(invoice.vat) }}</td>
+<td>{{ "%.2f"|format(invoice.total) }}</td>
+</tr>
+</tbody>
+</table>
+
+<table class="totals">
+<tr><td>الإجمالي قبل الضريبة</td><td>{{ "%.2f"|format(invoice.subtotal) }}</td></tr>
+<tr><td>ضريبة القيمة المضافة</td><td>{{ "%.2f"|format(invoice.vat) }}</td></tr>
+<tr class="grand"><td>الإجمالي المستحق</td><td>{{ "%.2f"|format(invoice.total) }} {{ company.currency }}</td></tr>
+</table>
+
+{% if invoice.notes %}
+<div class="notes"><strong>ملاحظات:</strong> {{ invoice.notes }}</div>
+{% endif %}
+
+<div class="footer">تم إصدار هذه الفاتورة إلكترونيًا من النظام.</div>
+</div>
+
+{% if request.args.get('print') %}
+<script>window.addEventListener('load',()=>window.print());</script>
+{% endif %}
+</body>
+</html>

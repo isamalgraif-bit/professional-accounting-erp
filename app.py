@@ -1,27 +1,18 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from functools import wraps
 from datetime import datetime
 import os
+import csv
+import io
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
 
 database_url = os.environ.get("DATABASE_URL", "sqlite:///erp.db")
 if database_url.startswith("postgres://"):
-    database_url = database_url.replace(
-        "postgres://",
-        "postgresql+psycopg://",
-        1
-    )
-elif database_url.startswith("postgresql://"):
-    database_url = database_url.replace(
-        "postgresql://",
-        "postgresql+psycopg://",
-        1
-    )
-    
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
@@ -317,6 +308,173 @@ def employees():
                             LEFT JOIN branches b ON b.id=e.branch_id ORDER BY e.id DESC""")
     return render_template("employees.html", rows=employee_rows,
                            branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"))
+
+
+@app.route("/invoice/<int:invoice_id>")
+@login_required
+def invoice_view(invoice_id):
+    invoice = row("""
+        SELECT i.*, c.name customer_name, c.vat_number customer_vat,
+               c.phone customer_phone, c.email customer_email,
+               b.name branch_name
+        FROM invoices i
+        JOIN customers c ON c.id=i.customer_id
+        LEFT JOIN branches b ON b.id=i.branch_id
+        WHERE i.id=:id
+    """, {"id": invoice_id})
+    if not invoice:
+        return "الفاتورة غير موجودة", 404
+    company = row("SELECT * FROM settings WHERE id=1")
+    return render_template("invoice_print.html", invoice=invoice, company=company)
+
+
+@app.route("/reports")
+@login_required
+def reports():
+    date_from = request.args.get("date_from", "")
+    date_to = request.args.get("date_to", "")
+
+    invoice_where = []
+    expense_where = []
+    params = {}
+
+    if date_from:
+        invoice_where.append("invoice_date >= :date_from")
+        expense_where.append("expense_date >= :date_from")
+        params["date_from"] = date_from
+    if date_to:
+        invoice_where.append("invoice_date <= :date_to")
+        expense_where.append("expense_date <= :date_to")
+        params["date_to"] = date_to
+
+    invoice_filter = (" WHERE " + " AND ".join(invoice_where)) if invoice_where else ""
+    expense_filter = (" WHERE " + " AND ".join(expense_where)) if expense_where else ""
+
+    sales_data = row(f"""
+        SELECT COALESCE(SUM(subtotal),0) subtotal,
+               COALESCE(SUM(vat),0) vat,
+               COALESCE(SUM(total),0) total,
+               COUNT(*) count
+        FROM invoices {invoice_filter}
+    """, params)
+
+    expense_data = row(f"""
+        SELECT COALESCE(SUM(amount),0) amount,
+               COALESCE(SUM(vat),0) vat,
+               COALESCE(SUM(total),0) total,
+               COUNT(*) count
+        FROM expenses {expense_filter}
+    """, params)
+
+    inventory_value = row("""
+        SELECT COALESCE(SUM(quantity * cost),0) value,
+               COUNT(*) count
+        FROM inventory
+    """)
+    payroll = row("""
+        SELECT COALESCE(SUM(basic_salary + allowances),0) total,
+               COUNT(*) count
+        FROM employees WHERE active=1
+    """)
+    top_customers = rows(f"""
+        SELECT c.name, COUNT(i.id) invoice_count,
+               COALESCE(SUM(i.total),0) total
+        FROM customers c
+        LEFT JOIN invoices i ON i.customer_id=c.id
+        {"AND " + " AND ".join("i." + x for x in invoice_where) if invoice_where else ""}
+        GROUP BY c.id, c.name
+        ORDER BY total DESC
+        LIMIT 10
+    """, params)
+
+    net_result = float(sales_data["subtotal"]) - float(expense_data["amount"])
+    net_vat = float(sales_data["vat"]) - float(expense_data["vat"])
+
+    return render_template(
+        "reports.html",
+        sales=sales_data,
+        expenses=expense_data,
+        inventory_value=inventory_value,
+        payroll=payroll,
+        net_result=net_result,
+        net_vat=net_vat,
+        top_customers=top_customers,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+
+def csv_response(filename, headers, records):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output)
+    writer.writerow(headers)
+    writer.writerows(records)
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@app.route("/export/invoices.csv")
+@login_required
+def export_invoices():
+    data = rows("""
+        SELECT i.invoice_no, i.invoice_date, c.name customer_name,
+               i.subtotal, i.vat, i.total, i.status
+        FROM invoices i
+        JOIN customers c ON c.id=i.customer_id
+        ORDER BY i.invoice_date DESC, i.id DESC
+    """)
+    records = [
+        [r["invoice_no"], r["invoice_date"], r["customer_name"],
+         r["subtotal"], r["vat"], r["total"], r["status"]]
+        for r in data
+    ]
+    return csv_response(
+        "invoices.csv",
+        ["رقم الفاتورة", "التاريخ", "العميل", "قبل الضريبة",
+         "الضريبة", "الإجمالي", "الحالة"],
+        records
+    )
+
+
+@app.route("/export/expenses.csv")
+@login_required
+def export_expenses():
+    data = rows("""
+        SELECT expense_date, category, description, amount, vat, total
+        FROM expenses ORDER BY expense_date DESC, id DESC
+    """)
+    records = [
+        [r["expense_date"], r["category"], r["description"],
+         r["amount"], r["vat"], r["total"]]
+        for r in data
+    ]
+    return csv_response(
+        "expenses.csv",
+        ["التاريخ", "التصنيف", "الوصف", "قبل الضريبة", "الضريبة", "الإجمالي"],
+        records
+    )
+
+
+@app.route("/export/customers.csv")
+@login_required
+def export_customers():
+    data = rows("""
+        SELECT name, vat_number, phone, email, balance
+        FROM customers ORDER BY name
+    """)
+    records = [
+        [r["name"], r["vat_number"], r["phone"], r["email"], r["balance"]]
+        for r in data
+    ]
+    return csv_response(
+        "customers.csv",
+        ["اسم العميل", "الرقم الضريبي", "الهاتف", "البريد", "الرصيد"],
+        records
+    )
 
 if __name__ == "__main__":
     with app.app_context():

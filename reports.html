@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+<h3 class="mb-0">التقارير والتصدير</h3>
+<div class="d-flex gap-2">
+<a class="btn btn-success" href="{{ url_for('export_invoices') }}">تصدير الفواتير</a>
+<a class="btn btn-success" href="{{ url_for('export_expenses') }}">تصدير المصروفات</a>
+<a class="btn btn-success" href="{{ url_for('export_customers') }}">تصدير العملاء</a>
+</div>
+</div>
+
+<div class="form-card mb-4">
+<form method="get" class="row g-3 align-items-end">
+<div class="col-md-3"><label>من تاريخ</label><input class="form-control" type="date" name="date_from" value="{{date_from}}"></div>
+<div class="col-md-3"><label>إلى تاريخ</label><input class="form-control" type="date" name="date_to" value="{{date_to}}"></div>
+<div class="col-md-2"><button class="btn btn-primary w-100">عرض التقرير</button></div>
+<div class="col-md-2"><a class="btn btn-outline-secondary w-100" href="{{ url_for('reports') }}">مسح الفلتر</a></div>
+<div class="col-md-2"><button type="button" onclick="window.print()" class="btn btn-dark w-100">طباعة التقرير / PDF</button></div>
+</form>
+</div>
+
+<div class="row g-3 mb-4">
+<div class="col-md-3"><div class="card card-kpi p-3"><small>إجمالي المبيعات</small><h4>{{"%.2f"|format(sales.total)}} ر.س</h4><small>{{sales.count}} فاتورة</small></div></div>
+<div class="col-md-3"><div class="card card-kpi p-3"><small>إجمالي المصروفات</small><h4>{{"%.2f"|format(expenses.total)}} ر.س</h4><small>{{expenses.count}} عملية</small></div></div>
+<div class="col-md-3"><div class="card card-kpi p-3"><small>النتيجة قبل الضريبة</small><h4>{{"%.2f"|format(net_result)}} ر.س</h4></div></div>
+<div class="col-md-3"><div class="card card-kpi p-3"><small>صافي ضريبة القيمة المضافة</small><h4>{{"%.2f"|format(net_vat)}} ر.س</h4></div></div>
+</div>
+
+<div class="row g-3 mb-4">
+<div class="col-md-6">
+<div class="form-card h-100">
+<h5>ملخص ضريبة القيمة المضافة</h5>
+<table class="table">
+<tr><th>ضريبة المبيعات</th><td>{{"%.2f"|format(sales.vat)}} ر.س</td></tr>
+<tr><th>ضريبة المصروفات</th><td>{{"%.2f"|format(expenses.vat)}} ر.س</td></tr>
+<tr><th>صافي الضريبة</th><td>{{"%.2f"|format(net_vat)}} ر.س</td></tr>
+</table>
+</div>
+</div>
+<div class="col-md-6">
+<div class="form-card h-100">
+<h5>مؤشرات التشغيل</h5>
+<table class="table">
+<tr><th>قيمة المخزون بالتكلفة</th><td>{{"%.2f"|format(inventory_value.value)}} ر.س</td></tr>
+<tr><th>عدد الأصناف</th><td>{{inventory_value.count}}</td></tr>
+<tr><th>إجمالي الرواتب الشهرية</th><td>{{"%.2f"|format(payroll.total)}} ر.س</td></tr>
+<tr><th>الموظفون النشطون</th><td>{{payroll.count}}</td></tr>
+</table>
+</div>
+</div>
+</div>
+
+<div class="form-card">
+<h5>أعلى العملاء حسب قيمة الفواتير</h5>
+<div class="table-responsive">
+<table class="table table-striped">
+<thead><tr><th>العميل</th><th>عدد الفواتير</th><th>الإجمالي</th></tr></thead>
+<tbody>
+{% for c in top_customers %}
+<tr><td>{{c.name}}</td><td>{{c.invoice_count}}</td><td>{{"%.2f"|format(c.total)}} ر.س</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</div>
+
+<style>
+@media print {
+  .sidebar, form, .btn {display:none!important}
+  main{width:100%!important}
+  body{background:#fff}
+  .form-card,.card-kpi{box-shadow:none;border:1px solid #ddd}
+}
+</style>
+{% endblock %}

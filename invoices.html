@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
-<h3 class="mb-4">فواتير المبيعات</h3>
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h3 class="mb-0">فواتير المبيعات</h3>
+  <a class="btn btn-success" href="{{ url_for('export_invoices') }}">تصدير Excel / CSV</a>
+</div>
+
 <div class="form-card mb-4">
 <form method="post"><div class="row g-3">
 <div class="col-md-3"><label>العميل</label><select class="form-select" name="customer_id" required>{% for c in customers %}<option value="{{c.id}}">{{c.name}}</option>{% endfor %}</select></div>
@@ -12,9 +16,32 @@
 <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">إنشاء الفاتورة</button></div>
 </div></form>
 </div>
+
 <div class="form-card">
-<table class="table table-striped"><thead><tr><th>الرقم</th><th>التاريخ</th><th>العميل</th><th>قبل الضريبة</th><th>الضريبة</th><th>الإجمالي</th><th>الحالة</th></tr></thead>
-<tbody>{% for r in rows %}<tr><td>{{r.invoice_no}}</td><td>{{r.invoice_date}}</td><td>{{r.customer_name}}</td><td>{{r.subtotal}}</td><td>{{r.vat}}</td><td>{{r.total}}</td><td>{{r.status}}</td></tr>{% endfor %}</tbody>
+<div class="table-responsive">
+<table class="table table-striped align-middle">
+<thead><tr>
+<th>الرقم</th><th>التاريخ</th><th>العميل</th><th>قبل الضريبة</th>
+<th>الضريبة</th><th>الإجمالي</th><th>الحالة</th><th>الإجراءات</th>
+</tr></thead>
+<tbody>
+{% for r in rows %}
+<tr>
+<td>{{r.invoice_no}}</td>
+<td>{{r.invoice_date}}</td>
+<td>{{r.customer_name}}</td>
+<td>{{"%.2f"|format(r.subtotal)}}</td>
+<td>{{"%.2f"|format(r.vat)}}</td>
+<td>{{"%.2f"|format(r.total)}}</td>
+<td>{{r.status}}</td>
+<td>
+  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_view', invoice_id=r.id) }}">عرض</a>
+  <a class="btn btn-sm btn-outline-dark" target="_blank" href="{{ url_for('invoice_view', invoice_id=r.id) }}?print=1">طباعة / PDF</a>
+</td>
+</tr>
+{% endfor %}
+</tbody>
 </table>
+</div>
 </div>
 {% endblock %}
