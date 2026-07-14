@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.1"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -64,6 +64,29 @@ def audit(action, entity, details=""):
     except Exception:
         db.session.rollback()
 
+
+def next_invoice_number(invoice_date_value):
+    """Create a yearly sequential invoice number such as INV-2026-000001."""
+    if isinstance(invoice_date_value, str):
+        invoice_year = datetime.strptime(invoice_date_value, "%Y-%m-%d").year
+    else:
+        invoice_year = invoice_date_value.year
+
+    result = db.session.execute(
+        text("""
+            INSERT INTO invoice_sequences(sequence_year, last_number)
+            VALUES(:year, 1)
+            ON CONFLICT (sequence_year)
+            DO UPDATE SET last_number = invoice_sequences.last_number + 1
+            RETURNING last_number
+        """),
+        {"year": invoice_year},
+    )
+    sequence_number = result.scalar_one()
+    db.session.commit()
+    return f"INV-{invoice_year}-{sequence_number:06d}"
+
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -108,6 +131,11 @@ def init_db():
             phone VARCHAR(50),
             email VARCHAR(255),
             balance NUMERIC(18,2) DEFAULT 0
+        )""",
+
+        """CREATE TABLE IF NOT EXISTS invoice_sequences(
+            sequence_year INTEGER PRIMARY KEY,
+            last_number INTEGER NOT NULL DEFAULT 0
         )""",
         """CREATE TABLE IF NOT EXISTS invoices(
             id SERIAL PRIMARY KEY,
@@ -483,7 +511,7 @@ def invoices():
             flash("يجب إضافة بند صحيح واحد على الأقل", "danger")
             return redirect(url_for("invoices"))
 
-        invoice_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+        invoice_no = next_invoice_number(request.form["invoice_date"])
         invoice_uuid = str(uuid.uuid4())
 
         execute("""INSERT INTO invoices(
@@ -587,14 +615,24 @@ def employees():
 
 
 def zatca_tlv_base64(seller_name, vat_number, invoice_datetime, total, vat_total):
-    """Create Base64 TLV data for the five standard invoice QR fields."""
+    """
+    Create the QR payload using only the five standard TLV fields:
+    1 seller name
+    2 VAT number
+    3 invoice date/time
+    4 invoice total including VAT
+    5 VAT total
+
+    The invoice number and UUID are intentionally NOT included in the QR payload.
+    """
     values = [
         (1, str(seller_name or "")),
         (2, str(vat_number or "")),
         (3, str(invoice_datetime or "")),
         (4, f"{Decimal(str(total)):.2f}"),
-        (5, f"{Decimal(str(vat_total)):.2f}")
+        (5, f"{Decimal(str(vat_total)):.2f}"),
     ]
+
     payload = bytearray()
     for tag, value in values:
         encoded = value.encode("utf-8")
@@ -602,6 +640,7 @@ def zatca_tlv_base64(seller_name, vat_number, invoice_datetime, total, vat_total
             raise ValueError("QR field is too long")
         payload.extend(bytes([tag, len(encoded)]))
         payload.extend(encoded)
+
     return base64.b64encode(payload).decode("ascii")
 
 
