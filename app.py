@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.0.1"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1609,6 +1609,8 @@ def multi_journal():
 
         audit("CREATE", "JOURNAL_BATCH", f"إنشاء دفعة قيود {batch_no}")
         flash(f"تم حفظ دفعة القيود {batch_no}", "success")
+        if request.form.get("print_after_save") == "1":
+            return redirect(url_for("multi_journal_view", batch_id=batch_id, print=1))
         return redirect(url_for("multi_journal_view", batch_id=batch_id))
 
     batches = rows("SELECT * FROM journal_batches ORDER BY batch_date DESC,id DESC")

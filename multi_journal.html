@@ -1,11 +1,38 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-<div><h3 class="mb-1">قيود يومية متعددة</h3><small class="text-muted">Multiple Journal Entries</small><div class="mt-2 d-flex gap-2 flex-wrap"><span class="shortcut-hint">Ctrl+S حفظ</span><span class="shortcut-hint">F2 إضافة سطر</span><span class="shortcut-hint">F3 مجموعة جديدة</span><span class="shortcut-hint">المسودة تحفظ تلقائيًا</span></div></div>
+
+<div class="multi-page-header">
+  <div>
+    <h3 class="mb-1">قيود يومية متعددة</h3>
+    <small class="text-muted">Multiple Journal Entries</small>
+  </div>
+
+  <div class="multi-toolbar no-print">
+    <button type="button" class="tool-btn primary" id="saveBatchTop" title="حفظ الدفعة">
+      💾 <span>حفظ</span>
+    </button>
+    <button type="button" class="tool-btn dark" id="savePrintBatch" title="حفظ ثم فتح الطباعة">
+      🖨️ <span>حفظ وطباعة</span>
+    </button>
+    <button type="button" class="tool-btn" id="previewDraft" title="معاينة وطباعة المسودة الحالية">
+      👁️ <span>معاينة المسودة</span>
+    </button>
+    <button type="button" class="tool-btn" id="addLineTop" title="إضافة سطر">
+      ➕ <span>إضافة سطر</span>
+    </button>
+    <button type="button" class="tool-btn" id="newGroupTop" title="إضافة مجموعة جديدة">
+      📚 <span>مجموعة جديدة</span>
+    </button>
+    <span class="shortcut-hint">Ctrl+S حفظ</span>
+    <span class="shortcut-hint">F2 سطر</span>
+    <span class="shortcut-hint">F3 مجموعة</span>
+  </div>
+</div>
 </div>
 
 <div class="form-card mb-4">
 <form method="post" id="batchForm">
+<input type="hidden" name="print_after_save" id="printAfterSave" value="0">
 <div class="row g-3 mb-3">
 <div class="col-md-2"><label>تاريخ الدفعة</label><input class="form-control" type="date" name="batch_date" id="batchDate" required></div>
 <div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>مسودة</option><option>مرحّل</option></select></div>
@@ -54,7 +81,7 @@
 <div class="d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addLine">+ إضافة سطر</button><button type="button" class="btn btn-outline-secondary" id="newGroup">+ مجموعة جديدة</button></div>
 <div id="groupStatus" class="fw-bold text-danger">لم يتم التحقق بعد</div>
 </div>
-<div class="text-end mt-4"><button class="btn btn-primary btn-lg">حفظ دفعة القيود</button></div>
+<div class="text-end mt-4"><button class="btn btn-primary btn-lg" id="saveBatchBottom">💾 حفظ دفعة القيود</button></div>
 </form>
 </div>
 
@@ -67,13 +94,58 @@
 <a class="btn btn-sm btn-outline-primary" href="{{url_for('multi_journal_view',batch_id=b.id)}}">عرض</a>
 <a class="btn btn-sm btn-dark" target="_blank" href="{{url_for('multi_journal_view',batch_id=b.id,print=1)}}">طباعة الدفعة / PDF</a>
 <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{url_for('multi_journal_view',batch_id=b.id)}}#print-each">كل قيد صفحة</a>
-<a class="btn btn-sm btn-outline-success" href="{{url_for('multi_journal_export',batch_id=b.id)}}">Excel</a>
+<a class="btn btn-sm btn-outline-success" href="{{url_for('multi_journal_export',batch_id=b.id)}}">📊 Excel</a>
 <form class="d-inline" method="post" action="{{url_for('multi_journal_delete',batch_id=b.id)}}" onsubmit="return confirm('تأكيد الحذف؟')">
 <button class="btn btn-sm btn-outline-danger">حذف</button>
 </form>
 </td></tr>{% endfor %}</tbody>
 </table>
 </div>
+
+
+<style>
+.multi-page-header{
+  position:sticky;
+  top:0;
+  z-index:50;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  margin:-8px -4px 18px;
+  padding:12px 14px;
+  background:rgba(241,245,249,.96);
+  backdrop-filter:blur(8px);
+  border-bottom:1px solid #dbe3ec;
+}
+.multi-toolbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.tool-btn{
+  border:1px solid #cbd5e1;
+  background:#fff;
+  color:#172033;
+  border-radius:9px;
+  min-height:38px;
+  padding:7px 11px;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  cursor:pointer;
+  transition:.18s ease;
+}
+.tool-btn:hover{background:#eef4ff;border-color:#7aa2e3;transform:translateY(-1px)}
+.tool-btn.primary{background:#1769e0;color:#fff;border-color:#1769e0}
+.tool-btn.dark{background:#172033;color:#fff;border-color:#172033}
+.preview-print-sheet{font-family:Tahoma,Arial,sans-serif;color:#172033}
+.preview-print-sheet table{width:100%;border-collapse:collapse}
+.preview-print-sheet th,.preview-print-sheet td{border:1px solid #b9c2cf;padding:6px;font-size:11px;text-align:right}
+.preview-print-sheet th{background:#edf2f7}
+@media(max-width:1000px){
+  .multi-page-header{position:relative;align-items:flex-start;flex-direction:column}
+}
+@media print{
+  .multi-page-header{display:none!important}
+}
+</style>
 
 <script>
 const accounts=[{% for a in accounts %}{id:"{{a.id}}",code:{{a.account_code|tojson}},name:{{a.account_name_ar|tojson}}},{% endfor %}];
@@ -163,5 +235,87 @@ document.addEventListener('keydown',e=>{
   if(e.key==='F3'){e.preventDefault();document.getElementById('newGroup')?.click();}
   if(e.ctrlKey && e.key.toLowerCase()==='s'){e.preventDefault();document.getElementById('batchForm')?.requestSubmit();}
 });
+
+function submitBatch(printAfterSave=false){
+  document.getElementById('printAfterSave').value=printAfterSave ? '1' : '0';
+  document.getElementById('batchForm').requestSubmit();
+}
+
+document.getElementById('saveBatchTop')?.addEventListener('click',()=>submitBatch(false));
+document.getElementById('savePrintBatch')?.addEventListener('click',()=>submitBatch(true));
+document.getElementById('addLineTop')?.addEventListener('click',()=>document.getElementById('addLine')?.click());
+document.getElementById('newGroupTop')?.addEventListener('click',()=>document.getElementById('newGroup')?.click());
+
+function esc(value){
+  return String(value ?? '').replace(/[&<>"']/g, c=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+  }[c]));
+}
+
+function selectedText(select){
+  return select?.selectedOptions?.[0]?.textContent?.trim() || '';
+}
+
+function previewCurrentDraft(){
+  const batchDate=document.getElementById('batchDate')?.value || '';
+  const status=selectedText(document.querySelector('[name="status"]'));
+  const description=document.querySelector('[name="description"]')?.value || '';
+  const rows=[...document.querySelectorAll('.batch-row')].map((r,index)=>({
+    no:index+1,
+    group:r.querySelector('.group-no')?.value || '',
+    code:r.querySelector('.account-code')?.value || '',
+    account:r.querySelector('.account-name')?.value || '',
+    debit:Number(r.querySelector('.debit')?.value || 0).toFixed(2),
+    credit:Number(r.querySelector('.credit')?.value || 0).toFixed(2),
+    taxable:selectedText(r.querySelector('.taxable')),
+    direction:selectedText(r.querySelector('.direction')),
+    partyType:selectedText(r.querySelector('.party-type')),
+    party:r.querySelector('.party-type')?.value==='مورد'
+      ? selectedText(r.querySelector('.supplier'))
+      : selectedText(r.querySelector('.customer')),
+    taxNumber:r.querySelector('.tax-number')?.value || '',
+    invoiceNo:r.querySelector('[name="invoice_number[]"]')?.value || '',
+    invoiceDate:r.querySelector('[name="invoice_date[]"]')?.value || '',
+    description:r.querySelector('[name="line_description[]"]')?.value || '',
+    center:selectedText(r.querySelector('[name="cost_center_id[]"]'))
+  })).filter(x=>x.code || Number(x.debit)>0 || Number(x.credit)>0);
+
+  if(!rows.length){
+    alert('أدخل سطرًا واحدًا على الأقل قبل المعاينة.');
+    return;
+  }
+
+  const totalDebit=rows.reduce((s,x)=>s+Number(x.debit),0);
+  const totalCredit=rows.reduce((s,x)=>s+Number(x.credit),0);
+
+  const win=window.open('','_blank');
+  win.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+  <title>معاينة دفعة قيود</title>
+  <style>
+  body{font-family:Tahoma,Arial;margin:20px;color:#172033}
+  .head{display:flex;justify-content:space-between;border-bottom:3px solid #174ea6;padding-bottom:12px;margin-bottom:15px}
+  table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:6px;font-size:11px;text-align:right}
+  th{background:#edf2f7}.total{font-weight:bold;background:#f8fafc}
+  .tools{margin-bottom:15px}.tools button{padding:9px 14px;background:#174ea6;color:#fff;border:0;border-radius:7px}
+  @media print{.tools{display:none}@page{size:A4 landscape;margin:7mm}}
+  </style></head><body>
+  <div class="tools"><button onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div>
+  <div class="head"><div><h2>معاينة دفعة قيود يومية متعددة</h2><div>مسودة غير محفوظة</div></div>
+  <div><b>التاريخ:</b> ${esc(batchDate)}<br><b>الحالة:</b> ${esc(status)}<br><b>البيان:</b> ${esc(description)}</div></div>
+  <table><thead><tr>
+  <th>م</th><th>المجموعة</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th>
+  <th>الضريبة</th><th>الطرف</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th>
+  </tr></thead><tbody>
+  ${rows.map(x=>`<tr><td>${x.no}</td><td>${esc(x.group)}</td><td>${esc(x.code)}</td><td>${esc(x.account)}</td>
+  <td>${x.debit}</td><td>${x.credit}</td><td>${esc(x.direction)}</td><td>${esc(x.party)}</td>
+  <td>${esc(x.taxNumber)}</td><td>${esc(x.invoiceNo)}</td><td>${esc(x.invoiceDate)}</td>
+  <td>${esc(x.description)}</td><td>${esc(x.center)}</td></tr>`).join('')}
+  <tr class="total"><td colspan="4">الإجمالي</td><td>${totalDebit.toFixed(2)}</td><td>${totalCredit.toFixed(2)}</td><td colspan="7"></td></tr>
+  </tbody></table></body></html>`);
+  win.document.close();
+}
+
+document.getElementById('previewDraft')?.addEventListener('click',previewCurrentDraft);
+
 </script>
 {% endblock %}
