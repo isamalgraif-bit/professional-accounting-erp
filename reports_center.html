@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="erp-page-title">
+<div><h3 class="mb-1">مركز التقارير المحاسبية</h3><small class="text-muted">Accounting Reports Center</small></div>
+<span class="badge bg-primary">15 تقريرًا</span>
+</div>
+
+{% for group, reports in grouped.items() %}
+<div class="mb-4">
+<h5 class="mb-3">{{group}}</h5>
+<div class="row g-3">
+{% for report in reports %}
+<div class="col-xl-3 col-md-4 col-sm-6">
+<a class="report-card" href="{{url_for('accounting_report',slug=report.slug)}}">
+<div class="report-no">{{report.no}}</div>
+<div><strong>{{report.title}}</strong><small>عرض، طباعة، PDF، Excel، فلاتر وتفاصيل</small></div>
+<span class="arrow">←</span>
+</a>
+</div>
+{% endfor %}
+</div>
+</div>
+{% endfor %}
+<style>
+.report-card{height:100%;display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #dbe3ec;border-radius:14px;padding:16px;text-decoration:none;color:#172033;box-shadow:0 5px 18px rgba(15,23,42,.06);transition:.2s}
+.report-card:hover{transform:translateY(-3px);border-color:#7aa2e3;box-shadow:0 10px 25px rgba(15,23,42,.11)}
+.report-no{width:42px;height:42px;border-radius:12px;background:#eaf1ff;color:#174ea6;display:flex;align-items:center;justify-content:center;font-weight:bold}
+.report-card small{display:block;color:#64748b;margin-top:5px;font-size:11px}.arrow{margin-right:auto;font-size:22px;color:#174ea6}
+</style>
+{% endblock %}

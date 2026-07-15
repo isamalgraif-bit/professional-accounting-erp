@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "1.9.4"
+APP_VERSION = "2.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1726,81 +1726,331 @@ def multi_journal_export(batch_id):
 
 
 
+
+ACCOUNTING_REPORTS = {
+    "ledger-summary": {"no": 1, "title": "حساب الأستاذ - إجمالي", "group": "الحسابات"},
+    "ledger-detail": {"no": 2, "title": "حساب الأستاذ - تفصيلي", "group": "الحسابات"},
+    "cost-center-movements-center": {"no": 3, "title": "حركات مراكز التكلفة - حسب المركز", "group": "مراكز التكلفة"},
+    "cost-center-movements-account": {"no": 4, "title": "حركات مراكز التكلفة - حسب الحساب", "group": "مراكز التكلفة"},
+    "journal-report": {"no": 5, "title": "القيود المحاسبية", "group": "الحسابات"},
+    "coa-report": {"no": 6, "title": "الدليل الحسابي", "group": "الحسابات"},
+    "account-balances": {"no": 7, "title": "أرصدة الحسابات", "group": "الحسابات"},
+    "trial-balance": {"no": 8, "title": "ميزان المراجعة", "group": "الحسابات"},
+    "cc-ledger-summary": {"no": 9, "title": "حساب الأستاذ لمراكز التكلفة - إجمالي", "group": "مراكز التكلفة"},
+    "cc-ledger-detail": {"no": 10, "title": "حساب الأستاذ لمراكز التكلفة - تفصيلي", "group": "مراكز التكلفة"},
+    "cc-trial-balance": {"no": 11, "title": "ميزان المراجعة - مراكز التكلفة", "group": "مراكز التكلفة"},
+    "cc-balances": {"no": 12, "title": "أرصدة مراكز التكلفة", "group": "مراكز التكلفة"},
+    "accounts-with-centers": {"no": 13, "title": "إجمالي الحسابات مع مراكز التكلفة", "group": "تحليل مشترك"},
+    "centers-with-accounts": {"no": 14, "title": "إجمالي مراكز التكلفة مع الحسابات", "group": "تحليل مشترك"},
+    "vat-report": {"no": 15, "title": "ضريبة القيمة المضافة", "group": "الضرائب"},
+}
+
+def report_filters():
+    return {
+        "date_from": request.args.get("date_from", ""),
+        "date_to": request.args.get("date_to", ""),
+        "account_id": request.args.get("account_id", type=int),
+        "cost_center_id": request.args.get("cost_center_id", type=int),
+        "status": request.args.get("status", "مرحّل"),
+        "tax_direction": request.args.get("tax_direction", ""),
+        "q": request.args.get("q", "").strip(),
+    }
+
+def journal_filter_sql(filters, line_alias="l", journal_alias="j"):
+    conditions = []
+    params = {}
+    if filters["date_from"]:
+        conditions.append(f"{journal_alias}.journal_date >= :date_from")
+        params["date_from"] = filters["date_from"]
+    if filters["date_to"]:
+        conditions.append(f"{journal_alias}.journal_date <= :date_to")
+        params["date_to"] = filters["date_to"]
+    if filters["status"] and filters["status"] != "الكل":
+        conditions.append(f"{journal_alias}.status = :status")
+        params["status"] = filters["status"]
+    if filters["account_id"]:
+        conditions.append(f"{line_alias}.account_id = :account_id")
+        params["account_id"] = filters["account_id"]
+    if filters["cost_center_id"]:
+        conditions.append(f"{line_alias}.cost_center_id = :cost_center_id")
+        params["cost_center_id"] = filters["cost_center_id"]
+    if filters["tax_direction"]:
+        conditions.append(f"{line_alias}.tax_direction = :tax_direction")
+        params["tax_direction"] = filters["tax_direction"]
+    if filters["q"]:
+        conditions.append(f"""(
+            {journal_alias}.journal_no ILIKE :q OR
+            COALESCE({journal_alias}.reference,'') ILIKE :q OR
+            COALESCE({journal_alias}.description,'') ILIKE :q OR
+            COALESCE({line_alias}.invoice_number,'') ILIKE :q OR
+            COALESCE({line_alias}.line_description,'') ILIKE :q
+        )""")
+        params["q"] = f"%{filters['q']}%"
+    return (" WHERE " + " AND ".join(conditions)) if conditions else "", params
+
+def report_context(slug, filters):
+    definition = ACCOUNTING_REPORTS[slug]
+    where, params = journal_filter_sql(filters)
+    headers, data, summary = [], [], {}
+
+    if slug == "coa-report":
+        headers = ["الكود","اسم الحساب","الاسم الإنجليزي","النوع","الحساب الأب","المستوى","طبيعة الرصيد","القائمة المالية","يقبل حركة","الحالة"]
+        data = rows("""
+            SELECT a.id,a.account_code,a.account_name_ar,a.account_name_en,a.account_type,
+                   p.account_name_ar parent_name,a.level,a.normal_balance,a.statement_type,
+                   a.accepts_entries,a.active
+            FROM chart_of_accounts a
+            LEFT JOIN chart_of_accounts p ON p.id=a.parent_id
+            ORDER BY a.account_code
+        """)
+
+    elif slug in ("ledger-summary","account-balances","trial-balance"):
+        headers = ["الكود","اسم الحساب","إجمالي المدين","إجمالي الدائن","الرصيد المدين","الرصيد الدائن","عدد الحركات"]
+        data = rows(f"""
+            SELECT a.id,a.account_code,a.account_name_ar,
+                   COALESCE(SUM(l.debit),0) total_debit,
+                   COALESCE(SUM(l.credit),0) total_credit,
+                   GREATEST(COALESCE(SUM(l.debit-l.credit),0),0) debit_balance,
+                   GREATEST(COALESCE(SUM(l.credit-l.debit),0),0) credit_balance,
+                   COUNT(l.id) movement_count
+            FROM chart_of_accounts a
+            LEFT JOIN journal_entry_lines l ON l.account_id=a.id
+            LEFT JOIN journal_entries j ON j.id=l.journal_id
+            {where}
+            GROUP BY a.id,a.account_code,a.account_name_ar
+            ORDER BY a.account_code
+        """, params)
+        summary = {
+            "total_debit": sum(float(x["total_debit"]) for x in data),
+            "total_credit": sum(float(x["total_credit"]) for x in data),
+            "debit_balance": sum(float(x["debit_balance"]) for x in data),
+            "credit_balance": sum(float(x["credit_balance"]) for x in data),
+        }
+
+    elif slug == "ledger-detail":
+        headers = ["التاريخ","رقم القيد","المرجع","البيان","رقم الفاتورة","تاريخ الفاتورة","مدين","دائن","الرصيد المتحرك","الحالة"]
+        raw = rows(f"""
+            SELECT j.id journal_id,j.journal_date,j.journal_no,j.reference,j.description,
+                   l.invoice_number,l.invoice_date,l.line_description,l.debit,l.credit,j.status
+            FROM journal_entry_lines l
+            JOIN journal_entries j ON j.id=l.journal_id
+            {where}
+            ORDER BY j.journal_date,j.id,l.id
+        """, params)
+        running = 0.0
+        data = []
+        for item in raw:
+            running += float(item["debit"]) - float(item["credit"])
+            d = dict(item)
+            d["running_balance"] = running
+            data.append(d)
+        summary = {
+            "total_debit": sum(float(x["debit"]) for x in data),
+            "total_credit": sum(float(x["credit"]) for x in data),
+            "closing_balance": running,
+        }
+
+    elif slug == "journal-report":
+        headers = ["تاريخ القيد","رقم القيد","الحالة","المرجع","البيان العام","الكود","اسم الحساب","مدين","دائن","اسم الطرف","الرقم الضريبي","رقم الفاتورة","تاريخ الفاتورة","مركز التكلفة"]
+        data = rows(f"""
+            SELECT j.id journal_id,j.journal_date,j.journal_no,j.status,j.reference,j.description,
+                   a.account_code,a.account_name_ar,l.debit,l.credit,
+                   COALESCE(s.name,cus.name,'') party_name,l.tax_number,l.invoice_number,l.invoice_date,
+                   cc.code cost_center_code,cc.name cost_center_name
+            FROM journal_entry_lines l
+            JOIN journal_entries j ON j.id=l.journal_id
+            JOIN chart_of_accounts a ON a.id=l.account_id
+            LEFT JOIN suppliers s ON s.id=l.supplier_id
+            LEFT JOIN customers cus ON cus.id=l.customer_id
+            LEFT JOIN cost_centers cc ON cc.id=l.cost_center_id
+            {where}
+            ORDER BY j.journal_date DESC,j.id DESC,l.id
+        """, params)
+        summary = {
+            "total_debit": sum(float(x["debit"]) for x in data),
+            "total_credit": sum(float(x["credit"]) for x in data),
+            "count": len(data),
+        }
+
+    elif slug in ("cost-center-movements-center","cc-ledger-detail"):
+        headers = ["مركز التكلفة","التاريخ","رقم القيد","الكود","اسم الحساب","البيان","مدين","دائن","الرصيد","الحالة"]
+        raw = rows(f"""
+            SELECT j.id journal_id,cc.code cost_center_code,cc.name cost_center_name,
+                   j.journal_date,j.journal_no,j.status,a.account_code,a.account_name_ar,
+                   COALESCE(l.line_description,j.description) line_description,l.debit,l.credit
+            FROM journal_entry_lines l
+            JOIN journal_entries j ON j.id=l.journal_id
+            JOIN chart_of_accounts a ON a.id=l.account_id
+            JOIN cost_centers cc ON cc.id=l.cost_center_id
+            {where}
+            ORDER BY cc.code,j.journal_date,j.id,l.id
+        """, params)
+        balances = {}
+        data = []
+        for item in raw:
+            key = item["cost_center_code"]
+            balances[key] = balances.get(key, 0.0) + float(item["debit"]) - float(item["credit"])
+            d = dict(item); d["running_balance"] = balances[key]; data.append(d)
+        summary = {"total_debit": sum(float(x["debit"]) for x in data), "total_credit": sum(float(x["credit"]) for x in data)}
+
+    elif slug == "cost-center-movements-account":
+        headers = ["الكود","اسم الحساب","مركز التكلفة","تاريخ القيد","رقم القيد","البيان","مدين","دائن","الحالة"]
+        data = rows(f"""
+            SELECT j.id journal_id,a.account_code,a.account_name_ar,
+                   cc.code cost_center_code,cc.name cost_center_name,
+                   j.journal_date,j.journal_no,j.status,
+                   COALESCE(l.line_description,j.description) line_description,l.debit,l.credit
+            FROM journal_entry_lines l
+            JOIN journal_entries j ON j.id=l.journal_id
+            JOIN chart_of_accounts a ON a.id=l.account_id
+            JOIN cost_centers cc ON cc.id=l.cost_center_id
+            {where}
+            ORDER BY a.account_code,cc.code,j.journal_date,j.id
+        """, params)
+
+    elif slug in ("cc-ledger-summary","cc-trial-balance","cc-balances"):
+        headers = ["كود المركز","مركز التكلفة","إجمالي المدين","إجمالي الدائن","الرصيد المدين","الرصيد الدائن","عدد الحركات"]
+        data = rows(f"""
+            SELECT cc.id,cc.code cost_center_code,cc.name cost_center_name,
+                   COALESCE(SUM(l.debit),0) total_debit,
+                   COALESCE(SUM(l.credit),0) total_credit,
+                   GREATEST(COALESCE(SUM(l.debit-l.credit),0),0) debit_balance,
+                   GREATEST(COALESCE(SUM(l.credit-l.debit),0),0) credit_balance,
+                   COUNT(l.id) movement_count
+            FROM cost_centers cc
+            LEFT JOIN journal_entry_lines l ON l.cost_center_id=cc.id
+            LEFT JOIN journal_entries j ON j.id=l.journal_id
+            {where}
+            GROUP BY cc.id,cc.code,cc.name
+            ORDER BY cc.code
+        """, params)
+        summary = {
+            "total_debit": sum(float(x["total_debit"]) for x in data),
+            "total_credit": sum(float(x["total_credit"]) for x in data),
+        }
+
+    elif slug == "accounts-with-centers":
+        headers = ["كود الحساب","اسم الحساب","كود المركز","مركز التكلفة","إجمالي المدين","إجمالي الدائن","الرصيد"]
+        data = rows(f"""
+            SELECT a.account_code,a.account_name_ar,cc.code cost_center_code,cc.name cost_center_name,
+                   SUM(l.debit) total_debit,SUM(l.credit) total_credit,SUM(l.debit-l.credit) balance
+            FROM journal_entry_lines l
+            JOIN journal_entries j ON j.id=l.journal_id
+            JOIN chart_of_accounts a ON a.id=l.account_id
+            LEFT JOIN cost_centers cc ON cc.id=l.cost_center_id
+            {where}
+            GROUP BY a.account_code,a.account_name_ar,cc.code,cc.name
+            ORDER BY a.account_code,cc.code
+        """, params)
+
+    elif slug == "centers-with-accounts":
+        headers = ["كود المركز","مركز التكلفة","كود الحساب","اسم الحساب","إجمالي المدين","إجمالي الدائن","الرصيد"]
+        data = rows(f"""
+            SELECT cc.code cost_center_code,cc.name cost_center_name,a.account_code,a.account_name_ar,
+                   SUM(l.debit) total_debit,SUM(l.credit) total_credit,SUM(l.debit-l.credit) balance
+            FROM journal_entry_lines l
+            JOIN journal_entries j ON j.id=l.journal_id
+            JOIN chart_of_accounts a ON a.id=l.account_id
+            LEFT JOIN cost_centers cc ON cc.id=l.cost_center_id
+            {where}
+            GROUP BY cc.code,cc.name,a.account_code,a.account_name_ar
+            ORDER BY cc.code,a.account_code
+        """, params)
+
+    elif slug == "vat-report":
+        vat_where, vat_params = journal_filter_sql(filters)
+        vat_condition = "l.taxable=1"
+        vat_where = vat_where + (" AND " if vat_where else " WHERE ") + vat_condition
+        headers = ["تاريخ القيد","رقم القيد","تاريخ الفاتورة","رقم الفاتورة","اسم المورد / العميل","الرقم الضريبي","مدخلات / مخرجات","المبلغ قبل الضريبة","ضريبة القيمة المضافة","الإجمالي","حالة البيانات"]
+        raw = rows(f"""
+            SELECT j.id journal_id,j.journal_date,j.journal_no,l.invoice_date,l.invoice_number,
+                   COALESCE(s.name,cus.name,'') party_name,l.tax_number,l.tax_direction,
+                   GREATEST(l.debit,l.credit) amount_before_tax
+            FROM journal_entry_lines l
+            JOIN journal_entries j ON j.id=l.journal_id
+            LEFT JOIN suppliers s ON s.id=l.supplier_id
+            LEFT JOIN customers cus ON cus.id=l.customer_id
+            {vat_where}
+            ORDER BY COALESCE(l.invoice_date,j.journal_date),j.id,l.id
+        """, vat_params)
+        vat_rate = float(row("SELECT vat_rate FROM settings WHERE id=1")["vat_rate"] or 15)
+        data = []
+        for item in raw:
+            d = dict(item)
+            base_amount = float(item["amount_before_tax"] or 0)
+            d["vat_amount"] = round(base_amount * vat_rate / 100, 2)
+            d["total_amount"] = round(base_amount + d["vat_amount"], 2)
+            complete = all([item["invoice_date"], item["invoice_number"], item["party_name"], item["tax_number"], item["tax_direction"] in ("مدخلات","مخرجات")])
+            d["compliance_status"] = "مكتمل" if complete else "بيانات ناقصة"
+            data.append(d)
+        output_rows = [x for x in data if x["tax_direction"] == "مخرجات"]
+        input_rows = [x for x in data if x["tax_direction"] == "مدخلات"]
+        summary = {
+            "output_base": sum(x["amount_before_tax"] for x in output_rows),
+            "output_vat": sum(x["vat_amount"] for x in output_rows),
+            "input_base": sum(x["amount_before_tax"] for x in input_rows),
+            "input_vat": sum(x["vat_amount"] for x in input_rows),
+            "net_vat": sum(x["vat_amount"] for x in output_rows) - sum(x["vat_amount"] for x in input_rows),
+        }
+
+    return {
+        "definition": definition,
+        "headers": headers,
+        "data": data,
+        "summary": summary,
+    }
+
 @app.route("/reports")
 @login_required
 def reports():
-    date_from = request.args.get("date_from", "")
-    date_to = request.args.get("date_to", "")
+    grouped = {}
+    for slug, definition in ACCOUNTING_REPORTS.items():
+        grouped.setdefault(definition["group"], []).append({"slug": slug, **definition})
+    return render_template("reports_center.html", grouped=grouped)
 
-    invoice_where = []
-    expense_where = []
-    params = {}
+@app.route("/reports/<slug>")
+@login_required
+def accounting_report(slug):
+    if slug not in ACCOUNTING_REPORTS:
+        return "التقرير غير موجود", 404
+    filters = report_filters()
+    context = report_context(slug, filters)
+    accounts = rows("SELECT id,account_code,account_name_ar FROM chart_of_accounts WHERE active=1 ORDER BY account_code")
+    centers = rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code")
+    company = row("SELECT * FROM settings WHERE id=1")
+    audit("VIEW", "REPORT", f"عرض تقرير {context['definition']['title']}")
+    return render_template("accounting_report.html", slug=slug, filters=filters, accounts=accounts,
+                           centers=centers, company=company, **context)
 
-    if date_from:
-        invoice_where.append("invoice_date >= :date_from")
-        expense_where.append("expense_date >= :date_from")
-        params["date_from"] = date_from
-    if date_to:
-        invoice_where.append("invoice_date <= :date_to")
-        expense_where.append("expense_date <= :date_to")
-        params["date_to"] = date_to
-
-    invoice_filter = (" WHERE " + " AND ".join(invoice_where)) if invoice_where else ""
-    expense_filter = (" WHERE " + " AND ".join(expense_where)) if expense_where else ""
-
-    sales_data = row(f"""
-        SELECT COALESCE(SUM(subtotal),0) subtotal,
-               COALESCE(SUM(vat),0) vat,
-               COALESCE(SUM(total),0) total,
-               COUNT(*) count
-        FROM invoices {invoice_filter}
-    """, params)
-
-    expense_data = row(f"""
-        SELECT COALESCE(SUM(amount),0) amount,
-               COALESCE(SUM(vat),0) vat,
-               COALESCE(SUM(total),0) total,
-               COUNT(*) count
-        FROM expenses {expense_filter}
-    """, params)
-
-    inventory_value = row("""
-        SELECT COALESCE(SUM(quantity * cost),0) value,
-               COUNT(*) count
-        FROM inventory
-    """)
-    payroll = row("""
-        SELECT COALESCE(SUM(basic_salary + allowances),0) total,
-               COUNT(*) count
-        FROM employees WHERE active=1
-    """)
-    top_customers = rows(f"""
-        SELECT c.name, COUNT(i.id) invoice_count,
-               COALESCE(SUM(i.total),0) total
-        FROM customers c
-        LEFT JOIN invoices i ON i.customer_id=c.id
-        {"AND " + " AND ".join("i." + x for x in invoice_where) if invoice_where else ""}
-        GROUP BY c.id, c.name
-        ORDER BY total DESC
-        LIMIT 10
-    """, params)
-
-    net_result = float(sales_data["subtotal"]) - float(expense_data["amount"])
-    net_vat = float(sales_data["vat"]) - float(expense_data["vat"])
-
-    return render_template(
-        "reports.html",
-        sales=sales_data,
-        expenses=expense_data,
-        inventory_value=inventory_value,
-        payroll=payroll,
-        net_result=net_result,
-        net_vat=net_vat,
-        top_customers=top_customers,
-        date_from=date_from,
-        date_to=date_to,
-    )
-
+@app.route("/reports/<slug>/export.xlsx")
+@login_required
+def accounting_report_export(slug):
+    if slug not in ACCOUNTING_REPORTS:
+        return "التقرير غير موجود", 404
+    filters = report_filters()
+    context = report_context(slug, filters)
+    data = context["data"]
+    keys_by_slug = {
+        "coa-report":["account_code","account_name_ar","account_name_en","account_type","parent_name","level","normal_balance","statement_type","accepts_entries","active"],
+        "ledger-summary":["account_code","account_name_ar","total_debit","total_credit","debit_balance","credit_balance","movement_count"],
+        "account-balances":["account_code","account_name_ar","total_debit","total_credit","debit_balance","credit_balance","movement_count"],
+        "trial-balance":["account_code","account_name_ar","total_debit","total_credit","debit_balance","credit_balance","movement_count"],
+        "ledger-detail":["journal_date","journal_no","reference","line_description","invoice_number","invoice_date","debit","credit","running_balance","status"],
+        "journal-report":["journal_date","journal_no","status","reference","description","account_code","account_name_ar","debit","credit","party_name","tax_number","invoice_number","invoice_date","cost_center_name"],
+        "cost-center-movements-center":["cost_center_name","journal_date","journal_no","account_code","account_name_ar","line_description","debit","credit","running_balance","status"],
+        "cc-ledger-detail":["cost_center_name","journal_date","journal_no","account_code","account_name_ar","line_description","debit","credit","running_balance","status"],
+        "cost-center-movements-account":["account_code","account_name_ar","cost_center_name","journal_date","journal_no","line_description","debit","credit","status"],
+        "cc-ledger-summary":["cost_center_code","cost_center_name","total_debit","total_credit","debit_balance","credit_balance","movement_count"],
+        "cc-trial-balance":["cost_center_code","cost_center_name","total_debit","total_credit","debit_balance","credit_balance","movement_count"],
+        "cc-balances":["cost_center_code","cost_center_name","total_debit","total_credit","debit_balance","credit_balance","movement_count"],
+        "accounts-with-centers":["account_code","account_name_ar","cost_center_code","cost_center_name","total_debit","total_credit","balance"],
+        "centers-with-accounts":["cost_center_code","cost_center_name","account_code","account_name_ar","total_debit","total_credit","balance"],
+        "vat-report":["journal_date","journal_no","invoice_date","invoice_number","party_name","tax_number","tax_direction","amount_before_tax","vat_amount","total_amount","compliance_status"],
+    }
+    keys = keys_by_slug[slug]
+    records = [[item.get(key) for key in keys] for item in data]
+    audit("EXPORT", "REPORT", f"تصدير تقرير {context['definition']['title']}")
+    return xlsx_response(f"{slug}.xlsx", context["definition"]["title"][:31], context["headers"], records)
 
 
 def xlsx_response(filename, sheet_name, headers, records):

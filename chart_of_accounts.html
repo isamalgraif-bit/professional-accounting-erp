@@ -44,14 +44,14 @@
 
 <div class="form-card mb-4">
 <h5 class="mb-3">إضافة حساب جديد</h5>
-<form method="post">
+<form method="post" id="addAccountForm">
 <div class="row g-3">
 <div class="col-md-2">
 <label>كود الحساب</label>
 <input class="form-control" id="accountCode" name="account_code" required>
 <small class="text-muted" id="codeHint">اختر الحساب الأب ليُقترح الكود تلقائيًا.</small>
 </div>
-<div class="col-md-3"><label>اسم الحساب</label><input class="form-control" name="account_name_ar" required></div>
+<div class="col-md-3"><label>اسم الحساب</label><input class="form-control" id="accountNameAr" name="account_name_ar" required></div>
 <div class="col-md-3"><label>الاسم الإنجليزي</label><input class="form-control" name="account_name_en"></div>
 <div class="col-md-2"><label>نوع الحساب</label><select class="form-select" name="account_type"><option>أصل</option><option>خصم</option><option>حقوق ملكية</option><option>إيراد</option><option>مصروف</option></select></div>
 <div class="col-md-2"><label>الحساب الأب</label><select class="form-select" id="parentAccount" name="parent_id"><option value="">حساب رئيسي</option>{% for p in parents %}<option value="{{p.id}}">{{p.account_code}} - {{p.account_name_ar}}</option>{% endfor %}</select></div>
@@ -70,7 +70,7 @@
 <thead>
 <tr>
 <th>الكود</th><th>الحساب</th><th>النوع</th><th>طبيعة الرصيد</th>
-<th>القائمة</th><th>يقبل حركة</th><th>عدد القيود</th><th>الرصيد</th><th>الحالة</th><th>الإجراءات</th>
+<th>القائمة</th><th>يقبل حركة</th><th>عدد القيود</th><th>الرصيد</th><th>الحالة</th>
 </tr>
 </thead>
 <tbody id="accountTreeBody">
@@ -78,10 +78,23 @@
 <tr class="level-{{a.level}} {% if not a.accepts_entries %}parent-account{% endif %}" data-account-id="{{a.id}}" data-parent-id="{{a.parent_id or ''}}" data-level="{{a.level}}" data-name="{{a.account_name_ar}}" data-code="{{a.account_code}}">
 <td>{{a.account_code}}</td>
 <td>
-<div style="padding-right:{{(a.level-1)*24}}px">
-{% if a.children_count %}<button type="button" class="tree-toggle" aria-label="توسيع الحساب">−</button>{% else %}<span class="tree-dot">•</span>{% endif %}
-<strong>{{a.account_name_ar}}</strong>
-{% if a.account_name_en %}<small class="text-muted d-block">{{a.account_name_en}}</small>{% endif %}
+<div class="account-node" style="padding-right:{{(a.level-1)*24}}px"
+ data-view-url="{{url_for('account_view',account_id=a.id)}}"
+ data-edit-url="{{url_for('account_edit',account_id=a.id)}}"
+ data-delete-url="{{url_for('account_delete',account_id=a.id)}}"
+ data-account-id="{{a.id}}" data-account-code="{{a.account_code}}" data-account-name="{{a.account_name_ar}}">
+ <div class="account-node-main">
+ {% if a.children_count %}<button type="button" class="tree-toggle">−</button>{% else %}<span class="tree-dot">•</span>{% endif %}
+ <span class="account-icon">{% if not a.accepts_entries %}📁{% elif a.account_type=='إيراد' %}📈{% elif a.account_type=='مصروف' %}📉{% else %}📄{% endif %}</span>
+ <span><strong>{{a.account_name_ar}}</strong>{% if a.account_name_en %}<small class="text-muted d-block">{{a.account_name_en}}</small>{% endif %}</span>
+ </div>
+ <div class="node-actions no-print">
+ <button type="button" class="node-btn add-child" data-id="{{a.id}}" data-code="{{a.account_code}}" data-name="{{a.account_name_ar}}" title="إضافة حساب فرعي">＋</button>
+ <a class="node-btn" href="{{url_for('account_view',account_id=a.id)}}" title="عرض">👁</a>
+ <a class="node-btn" href="{{url_for('account_edit',account_id=a.id)}}" title="تعديل">✏️</a>
+ <form method="post" action="{{url_for('account_delete',account_id=a.id)}}" class="d-inline" onsubmit="return confirm('تأكيد حذف الحساب؟')">
+ <button class="node-btn danger" type="submit" title="حذف">🗑️</button></form>
+ </div>
 </div>
 </td>
 <td>{{a.account_type}}</td>
@@ -91,20 +104,28 @@
 <td>{{a.entries_count}}</td>
 <td>{{"%.2f"|format(a.balance)}}</td>
 <td><span class="badge {{'bg-success' if a.active else 'bg-secondary'}}">{{'نشط' if a.active else 'غير نشط'}}</span></td>
-<td class="text-nowrap">
-<a class="btn btn-sm btn-outline-primary" href="{{url_for('account_view',account_id=a.id)}}">عرض</a>
-<a class="btn btn-sm btn-outline-warning" href="{{url_for('account_edit',account_id=a.id)}}">تعديل</a>
-<form class="d-inline" method="post" action="{{url_for('account_delete',account_id=a.id)}}" onsubmit="return confirm('تأكيد حذف الحساب؟')">
-<button class="btn btn-sm btn-outline-danger">حذف</button></form>
-</td>
+
 </tr>
 {% endfor %}
 </tbody>
 </table>
 </div>
 </div>
+<div id="accountContextMenu" class="account-context-menu no-print">
+<button data-action="add">➕ إضافة حساب فرعي</button>
+<button data-action="view">👁 عرض الحساب</button>
+<button data-action="edit">✏️ تعديل الحساب</button>
+<button data-action="delete" class="danger-item">🗑️ حذف الحساب</button>
+</div>
 <style>
 .account-tree-table .parent-account{background:#f8fafc;font-weight:600}
+.account-node{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.account-node-main{display:flex;align-items:center;gap:5px;cursor:pointer}
+.node-actions{display:flex;gap:4px;opacity:0}.account-node:hover .node-actions{opacity:1}
+.node-btn{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid #cbd5e1;border-radius:7px;background:#fff;text-decoration:none}
+.node-btn.danger:hover{background:#fee2e2}
+.account-context-menu{position:fixed;display:none;min-width:210px;background:#fff;border:1px solid #ddd;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.18);padding:7px;z-index:9999}
+.account-context-menu.show{display:block}.account-context-menu button{width:100%;border:0;background:transparent;text-align:right;padding:9px;border-radius:7px}.account-context-menu button:hover{background:#eef4ff}.danger-item{color:#b91c1c}
 .tree-icon{display:inline-block;width:20px;color:#174ea6}
 @media print{form,.btn,.sidebar{display:none!important}.form-card{box-shadow:none;border:0}}
 
@@ -193,5 +214,27 @@ async function loadSuggestedAccountCode(){
 }
 
 document.getElementById('parentAccount')?.addEventListener('change',loadSuggestedAccountCode);
+
+async function prepareChild(id,code,name){
+ const parent=document.getElementById('parentAccount'), accCode=document.getElementById('accountCode'), accName=document.getElementById('accountNameAr'), hint=document.getElementById('codeHint');
+ parent.value=String(id); document.getElementById('addAccountForm')?.scrollIntoView({behavior:'smooth',block:'center'});
+ try{
+   const r=await fetch(`{{ url_for('chart_next_code') }}?parent_id=${id}`);
+   const d=await r.json(); if(!r.ok) throw new Error(d.message||'تعذر اقتراح الكود');
+   accCode.value=d.code; hint.textContent=`حساب فرعي تحت ${code} - ${name}`; setTimeout(()=>accName.focus(),300);
+ }catch(e){hint.textContent=e.message}
+}
+document.querySelectorAll('.add-child').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();prepareChild(b.dataset.id,b.dataset.code,b.dataset.name)}));
+document.querySelectorAll('.account-node-main').forEach(n=>n.addEventListener('dblclick',e=>{if(!e.target.closest('.tree-toggle'))location.href=n.closest('.account-node').dataset.viewUrl}));
+const menu=document.getElementById('accountContextMenu'); let node=null;
+document.querySelectorAll('.account-node').forEach(n=>n.addEventListener('contextmenu',e=>{e.preventDefault();node=n;menu.style.left=e.clientX+'px';menu.style.top=e.clientY+'px';menu.classList.add('show')}));
+document.addEventListener('click',()=>menu.classList.remove('show'));
+menu.addEventListener('click',e=>{
+ const a=e.target.dataset.action;if(!a||!node)return;
+ if(a==='add')prepareChild(node.dataset.accountId,node.dataset.accountCode,node.dataset.accountName);
+ if(a==='view')location.href=node.dataset.viewUrl;
+ if(a==='edit')location.href=node.dataset.editUrl;
+ if(a==='delete'&&confirm('تأكيد حذف الحساب؟')){const f=document.createElement('form');f.method='post';f.action=node.dataset.deleteUrl;document.body.appendChild(f);f.submit();}
+});
 </script>
 {% endblock %}
