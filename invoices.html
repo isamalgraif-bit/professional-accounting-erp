@@ -111,7 +111,7 @@
 <td><span class="badge bg-secondary">{{r.status}}</span></td>
 <td>
 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_view', invoice_id=r.id) }}">عرض</a>
-<a class="btn btn-sm btn-outline-dark" target="_blank" href="{{ url_for('invoice_view', invoice_id=r.id) }}?print=1">طباعة / PDF</a>
+<a class="btn btn-sm btn-outline-dark" target="_blank" href="{{ url_for('invoice_view', invoice_id=r.id) }}?print=1">طباعة / PDF</a> <form class="d-inline" method="post" action="{{url_for('invoice_delete',invoice_id=r.id)}}" onsubmit="return confirm('تأكيد حذف الفاتورة المسودة؟')"><button class="btn btn-sm btn-outline-danger">حذف</button></form>
 </td>
 </tr>
 {% endfor %}

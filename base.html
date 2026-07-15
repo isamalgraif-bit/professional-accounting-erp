@@ -34,14 +34,19 @@ body{background:#f5f7fb;font-family:Tahoma,Arial,sans-serif}
 </div>
 
 <a href="{{ url_for('dashboard') }}">لوحة التحكم</a>
-<a href="{{ url_for('customers') }}">العملاء</a>
-<a href="{{ url_for('suppliers') }}">الموردون</a>
+<div style="font-size:12px;opacity:.6;margin:14px 8px 6px">المحاسبة</div>
+<a href="{{ url_for('chart_of_accounts') }}">دليل الحسابات</a>
+<a href="{{ url_for('journal_entries') }}">قيد يومية</a>
+<a href="{{ url_for('multi_journal') }}">قيود يومية متعددة</a>
+<a href="{{ url_for('manage_module', module_name='cost-centers') }}">مراكز التكلفة</a>
+<a href="{{ url_for('manage_module', module_name='customers') }}">العملاء</a>
+<a href="{{ url_for('manage_module', module_name='suppliers') }}">الموردون</a>
 <a href="{{ url_for('invoices') }}">الفواتير</a>
 <a href="{{ url_for('expenses') }}">المصروفات</a>
-<a href="{{ url_for('inventory') }}">المخزون</a>
-<a href="{{ url_for('employees') }}">الموظفون</a>
+<a href="{{ url_for('manage_module', module_name='inventory') }}">المخزون</a>
+<a href="{{ url_for('manage_module', module_name='employees') }}">الموظفون</a>
 <a href="{{ url_for('reports') }}">التقارير والتصدير</a>
-<a href="{{ url_for('branches') }}">الفروع</a>
+<a href="{{ url_for('manage_module', module_name='branches') }}">الفروع</a>
 <a href="{{ url_for('settings') }}">الإعدادات</a>
 <a href="{{ url_for('audit_logs') }}">سجل العمليات</a>
 <a href="{{ url_for('change_password') }}">تغيير كلمة المرور</a>

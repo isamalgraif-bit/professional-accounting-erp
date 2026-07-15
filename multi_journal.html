@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+<div><h3 class="mb-1">قيود يومية متعددة</h3><small class="text-muted">Multiple Journal Entries</small></div>
+</div>
+
+<div class="form-card mb-4">
+<form method="post" id="batchForm">
+<div class="row g-3 mb-3">
+<div class="col-md-2"><label>تاريخ الدفعة</label><input class="form-control" type="date" name="batch_date" id="batchDate" required></div>
+<div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>مسودة</option><option>مرحّل</option></select></div>
+<div class="col-md-8"><label>وصف الدفعة</label><input class="form-control" name="description"></div>
+</div>
+
+<div class="table-responsive" style="max-height:540px">
+<table class="table table-bordered table-sm align-middle" style="min-width:2400px">
+<thead class="table-light" style="position:sticky;top:0">
+<tr>
+<th>المجموعة</th><th>الكود</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th>
+<th>خاضع للضريبة</th><th>مدخلات / مخرجات</th><th>نوع الطرف</th>
+<th>اسم المورد / العميل</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th>
+<th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th><th></th>
+</tr>
+</thead>
+<tbody id="batchBody">
+<tr class="batch-row">
+<td><input class="form-control group-no" type="number" min="1" name="group_no[]" value="1" required></td>
+<td><input class="form-control account-code" list="accountCodeList" placeholder="الكود"></td>
+<td><input class="form-control account-name" list="accountNameList" placeholder="اسم الحساب"><input type="hidden" class="account-id" name="account_id[]"></td>
+<td><input class="form-control debit" type="number" step="0.01" min="0" name="debit[]" value="0"></td>
+<td><input class="form-control credit" type="number" step="0.01" min="0" name="credit[]" value="0"></td>
+<td><select class="form-select taxable" name="taxable[]"><option value="0">لا</option><option value="1">نعم</option></select></td>
+<td><select class="form-select direction" name="tax_direction[]"><option>غير مطبق</option><option>مدخلات</option><option>مخرجات</option></select></td>
+<td><select class="form-select party-type" name="party_type[]"><option value="">بدون</option><option>مورد</option><option>عميل</option></select></td>
+<td>
+<select class="form-select supplier" name="supplier_id[]"><option value="">اختر المورد</option>{% for s in suppliers %}<option value="{{s.id}}" data-vat="{{s.vat_number or ''}}">{{s.name}}</option>{% endfor %}</select>
+<select class="form-select customer" name="customer_id[]" style="display:none"><option value="">اختر العميل</option>{% for c in customers %}<option value="{{c.id}}" data-vat="{{c.vat_number or ''}}">{{c.name}}</option>{% endfor %}</select>
+</td>
+<td><input class="form-control tax-number" name="tax_number[]" readonly></td>
+<td><input class="form-control" name="invoice_number[]"></td>
+<td><input class="form-control" type="date" name="invoice_date[]"></td>
+<td><input class="form-control" name="line_description[]"></td>
+<td><select class="form-select" name="cost_center_id[]"><option value="">بدون</option>{% for c in centers %}<option value="{{c.id}}">{{c.code}} - {{c.name}}</option>{% endfor %}</select></td>
+<td><button type="button" class="btn btn-sm btn-outline-danger remove-row">×</button></td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<datalist id="accountCodeList">{% for a in accounts %}<option value="{{a.account_code}}"></option>{% endfor %}</datalist>
+<datalist id="accountNameList">{% for a in accounts %}<option value="{{a.account_name_ar}}"></option>{% endfor %}</datalist>
+
+<div class="d-flex justify-content-between mt-3">
+<div class="d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addLine">+ إضافة سطر</button><button type="button" class="btn btn-outline-secondary" id="newGroup">+ مجموعة جديدة</button></div>
+<div id="groupStatus" class="fw-bold text-danger">لم يتم التحقق بعد</div>
+</div>
+<div class="text-end mt-4"><button class="btn btn-primary btn-lg">حفظ دفعة القيود</button></div>
+</form>
+</div>
+
+<div class="form-card">
+<h5>الدفعات السابقة</h5>
+<table class="table table-striped">
+<thead><tr><th>رقم الدفعة</th><th>التاريخ</th><th>الوصف</th><th>الحالة</th><th>الإجراءات</th></tr></thead>
+<tbody>{% for b in batches %}<tr><td>{{b.batch_no}}</td><td>{{b.batch_date}}</td><td>{{b.description}}</td><td>{{b.status}}</td>
+<td><a class="btn btn-sm btn-outline-primary" href="{{url_for('multi_journal_view',batch_id=b.id)}}">عرض / طباعة</a>
+<a class="btn btn-sm btn-outline-success" href="{{url_for('multi_journal_export',batch_id=b.id)}}">Excel</a>
+<form class="d-inline" method="post" action="{{url_for('multi_journal_delete',batch_id=b.id)}}" onsubmit="return confirm('تأكيد الحذف؟')"><button class="btn btn-sm btn-outline-danger">حذف</button></form>
+</td></tr>{% endfor %}</tbody>
+</table>
+</div>
+
+<script>
+const accounts=[{% for a in accounts %}{id:"{{a.id}}",code:{{a.account_code|tojson}},name:{{a.account_name_ar|tojson}}},{% endfor %}];
+function sync(row,mode){
+ const code=row.querySelector('.account-code'),name=row.querySelector('.account-name'),id=row.querySelector('.account-id');
+ const a=mode==='code'?accounts.find(x=>x.code===code.value.trim()):accounts.find(x=>x.name===name.value.trim());
+ if(a){id.value=a.id;code.value=a.code;name.value=a.name}else{id.value=''}
+}
+function party(row){
+ const type=row.querySelector('.party-type').value,s=row.querySelector('.supplier'),c=row.querySelector('.customer'),tax=row.querySelector('.tax-number');
+ s.style.display=type==='مورد'?'':'none';c.style.display=type==='عميل'?'':'none';
+ if(type==='مورد'){c.value='';tax.value=s.selectedOptions[0]?.dataset.vat||''}
+ else if(type==='عميل'){s.value='';tax.value=c.selectedOptions[0]?.dataset.vat||''}
+ else{s.value='';c.value='';tax.value=''}
+}
+function bind(row){
+ row.querySelector('.account-code').addEventListener('input',()=>sync(row,'code'));
+ row.querySelector('.account-name').addEventListener('input',()=>sync(row,'name'));
+ row.querySelector('.party-type').addEventListener('change',()=>party(row));
+ row.querySelector('.supplier').addEventListener('change',()=>party(row));
+ row.querySelector('.customer').addEventListener('change',()=>party(row));
+ row.querySelector('.remove-row').addEventListener('click',()=>{if(document.querySelectorAll('.batch-row').length>2)row.remove();checkGroups()});
+ row.querySelectorAll('.debit,.credit,.group-no').forEach(i=>i.addEventListener('input',checkGroups));
+ party(row);
+}
+function reset(row,groupNo){
+ row.querySelectorAll('input').forEach(i=>i.value=(i.classList.contains('debit')||i.classList.contains('credit'))?'0':'');
+ row.querySelectorAll('select').forEach(s=>s.selectedIndex=0);
+ row.querySelector('.group-no').value=groupNo;
+}
+function checkGroups(){
+ const groups={};
+ document.querySelectorAll('.batch-row').forEach(r=>{
+   const g=r.querySelector('.group-no').value||'1';
+   groups[g]??={d:0,c:0};
+   groups[g].d+=Number(r.querySelector('.debit').value||0);
+   groups[g].c+=Number(r.querySelector('.credit').value||0);
+ });
+ const bad=Object.entries(groups).filter(([g,v])=>Math.abs(v.d-v.c)>=.005||v.d===0);
+ groupStatus.textContent=bad.length?`مجموعات غير متوازنة: ${bad.map(x=>x[0]).join(', ')}`:'جميع المجموعات متوازنة';
+ groupStatus.className=bad.length?'fw-bold text-danger':'fw-bold text-success';
+}
+addLine.addEventListener('click',()=>{const last=document.querySelector('.batch-row:last-child');const r=last.cloneNode(true);reset(r,last.querySelector('.group-no').value);batchBody.appendChild(r);bind(r);checkGroups()});
+newGroup.addEventListener('click',()=>{const nums=[...document.querySelectorAll('.group-no')].map(x=>Number(x.value||1));const next=Math.max(...nums)+1;const r=document.querySelector('.batch-row').cloneNode(true);reset(r,next);batchBody.appendChild(r);bind(r);checkGroups()});
+const second=document.querySelector('.batch-row').cloneNode(true);reset(second,1);batchBody.appendChild(second);
+document.querySelectorAll('.batch-row').forEach(bind);batchDate.value=new Date().toISOString().slice(0,10);checkGroups();
+</script>
+{% endblock %}

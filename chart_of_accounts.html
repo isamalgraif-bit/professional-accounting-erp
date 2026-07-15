@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block content %}
+<h3 class="mb-4">دليل الحسابات</h3>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-2"><label>كود الحساب</label><input class="form-control" name="account_code" required></div>
+<div class="col-md-3"><label>اسم الحساب</label><input class="form-control" name="account_name_ar" required></div>
+<div class="col-md-3"><label>الاسم الإنجليزي</label><input class="form-control" name="account_name_en"></div>
+<div class="col-md-2"><label>النوع</label><select class="form-select" name="account_type"><option>أصل</option><option>خصم</option><option>حقوق ملكية</option><option>إيراد</option><option>مصروف</option></select></div>
+<div class="col-md-2"><label>الحساب الأب</label><select class="form-select" name="parent_id"><option value="">بدون</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>يقبل حركة</label><select class="form-select" name="accepts_entries"><option value="1">نعم</option><option value="0">لا</option></select></div>
+<div class="col-md-2"><label>الحالة</label><select class="form-select" name="active"><option value="1">نشط</option><option value="0">غير نشط</option></select></div>
+<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">إضافة</button></div>
+</div></form></div>
+<div class="form-card"><div class="table-responsive"><table class="table table-striped">
+<thead><tr><th>الكود</th><th>اسم الحساب</th><th>الإنجليزي</th><th>النوع</th><th>الحساب الأب</th><th>المستوى</th><th>يقبل حركة</th><th>الحالة</th></tr></thead>
+<tbody>{% for a in accounts %}<tr><td>{{a.account_code}}</td><td>{{a.account_name_ar}}</td><td>{{a.account_name_en}}</td><td>{{a.account_type}}</td><td>{{a.parent_name or '-'}}</td><td>{{a.level}}</td><td>{{'نعم' if a.accepts_entries else 'لا'}}</td><td>{{'نشط' if a.active else 'غير نشط'}}</td></tr>{% endfor %}</tbody>
+</table></div></div>{% endblock %}

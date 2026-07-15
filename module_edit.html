@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block content %}
+<h3 class="mb-4">{{cfg.title}} — تعديل</h3>
+<div class="form-card"><form method="post"><div class="row g-3">
+{% for f in cfg.fields %}
+<div class="col-md-6"><label>{{cfg.labels[loop.index0]}}</label>
+{% if f == 'active' %}
+<select class="form-select" name="{{f}}"><option value="1" {% if record[f] %}selected{% endif %}>نشط</option><option value="0" {% if not record[f] %}selected{% endif %}>غير نشط</option></select>
+{% else %}
+<input class="form-control" name="{{f}}" value="{{record[f] if record[f] is not none else ''}}">
+{% endif %}
+</div>{% endfor %}
+<div class="col-12"><button class="btn btn-primary">حفظ التعديل</button></div>
+</div></form></div>{% endblock %}

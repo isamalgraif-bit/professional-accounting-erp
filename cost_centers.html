@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<h3 class="mb-4">مراكز التكلفة</h3>
+<div class="form-card mb-4"><form method="post" class="row g-3">
+<div class="col-md-3"><label>الكود</label><input class="form-control" name="code" required></div>
+<div class="col-md-5"><label>اسم مركز التكلفة</label><input class="form-control" name="name" required></div>
+<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">إضافة</button></div>
+</form></div>
+<div class="form-card"><table class="table table-striped"><thead><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr></thead>
+<tbody>{% for c in centers %}<tr><td>{{c.code}}</td><td>{{c.name}}</td><td>{{'نشط' if c.active else 'غير نشط'}}</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

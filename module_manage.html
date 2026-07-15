@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+<h3 class="mb-0">{{ cfg.title }}</h3>
+<div class="d-flex gap-2">
+<a class="btn btn-success" href="{{ url_for('module_export', module_name=module_name) }}">تصدير Excel</a>
+<button class="btn btn-outline-dark" onclick="window.print()">طباعة</button>
+</div></div>
+<form class="form-card mb-4" method="get"><div class="row g-2">
+<div class="col-md-8"><input class="form-control" name="q" value="{{q}}" placeholder="بحث في جميع الحقول"></div>
+<div class="col-md-2"><button class="btn btn-primary w-100">بحث</button></div>
+<div class="col-md-2"><a class="btn btn-outline-secondary w-100" href="{{ url_for('manage_module', module_name=module_name) }}">مسح</a></div>
+</div></form>
+<div class="form-card"><div class="table-responsive"><table class="table table-striped align-middle">
+<thead><tr>{% for label in cfg.labels %}<th>{{label}}</th>{% endfor %}<th>الإجراءات</th></tr></thead>
+<tbody>{% for r in data %}<tr>
+{% for f in cfg.fields %}<td>{{ r[f] }}</td>{% endfor %}
+<td class="text-nowrap">
+<a class="btn btn-sm btn-outline-primary" href="{{ url_for('module_view', module_name=module_name, record_id=r.id) }}">عرض</a>
+<a class="btn btn-sm btn-outline-warning" href="{{ url_for('module_edit', module_name=module_name, record_id=r.id) }}">تعديل</a>
+<form method="post" action="{{ url_for('module_delete', module_name=module_name, record_id=r.id) }}" class="d-inline" onsubmit="return confirm('تأكيد الحذف؟')">
+<button class="btn btn-sm btn-outline-danger">حذف</button></form>
+</td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}

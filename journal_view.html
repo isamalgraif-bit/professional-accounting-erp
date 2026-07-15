@@ -1,0 +1,13 @@
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>{{journal.journal_no}}</title>
+<style>body{font-family:Tahoma;background:#eee}.toolbar,.sheet{max-width:1100px;margin:18px auto}.sheet{background:white;padding:30px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:8px}th{background:#eee}.header{display:flex;justify-content:space-between}.total{font-weight:bold}.btn{padding:10px 15px;background:#174ea6;color:white;border:0;text-decoration:none}@media print{body{background:white}.toolbar{display:none}.sheet{margin:0;max-width:none}}</style></head><body>
+<div class="toolbar"><button class="btn" onclick="window.print()">طباعة / PDF</button></div>
+<div class="sheet"><div class="header"><div><h2>{{company.company_name_ar}}</h2><div>{{company.company_name_en}}</div></div><div><h2>قيد يومية</h2><div>JOURNAL VOUCHER</div></div></div>
+<hr><p><b>رقم القيد:</b> {{journal.journal_no}} &nbsp; <b>التاريخ:</b> {{journal.journal_date}} &nbsp; <b>الحالة:</b> {{journal.status}}</p>
+<p><b>المرجع:</b> {{journal.reference or '-'}} &nbsp; <b>البيان:</b> {{journal.description or '-'}}</p>
+<table><thead><tr><th>م</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>الضريبة</th><th>نوع الطرف</th><th>اسم الطرف</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th></tr></thead>
+<tbody>{% for l in lines %}<tr><td>{{loop.index}}</td><td>{{l.account_code}}</td><td>{{l.account_name_ar}}</td><td>{{"%.2f"|format(l.debit)}}</td><td>{{"%.2f"|format(l.credit)}}</td><td>{{l.tax_direction if l.taxable else 'غير خاضع'}}</td><td>{{l.party_type or '-'}}</td>
+<td>{{l.supplier_name or l.customer_name or '-'}}</td>
+<td>{{l.tax_number or '-'}}</td>
+<td>{{l.invoice_number or '-'}}</td><td>{{l.invoice_date or '-'}}</td><td>{{l.line_description or '-'}}</td><td>{{l.cost_center_code or '-'}} {{l.cost_center_name or ''}}</td></tr>{% endfor %}
+<tr class="total"><td colspan="3">الإجمالي</td><td>{{"%.2f"|format(journal.total_debit)}}</td><td>{{"%.2f"|format(journal.total_credit)}}</td><td colspan="6"></td></tr></tbody></table>
+<br><table><tr><th>إعداد القيد</th><th>المراجعة</th><th>الاعتماد</th></tr><tr><td style="height:70px"></td><td></td><td></td></tr></table></div></body></html>
