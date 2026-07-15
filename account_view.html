@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+<div><h3 class="mb-1">{{account.account_code}} — {{account.account_name_ar}}</h3><small class="text-muted">{{account.account_name_en}}</small></div>
+<div class="d-flex gap-2"><button class="btn btn-dark" onclick="window.print()">طباعة / PDF</button><a class="btn btn-warning" href="{{url_for('account_edit',account_id=account.id)}}">تعديل</a></div>
+</div>
+<div class="row g-3 mb-4">
+<div class="col-md-3"><div class="form-card"><small>إجمالي المدين</small><h4>{{"%.2f"|format(account.total_debit)}}</h4></div></div>
+<div class="col-md-3"><div class="form-card"><small>إجمالي الدائن</small><h4>{{"%.2f"|format(account.total_credit)}}</h4></div></div>
+<div class="col-md-3"><div class="form-card"><small>الرصيد</small><h4>{{"%.2f"|format(account.balance)}}</h4></div></div>
+<div class="col-md-3"><div class="form-card"><small>عدد القيود</small><h4>{{account.entries_count}}</h4></div></div>
+</div>
+<div class="form-card mb-4"><table class="table table-bordered">
+<tr><th>النوع</th><td>{{account.account_type}}</td><th>طبيعة الرصيد</th><td>{{account.normal_balance}}</td></tr>
+<tr><th>القائمة المالية</th><td>{{account.statement_type}}</td><th>الحساب الأب</th><td>{{account.parent_name or '-'}}</td></tr>
+<tr><th>يقبل حركة</th><td>{{'نعم' if account.accepts_entries else 'لا'}}</td><th>الحالة</th><td>{{'نشط' if account.active else 'غير نشط'}}</td></tr>
+</table></div>
+{% if children %}<div class="form-card mb-4"><h5>الحسابات الفرعية</h5><table class="table table-striped"><thead><tr><th>الكود</th><th>الحساب</th><th>يقبل حركة</th><th>الحالة</th></tr></thead><tbody>{% for c in children %}<tr><td>{{c.account_code}}</td><td><a href="{{url_for('account_view',account_id=c.id)}}">{{c.account_name_ar}}</a></td><td>{{'نعم' if c.accepts_entries else 'لا'}}</td><td>{{'نشط' if c.active else 'غير نشط'}}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+<div class="form-card"><h5>آخر الحركات</h5><div class="table-responsive"><table class="table table-striped">
+<thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>مدين</th><th>دائن</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>الحالة</th></tr></thead>
+<tbody>{% for m in movements %}<tr><td>{{m.journal_no}}</td><td>{{m.journal_date}}</td><td>{{m.line_description or '-'}}</td><td>{{"%.2f"|format(m.debit)}}</td><td>{{"%.2f"|format(m.credit)}}</td><td>{{m.invoice_number or '-'}}</td><td>{{m.invoice_date or '-'}}</td><td>{{m.status}}</td></tr>{% endfor %}</tbody>
+</table></div></div>
+{% endblock %}

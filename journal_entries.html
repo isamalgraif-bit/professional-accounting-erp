@@ -3,7 +3,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h3 class="mb-1">قيود اليومية</h3>
-    <small class="text-muted">General Journal — إدخال سريع بالبحث عن الكود أو اسم الحساب</small>
+    <small class="text-muted">General Journal — إدخال سريع بالبحث عن الكود أو اسم الحساب</small><div class="mt-2 d-flex gap-2 flex-wrap"><span class="shortcut-hint">Ctrl+S حفظ</span><span class="shortcut-hint">F2 سطر جديد</span><span class="shortcut-hint">Ctrl+P طباعة</span><span class="shortcut-hint">المسودة تحفظ تلقائيًا</span></div>
   </div>
   <div class="d-flex gap-2">
     <a class="btn btn-success" href="{{ url_for('journal_export', q=q) }}">تصدير Excel</a>
@@ -391,6 +391,70 @@ document.getElementById('journalForm').addEventListener('submit', function(event
     }
   });
   if(!valid) event.preventDefault();
+});
+
+const JOURNAL_DRAFT_KEY='west_erp_single_journal_draft_v1';
+
+function draftData(){
+  return {
+    journalDate:document.getElementById('journalDate')?.value||'',
+    status:document.querySelector('[name="status"]')?.value||'مسودة',
+    reference:document.querySelector('[name="reference"]')?.value||'',
+    description:document.querySelector('[name="description"]')?.value||'',
+    rows:[...document.querySelectorAll('.journal-row')].map(r=>({
+      accountCode:r.querySelector('.account-code')?.value||'',
+      accountName:r.querySelector('.account-name')?.value||'',
+      debit:r.querySelector('.debit')?.value||'0',
+      credit:r.querySelector('.credit')?.value||'0',
+      taxable:r.querySelector('.taxable')?.value||'0',
+      direction:r.querySelector('.tax-direction')?.value||'غير مطبق',
+      partyType:r.querySelector('.party-type')?.value||'',
+      supplier:r.querySelector('.supplier-select')?.value||'',
+      customer:r.querySelector('.customer-select')?.value||'',
+      invoiceNumber:r.querySelector('.invoice-number')?.value||'',
+      invoiceDate:r.querySelector('.invoice-date')?.value||'',
+      description:r.querySelector('[name="line_description[]"]')?.value||'',
+      centerSearch:r.querySelector('.cost-center-search')?.value||''
+    }))
+  };
+}
+function flashSaved(){
+  const toast=document.getElementById('globalSaveToast');
+  if(!toast)return;
+  toast.classList.add('show');
+  setTimeout(()=>toast.classList.remove('show'),1200);
+}
+let saveTimer;
+function scheduleDraftSave(){
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>{
+    localStorage.setItem(JOURNAL_DRAFT_KEY,JSON.stringify(draftData()));
+    flashSaved();
+  },700);
+}
+document.getElementById('journalForm')?.addEventListener('input',scheduleDraftSave);
+document.getElementById('journalForm')?.addEventListener('change',scheduleDraftSave);
+document.getElementById('journalForm')?.addEventListener('submit',()=>{
+  localStorage.removeItem(JOURNAL_DRAFT_KEY);
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='F2'){
+    e.preventDefault();
+    document.getElementById('addRow')?.click();
+  }
+  if(e.ctrlKey && e.key.toLowerCase()==='s'){
+    e.preventDefault();
+    document.getElementById('journalForm')?.requestSubmit();
+  }
+  if(e.ctrlKey && e.key.toLowerCase()==='p'){
+    e.preventDefault();
+    window.print();
+  }
+  if(e.key==='Enter' && e.target.matches('input,select')){
+    const fields=[...document.querySelectorAll('#journalForm input:not([type="hidden"]),#journalForm select,#journalForm button')].filter(x=>!x.disabled&&x.offsetParent!==null);
+    const idx=fields.indexOf(e.target);
+    if(idx>=0 && idx<fields.length-1){e.preventDefault();fields[idx+1].focus();}
+  }
 });
 </script>
 {% endblock %}

@@ -1,13 +1,130 @@
-<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>{{batch.batch_no}}</title>
-<style>body{font-family:Tahoma;background:#eee}.toolbar,.sheet{max-width:1200px;margin:18px auto}.sheet{background:#fff;padding:30px}table{width:100%;border-collapse:collapse;margin-bottom:25px}th,td{border:1px solid #bbb;padding:7px}th{background:#eee}.btn{padding:10px;background:#174ea6;color:white;border:0}.group-title{background:#174ea6;color:white;padding:8px}@media print{body{background:white}.toolbar{display:none}.sheet{margin:0;max-width:none}}</style></head><body>
-<div class="toolbar"><button class="btn" onclick="window.print()">طباعة / PDF</button> <a class="btn" href="{{url_for('multi_journal_export',batch_id=batch.id)}}">Excel</a></div>
-<div class="sheet"><h2>{{company.company_name_ar}}</h2><h3>دفعة قيود يومية متعددة</h3>
-<p><b>رقم الدفعة:</b> {{batch.batch_no}} | <b>التاريخ:</b> {{batch.batch_date}} | <b>الحالة:</b> {{batch.status}}</p>
-<p><b>البيان:</b> {{batch.description or '-'}}</p>
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>{{batch.batch_no}}</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:Tahoma,Arial,sans-serif;background:#eef1f5;margin:0;color:#172033}
+.toolbar{max-width:1200px;margin:18px auto;display:flex;gap:10px;flex-wrap:wrap}
+.btn{padding:10px 15px;background:#174ea6;color:#fff;border:0;border-radius:7px;text-decoration:none;cursor:pointer}
+.btn.secondary{background:#4b5563}
+.btn.success{background:#16803b}
+.sheet{max-width:1200px;margin:0 auto 30px;background:#fff;padding:30px;box-shadow:0 5px 20px rgba(0,0,0,.08)}
+.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #174ea6;padding-bottom:15px;margin-bottom:20px}
+.logo img{max-width:150px;max-height:80px;object-fit:contain}
+.batch-info{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+.info-box{border:1px solid #dbe3ec;border-radius:8px;padding:10px;background:#f8fafc}
+.group-page{page-break-after:always;margin-bottom:30px}
+.group-page:last-child{page-break-after:auto}
+.group-title{background:#174ea6;color:white;padding:10px 14px;border-radius:6px 6px 0 0;margin:0}
+.group-tools{display:flex;justify-content:flex-end;margin:8px 0}
+table{width:100%;border-collapse:collapse;margin-bottom:20px}
+th,td{border:1px solid #cfd6df;padding:7px;text-align:right;font-size:12px}
+th{background:#edf2f7}
+.total-row{font-weight:bold;background:#f8fafc}
+.signature td{height:70px;text-align:center}
+@media print{
+ body{background:#fff}
+ .toolbar,.group-tools{display:none!important}
+ .sheet{box-shadow:none;margin:0;max-width:none;padding:8mm}
+ .group-page{page-break-after:always}
+ .group-page:last-child{page-break-after:auto}
+ @page{size:A4 landscape;margin:7mm}
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+<button class="btn" onclick="window.print()">طباعة الدفعة كاملة / PDF</button>
+<button class="btn secondary" onclick="printEachGroup()">طباعة كل قيد في صفحة مستقلة</button>
+<a class="btn success" href="{{url_for('multi_journal_export',batch_id=batch.id)}}">تصدير Excel</a>
+</div>
+
+<div class="sheet">
+<div class="header">
+<div class="logo">
+{% if company.logo_data and company.logo_mime %}
+<img src="data:{{company.logo_mime}};base64,{{company.logo_data}}" alt="الشعار">
+{% elif company.logo_url %}
+<img src="{{company.logo_url}}" alt="الشعار">
+{% endif %}
+</div>
+<div>
+<h2 style="margin:0">{{company.company_name_ar}}</h2>
+<div>{{company.company_name_en}}</div>
+</div>
+<div style="text-align:left">
+<h2 style="margin:0">دفعة قيود يومية متعددة</h2>
+<div>Multiple Journal Batch</div>
+</div>
+</div>
+
+<div class="batch-info">
+<div class="info-box"><strong>رقم الدفعة</strong><br>{{batch.batch_no}}</div>
+<div class="info-box"><strong>تاريخ الدفعة</strong><br>{{batch.batch_date}}</div>
+<div class="info-box"><strong>الحالة</strong><br>{{batch.status}}</div>
+<div class="info-box"><strong>البيان</strong><br>{{batch.description or '-'}}</div>
+</div>
+
 {% for g in groups %}
-<h4 class="group-title">المجموعة {{g.group_no}} — {{g.journal_no}}</h4>
-<table><thead><tr><th>م</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>الضريبة</th><th>الطرف</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th></tr></thead><tbody>
-{% for l in lines if l.group_no==g.group_no %}<tr><td>{{loop.index}}</td><td>{{l.account_code}}</td><td>{{l.account_name_ar}}</td><td>{{"%.2f"|format(l.debit)}}</td><td>{{"%.2f"|format(l.credit)}}</td><td>{{l.tax_direction if l.taxable else 'غير خاضع'}}</td><td>{{l.supplier_name or l.customer_name or '-'}}</td><td>{{l.tax_number or '-'}}</td><td>{{l.invoice_number or '-'}}</td><td>{{l.invoice_date or '-'}}</td><td>{{l.line_description or '-'}}</td><td>{{l.cost_center_code or '-'}} {{l.cost_center_name or ''}}</td></tr>{% endfor %}
-<tr><th colspan="3">الإجمالي</th><th>{{"%.2f"|format(g.total_debit)}}</th><th>{{"%.2f"|format(g.total_credit)}}</th><th colspan="7"></th></tr>
-</tbody></table>{% endfor %}
-</div></body></html>
+<section class="group-page" data-group="{{g.group_no}}">
+<h3 class="group-title">المجموعة {{g.group_no}} — القيد {{g.journal_no}}</h3>
+
+<div class="group-tools">
+<a class="btn secondary" target="_blank"
+   href="{{url_for('multi_journal_group_print',batch_id=batch.id,group_no=g.group_no)}}">
+طباعة هذا القيد فقط
+</a>
+</div>
+
+<table>
+<thead>
+<tr>
+<th>م</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th>
+<th>الضريبة</th><th>الطرف</th><th>الرقم الضريبي</th>
+<th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th>
+</tr>
+</thead>
+<tbody>
+{% for l in lines if l.group_no==g.group_no %}
+<tr>
+<td>{{loop.index}}</td>
+<td>{{l.account_code}}</td>
+<td>{{l.account_name_ar}}</td>
+<td>{{"%.2f"|format(l.debit)}}</td>
+<td>{{"%.2f"|format(l.credit)}}</td>
+<td>{{l.tax_direction if l.taxable else 'غير خاضع'}}</td>
+<td>{{l.supplier_name or l.customer_name or '-'}}</td>
+<td>{{l.tax_number or '-'}}</td>
+<td>{{l.invoice_number or '-'}}</td>
+<td>{{l.invoice_date or '-'}}</td>
+<td>{{l.line_description or '-'}}</td>
+<td>{{l.cost_center_code or '-'}} {{l.cost_center_name or ''}}</td>
+</tr>
+{% endfor %}
+<tr class="total-row">
+<td colspan="3">الإجمالي</td>
+<td>{{"%.2f"|format(g.total_debit)}}</td>
+<td>{{"%.2f"|format(g.total_credit)}}</td>
+<td colspan="7"></td>
+</tr>
+</tbody>
+</table>
+
+<table class="signature">
+<tr><th>إعداد القيد</th><th>المراجعة</th><th>الاعتماد</th></tr>
+<tr><td></td><td></td><td></td></tr>
+</table>
+</section>
+{% endfor %}
+</div>
+
+<script>
+function printEachGroup(){
+  window.print();
+}
+</script>
+</body>
+</html>

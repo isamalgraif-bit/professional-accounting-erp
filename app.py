@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.9.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -212,6 +212,8 @@ def init_db():
             parent_id INTEGER REFERENCES chart_of_accounts(id),
             level INTEGER NOT NULL DEFAULT 1,
             accepts_entries INTEGER NOT NULL DEFAULT 1,
+            normal_balance VARCHAR(20) DEFAULT 'مدين',
+            statement_type VARCHAR(50) DEFAULT 'الميزانية العمومية',
             active INTEGER NOT NULL DEFAULT 1
         )""",
         """CREATE TABLE IF NOT EXISTS cost_centers(
@@ -344,7 +346,9 @@ def init_db():
         "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS invoice_date DATE",
         "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id)",
         "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS party_type VARCHAR(20) DEFAULT ''",
-        "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS tax_number VARCHAR(50) DEFAULT ''"
+        "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS tax_number VARCHAR(50) DEFAULT ''",
+        "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS normal_balance VARCHAR(20) DEFAULT 'مدين'",
+        "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS statement_type VARCHAR(50) DEFAULT 'الميزانية العمومية'"
     ]
     for migration in migrations:
         db.session.execute(text(migration))
@@ -876,10 +880,11 @@ def chart_of_accounts():
         if parent_id:
             parent = row("SELECT level FROM chart_of_accounts WHERE id=:id", {"id": parent_id})
             parent_level = parent["level"] if parent else 0
+
         execute("""INSERT INTO chart_of_accounts(
             account_code,account_name_ar,account_name_en,account_type,
-            parent_id,level,accepts_entries,active)
-            VALUES(:code,:ar,:en,:type,:parent,:level,:accepts,:active)""",
+            parent_id,level,accepts_entries,normal_balance,statement_type,active)
+            VALUES(:code,:ar,:en,:type,:parent,:level,:accepts,:normal_balance,:statement_type,:active)""",
             {"code":request.form["account_code"].strip(),
              "ar":request.form["account_name_ar"].strip(),
              "en":request.form.get("account_name_en","").strip(),
@@ -887,14 +892,207 @@ def chart_of_accounts():
              "parent":parent_id,
              "level":parent_level+1,
              "accepts":1 if request.form.get("accepts_entries")=="1" else 0,
+             "normal_balance":request.form.get("normal_balance","مدين"),
+             "statement_type":request.form.get("statement_type","الميزانية العمومية"),
              "active":1 if request.form.get("active")=="1" else 0})
-        flash("تمت إضافة الحساب","success")
+        audit("CREATE", "ACCOUNT", f"إضافة حساب {request.form['account_code']}")
+        flash("تمت إضافة الحساب", "success")
         return redirect(url_for("chart_of_accounts"))
-    accounts = rows("""SELECT a.*,p.account_name_ar parent_name
-                       FROM chart_of_accounts a
-                       LEFT JOIN chart_of_accounts p ON p.id=a.parent_id
-                       ORDER BY a.account_code""")
-    return render_template("chart_of_accounts.html",accounts=accounts)
+
+    q = request.args.get("q", "").strip()
+    account_type = request.args.get("account_type", "").strip()
+    active = request.args.get("active", "").strip()
+
+    conditions = []
+    params = {}
+    if q:
+        conditions.append("(a.account_code ILIKE :q OR a.account_name_ar ILIKE :q OR a.account_name_en ILIKE :q)")
+        params["q"] = f"%{q}%"
+    if account_type:
+        conditions.append("a.account_type=:account_type")
+        params["account_type"] = account_type
+    if active in ("0","1"):
+        conditions.append("a.active=:active")
+        params["active"] = int(active)
+
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+
+    accounts = rows(f"""
+        SELECT a.*, p.account_name_ar parent_name,
+               COALESCE(ch.children_count,0) children_count,
+               COALESCE(mv.entries_count,0) entries_count,
+               COALESCE(mv.total_debit,0) total_debit,
+               COALESCE(mv.total_credit,0) total_credit,
+               COALESCE(mv.total_debit,0)-COALESCE(mv.total_credit,0) balance
+        FROM chart_of_accounts a
+        LEFT JOIN chart_of_accounts p ON p.id=a.parent_id
+        LEFT JOIN (
+            SELECT parent_id, COUNT(*) children_count
+            FROM chart_of_accounts
+            WHERE parent_id IS NOT NULL
+            GROUP BY parent_id
+        ) ch ON ch.parent_id=a.id
+        LEFT JOIN (
+            SELECT account_id, COUNT(*) entries_count,
+                   SUM(debit) total_debit, SUM(credit) total_credit
+            FROM journal_entry_lines
+            GROUP BY account_id
+        ) mv ON mv.account_id=a.id
+        {where}
+        ORDER BY a.account_code
+    """, params)
+
+    parents = rows("""
+        SELECT id,account_code,account_name_ar,level
+        FROM chart_of_accounts
+        ORDER BY account_code
+    """)
+
+    return render_template(
+        "chart_of_accounts.html",
+        accounts=accounts,
+        parents=parents,
+        q=q,
+        selected_type=account_type,
+        selected_active=active
+    )
+
+
+@app.route("/chart-of-accounts/<int:account_id>")
+@login_required
+def account_view(account_id):
+    account = row("""
+        SELECT a.*,p.account_name_ar parent_name,
+               COALESCE(mv.entries_count,0) entries_count,
+               COALESCE(mv.total_debit,0) total_debit,
+               COALESCE(mv.total_credit,0) total_credit,
+               COALESCE(mv.total_debit,0)-COALESCE(mv.total_credit,0) balance
+        FROM chart_of_accounts a
+        LEFT JOIN chart_of_accounts p ON p.id=a.parent_id
+        LEFT JOIN (
+            SELECT account_id,COUNT(*) entries_count,
+                   SUM(debit) total_debit,SUM(credit) total_credit
+            FROM journal_entry_lines GROUP BY account_id
+        ) mv ON mv.account_id=a.id
+        WHERE a.id=:id
+    """, {"id": account_id})
+    if not account:
+        return "الحساب غير موجود", 404
+
+    children = rows("""
+        SELECT id,account_code,account_name_ar,accepts_entries,active
+        FROM chart_of_accounts WHERE parent_id=:id ORDER BY account_code
+    """, {"id": account_id})
+
+    movements = rows("""
+        SELECT j.journal_no,j.journal_date,j.status,l.debit,l.credit,
+               l.line_description,l.invoice_number,l.invoice_date
+        FROM journal_entry_lines l
+        JOIN journal_entries j ON j.id=l.journal_id
+        WHERE l.account_id=:id
+        ORDER BY j.journal_date DESC,j.id DESC,l.id DESC
+        LIMIT 200
+    """, {"id": account_id})
+
+    company = row("SELECT * FROM settings WHERE id=1")
+    return render_template("account_view.html", account=account, children=children,
+                           movements=movements, company=company)
+
+@app.route("/chart-of-accounts/<int:account_id>/edit", methods=["GET","POST"])
+@login_required
+def account_edit(account_id):
+    account = row("SELECT * FROM chart_of_accounts WHERE id=:id", {"id": account_id})
+    if not account:
+        return "الحساب غير موجود", 404
+
+    if request.method == "POST":
+        parent_id = request.form.get("parent_id") or None
+        if parent_id and int(parent_id) == account_id:
+            flash("لا يمكن جعل الحساب أبًا لنفسه", "danger")
+            return redirect(url_for("account_edit", account_id=account_id))
+
+        parent_level = 0
+        if parent_id:
+            parent = row("SELECT level FROM chart_of_accounts WHERE id=:id", {"id": parent_id})
+            parent_level = parent["level"] if parent else 0
+
+        execute("""UPDATE chart_of_accounts SET
+            account_code=:code,account_name_ar=:ar,account_name_en=:en,
+            account_type=:type,parent_id=:parent,level=:level,
+            accepts_entries=:accepts,normal_balance=:normal_balance,
+            statement_type=:statement_type,active=:active
+            WHERE id=:id""",
+            {"code":request.form["account_code"].strip(),
+             "ar":request.form["account_name_ar"].strip(),
+             "en":request.form.get("account_name_en","").strip(),
+             "type":request.form["account_type"],
+             "parent":parent_id,
+             "level":parent_level+1,
+             "accepts":1 if request.form.get("accepts_entries")=="1" else 0,
+             "normal_balance":request.form["normal_balance"],
+             "statement_type":request.form["statement_type"],
+             "active":1 if request.form.get("active")=="1" else 0,
+             "id":account_id})
+        audit("UPDATE", "ACCOUNT", f"تعديل الحساب {request.form['account_code']}")
+        flash("تم تعديل الحساب", "success")
+        return redirect(url_for("account_view", account_id=account_id))
+
+    parents = rows("""
+        SELECT id,account_code,account_name_ar,level
+        FROM chart_of_accounts WHERE id<>:id ORDER BY account_code
+    """, {"id": account_id})
+    return render_template("account_edit.html", account=account, parents=parents)
+
+@app.route("/chart-of-accounts/<int:account_id>/delete", methods=["POST"])
+@login_required
+def account_delete(account_id):
+    account = row("SELECT * FROM chart_of_accounts WHERE id=:id", {"id": account_id})
+    if not account:
+        return "الحساب غير موجود", 404
+
+    children_count = row("SELECT COUNT(*) count FROM chart_of_accounts WHERE parent_id=:id", {"id": account_id})["count"]
+    entries_count = row("SELECT COUNT(*) count FROM journal_entry_lines WHERE account_id=:id", {"id": account_id})["count"]
+
+    if children_count > 0:
+        flash("لا يمكن حذف الحساب لأنه يحتوي على حسابات فرعية", "danger")
+    elif entries_count > 0:
+        flash("لا يمكن حذف الحساب لأنه مستخدم في قيود يومية. يمكنك تعطيله بدلًا من حذفه.", "danger")
+    else:
+        execute("DELETE FROM chart_of_accounts WHERE id=:id", {"id": account_id})
+        audit("DELETE", "ACCOUNT", f"حذف الحساب {account['account_code']}")
+        flash("تم حذف الحساب", "success")
+    return redirect(url_for("chart_of_accounts"))
+
+@app.route("/chart-of-accounts/export.xlsx")
+@login_required
+def chart_export():
+    data = rows("""
+        SELECT a.account_code,a.account_name_ar,a.account_name_en,a.account_type,
+               p.account_code parent_code,p.account_name_ar parent_name,
+               a.level,a.accepts_entries,a.normal_balance,a.statement_type,a.active,
+               COALESCE(mv.entries_count,0) entries_count,
+               COALESCE(mv.total_debit,0) total_debit,
+               COALESCE(mv.total_credit,0) total_credit,
+               COALESCE(mv.total_debit,0)-COALESCE(mv.total_credit,0) balance
+        FROM chart_of_accounts a
+        LEFT JOIN chart_of_accounts p ON p.id=a.parent_id
+        LEFT JOIN (
+            SELECT account_id,COUNT(*) entries_count,
+                   SUM(debit) total_debit,SUM(credit) total_credit
+            FROM journal_entry_lines GROUP BY account_id
+        ) mv ON mv.account_id=a.id
+        ORDER BY a.account_code
+    """)
+    headers = ["الكود","اسم الحساب","الاسم الإنجليزي","النوع","كود الحساب الأب",
+               "الحساب الأب","المستوى","يقبل حركة","طبيعة الرصيد","القائمة المالية",
+               "الحالة","عدد القيود","إجمالي المدين","إجمالي الدائن","الرصيد"]
+    keys = ["account_code","account_name_ar","account_name_en","account_type",
+            "parent_code","parent_name","level","accepts_entries","normal_balance",
+            "statement_type","active","entries_count","total_debit","total_credit","balance"]
+    records = [[r.get(k) for k in keys] for r in data]
+    return xlsx_response("chart_of_accounts.xlsx","دليل الحسابات",headers,records)
+
+
 
 @app.route("/cost-centers", methods=["GET","POST"])
 @login_required
@@ -1382,6 +1580,45 @@ def multi_journal_view(batch_id):
     """, {"id": batch_id})
     company = row("SELECT * FROM settings WHERE id=1")
     return render_template("multi_journal_view.html", batch=batch, groups=groups, lines=lines, company=company)
+
+
+@app.route("/multi-journal/<int:batch_id>/group/<int:group_no>/print")
+@login_required
+def multi_journal_group_print(batch_id, group_no):
+    batch = row("SELECT * FROM journal_batches WHERE id=:id", {"id": batch_id})
+    if not batch:
+        return "الدفعة غير موجودة", 404
+
+    group = row("""
+        SELECT *
+        FROM journal_batch_groups
+        WHERE batch_id=:batch_id AND group_no=:group_no
+    """, {"batch_id": batch_id, "group_no": group_no})
+    if not group:
+        return "القيد غير موجود داخل الدفعة", 404
+
+    lines = rows("""
+        SELECT l.*,a.account_code,a.account_name_ar,
+               s.name supplier_name,cus.name customer_name,
+               cc.code cost_center_code,cc.name cost_center_name
+        FROM journal_batch_lines l
+        JOIN chart_of_accounts a ON a.id=l.account_id
+        LEFT JOIN suppliers s ON s.id=l.supplier_id
+        LEFT JOIN customers cus ON cus.id=l.customer_id
+        LEFT JOIN cost_centers cc ON cc.id=l.cost_center_id
+        WHERE l.group_id=:group_id
+        ORDER BY l.id
+    """, {"group_id": group["id"]})
+
+    company = row("SELECT * FROM settings WHERE id=1")
+    return render_template(
+        "multi_journal_group_print.html",
+        batch=batch,
+        group=group,
+        lines=lines,
+        company=company
+    )
+
 
 @app.route("/multi-journal/<int:batch_id>/delete", methods=["POST"])
 @login_required

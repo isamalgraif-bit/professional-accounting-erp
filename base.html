@@ -15,6 +15,89 @@ body{background:#f5f7fb;font-family:Tahoma,Arial,sans-serif}
 .table{background:#fff}
 .form-card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 6px 20px rgba(0,0,0,.05)}
 </style>
+
+<style>
+:root{
+  --sidebar-width:260px;
+  --surface:#ffffff;
+  --surface-soft:#f7f9fc;
+  --border:#e2e8f0;
+  --text:#172033;
+  --muted:#64748b;
+  --primary:#174ea6;
+  --primary-soft:#eaf1ff;
+  --success:#16803b;
+  --danger:#c62828;
+  --warning:#a16207;
+  --shadow:0 8px 28px rgba(15,23,42,.08);
+}
+body{background:#f1f5f9;color:var(--text)}
+.sidebar{
+  width:var(--sidebar-width);
+  background:linear-gradient(180deg,#102a56,#174ea6);
+  color:#fff;
+  box-shadow:var(--shadow);
+  overflow-y:auto;
+}
+.sidebar a{
+  display:block;
+  color:rgba(255,255,255,.9);
+  padding:10px 14px;
+  border-radius:9px;
+  margin:3px 8px;
+  text-decoration:none;
+  transition:.2s ease;
+}
+.sidebar a:hover{background:rgba(255,255,255,.12);transform:translateX(-2px)}
+main{margin-right:var(--sidebar-width);min-height:100vh;padding:24px}
+.form-card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:20px;
+  box-shadow:var(--shadow);
+}
+.form-control,.form-select{
+  border-radius:9px;
+  border-color:#cbd5e1;
+  min-height:40px;
+}
+.form-control:focus,.form-select:focus{
+  border-color:#7aa2e3;
+  box-shadow:0 0 0 .2rem rgba(23,78,166,.12);
+}
+.btn{border-radius:9px}
+.table{--bs-table-bg:transparent}
+.table thead th{
+  background:#edf2f7;
+  color:#334155;
+  border-bottom:2px solid #cbd5e1;
+}
+.badge{font-weight:600}
+.erp-page-title{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:22px}
+.erp-kpi{background:#fff;border:1px solid var(--border);border-radius:13px;padding:16px;box-shadow:var(--shadow)}
+.shortcut-hint{
+  display:inline-flex;align-items:center;gap:5px;
+  background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;
+  border-radius:7px;padding:3px 7px;font-size:11px
+}
+.toast-save{
+  position:fixed;left:24px;bottom:24px;background:#172033;color:#fff;
+  border-radius:10px;padding:10px 14px;opacity:0;pointer-events:none;
+  transition:.25s;z-index:9999
+}
+.toast-save.show{opacity:1}
+@media(max-width:900px){
+  .sidebar{position:relative;width:100%;height:auto}
+  main{margin-right:0;padding:14px}
+}
+@media print{
+  .sidebar,.no-print{display:none!important}
+  main{margin:0!important;padding:0!important}
+  body{background:#fff}
+  .form-card{box-shadow:none}
+}
+</style>
 </head>
 <body>
 <div class="container-fluid">
@@ -66,5 +149,6 @@ body{background:#f5f7fb;font-family:Tahoma,Arial,sans-serif}
 </main>
 </div>
 </div>
+<div id="globalSaveToast" class="toast-save">تم حفظ المسودة تلقائيًا</div>
 </body>
 </html>

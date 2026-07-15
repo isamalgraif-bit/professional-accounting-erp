@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>{{group.journal_no}}</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:Tahoma,Arial,sans-serif;background:#eef1f5;margin:0;color:#172033}
+.toolbar,.sheet{max-width:1100px;margin:18px auto}
+.toolbar{display:flex;gap:10px}
+.btn{padding:10px 15px;background:#174ea6;color:#fff;border:0;border-radius:7px;text-decoration:none;cursor:pointer}
+.sheet{background:#fff;padding:30px;box-shadow:0 5px 20px rgba(0,0,0,.08)}
+.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #174ea6;padding-bottom:15px;margin-bottom:20px}
+.logo img{max-width:150px;max-height:80px;object-fit:contain}
+.info{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.box{border:1px solid #dbe3ec;border-radius:8px;padding:10px;background:#f8fafc}
+table{width:100%;border-collapse:collapse;margin-bottom:20px}
+th,td{border:1px solid #cfd6df;padding:8px;font-size:12px;text-align:right}
+th{background:#edf2f7}
+.total{font-weight:bold;background:#f8fafc}
+.signature td{height:75px;text-align:center}
+@media print{
+ body{background:#fff}
+ .toolbar{display:none}
+ .sheet{box-shadow:none;margin:0;max-width:none;padding:8mm}
+ @page{size:A4 landscape;margin:7mm}
+}
+</style>
+</head>
+<body>
+<div class="toolbar">
+<button class="btn" onclick="window.print()">طباعة / PDF</button>
+</div>
+
+<div class="sheet">
+<div class="header">
+<div class="logo">
+{% if company.logo_data and company.logo_mime %}
+<img src="data:{{company.logo_mime}};base64,{{company.logo_data}}" alt="الشعار">
+{% elif company.logo_url %}
+<img src="{{company.logo_url}}" alt="الشعار">
+{% endif %}
+</div>
+<div>
+<h2 style="margin:0">{{company.company_name_ar}}</h2>
+<div>{{company.company_name_en}}</div>
+</div>
+<div style="text-align:left">
+<h2 style="margin:0">قيد يومية</h2>
+<div>Journal Voucher</div>
+</div>
+</div>
+
+<div class="info">
+<div class="box"><strong>رقم القيد</strong><br>{{group.journal_no}}</div>
+<div class="box"><strong>رقم الدفعة</strong><br>{{batch.batch_no}}</div>
+<div class="box"><strong>التاريخ</strong><br>{{batch.batch_date}}</div>
+<div class="box"><strong>الحالة</strong><br>{{group.status}}</div>
+</div>
+
+<table>
+<thead>
+<tr>
+<th>م</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th>
+<th>الضريبة</th><th>الطرف</th><th>الرقم الضريبي</th>
+<th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th>
+</tr>
+</thead>
+<tbody>
+{% for l in lines %}
+<tr>
+<td>{{loop.index}}</td>
+<td>{{l.account_code}}</td>
+<td>{{l.account_name_ar}}</td>
+<td>{{"%.2f"|format(l.debit)}}</td>
+<td>{{"%.2f"|format(l.credit)}}</td>
+<td>{{l.tax_direction if l.taxable else 'غير خاضع'}}</td>
+<td>{{l.supplier_name or l.customer_name or '-'}}</td>
+<td>{{l.tax_number or '-'}}</td>
+<td>{{l.invoice_number or '-'}}</td>
+<td>{{l.invoice_date or '-'}}</td>
+<td>{{l.line_description or '-'}}</td>
+<td>{{l.cost_center_code or '-'}} {{l.cost_center_name or ''}}</td>
+</tr>
+{% endfor %}
+<tr class="total">
+<td colspan="3">الإجمالي</td>
+<td>{{"%.2f"|format(group.total_debit)}}</td>
+<td>{{"%.2f"|format(group.total_credit)}}</td>
+<td colspan="7"></td>
+</tr>
+</tbody>
+</table>
+
+<table class="signature">
+<tr><th>إعداد القيد</th><th>المراجعة</th><th>الاعتماد</th></tr>
+<tr><td></td><td></td><td></td></tr>
+</table>
+</div>
+</body>
+</html>

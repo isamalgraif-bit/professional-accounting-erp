@@ -1,16 +1,159 @@
-{% extends "base.html" %}{% block content %}
-<h3 class="mb-4">دليل الحسابات</h3>
-<div class="form-card mb-4"><form method="post"><div class="row g-3">
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+<div>
+<h3 class="mb-1">دليل الحسابات</h3>
+<small class="text-muted">Chart of Accounts — عرض شجري متكامل</small>
+</div>
+<div class="d-flex gap-2">
+<a class="btn btn-success" href="{{url_for('chart_export')}}">تصدير Excel</a>
+<button class="btn btn-outline-dark" onclick="window.print()">طباعة / PDF</button>
+</div>
+</div>
+
+
+<div class="d-flex gap-2 mb-3 no-print">
+<button type="button" class="btn btn-outline-primary btn-sm" id="expandAll">توسيع الكل</button>
+<button type="button" class="btn btn-outline-secondary btn-sm" id="collapseAll">طي الكل</button>
+<span class="shortcut-hint">Ctrl + F بحث</span>
+</div>
+<div class="form-card mb-4">
+<form method="get">
+<div class="row g-2">
+<div class="col-md-5"><input class="form-control" name="q" value="{{q}}" placeholder="بحث بالكود أو الاسم العربي أو الإنجليزي"></div>
+<div class="col-md-2">
+<select class="form-select" name="account_type">
+<option value="">كل الأنواع</option>
+{% for t in ['أصل','خصم','حقوق ملكية','إيراد','مصروف'] %}
+<option value="{{t}}" {% if selected_type==t %}selected{% endif %}>{{t}}</option>
+{% endfor %}
+</select>
+</div>
+<div class="col-md-2">
+<select class="form-select" name="active">
+<option value="">كل الحالات</option>
+<option value="1" {% if selected_active=='1' %}selected{% endif %}>نشط</option>
+<option value="0" {% if selected_active=='0' %}selected{% endif %}>غير نشط</option>
+</select>
+</div>
+<div class="col-md-1"><button class="btn btn-primary w-100">بحث</button></div>
+<div class="col-md-2"><a class="btn btn-outline-secondary w-100" href="{{url_for('chart_of_accounts')}}">مسح</a></div>
+</div>
+</form>
+</div>
+
+<div class="form-card mb-4">
+<h5 class="mb-3">إضافة حساب جديد</h5>
+<form method="post">
+<div class="row g-3">
 <div class="col-md-2"><label>كود الحساب</label><input class="form-control" name="account_code" required></div>
 <div class="col-md-3"><label>اسم الحساب</label><input class="form-control" name="account_name_ar" required></div>
 <div class="col-md-3"><label>الاسم الإنجليزي</label><input class="form-control" name="account_name_en"></div>
-<div class="col-md-2"><label>النوع</label><select class="form-select" name="account_type"><option>أصل</option><option>خصم</option><option>حقوق ملكية</option><option>إيراد</option><option>مصروف</option></select></div>
-<div class="col-md-2"><label>الحساب الأب</label><select class="form-select" name="parent_id"><option value="">بدون</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>نوع الحساب</label><select class="form-select" name="account_type"><option>أصل</option><option>خصم</option><option>حقوق ملكية</option><option>إيراد</option><option>مصروف</option></select></div>
+<div class="col-md-2"><label>الحساب الأب</label><select class="form-select" name="parent_id"><option value="">حساب رئيسي</option>{% for p in parents %}<option value="{{p.id}}">{{p.account_code}} - {{p.account_name_ar}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>يقبل حركة</label><select class="form-select" name="accepts_entries"><option value="1">نعم</option><option value="0">لا</option></select></div>
+<div class="col-md-2"><label>طبيعة الرصيد</label><select class="form-select" name="normal_balance"><option>مدين</option><option>دائن</option></select></div>
+<div class="col-md-3"><label>القائمة المالية</label><select class="form-select" name="statement_type"><option>الميزانية العمومية</option><option>قائمة الدخل</option></select></div>
 <div class="col-md-2"><label>الحالة</label><select class="form-select" name="active"><option value="1">نشط</option><option value="0">غير نشط</option></select></div>
-<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">إضافة</button></div>
-</div></form></div>
-<div class="form-card"><div class="table-responsive"><table class="table table-striped">
-<thead><tr><th>الكود</th><th>اسم الحساب</th><th>الإنجليزي</th><th>النوع</th><th>الحساب الأب</th><th>المستوى</th><th>يقبل حركة</th><th>الحالة</th></tr></thead>
-<tbody>{% for a in accounts %}<tr><td>{{a.account_code}}</td><td>{{a.account_name_ar}}</td><td>{{a.account_name_en}}</td><td>{{a.account_type}}</td><td>{{a.parent_name or '-'}}</td><td>{{a.level}}</td><td>{{'نعم' if a.accepts_entries else 'لا'}}</td><td>{{'نشط' if a.active else 'غير نشط'}}</td></tr>{% endfor %}</tbody>
-</table></div></div>{% endblock %}
+<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">إضافة الحساب</button></div>
+</div>
+</form>
+</div>
+
+<div class="form-card">
+<div class="table-responsive">
+<table class="table table-hover align-middle account-tree-table">
+<thead>
+<tr>
+<th>الكود</th><th>الحساب</th><th>النوع</th><th>طبيعة الرصيد</th>
+<th>القائمة</th><th>يقبل حركة</th><th>عدد القيود</th><th>الرصيد</th><th>الحالة</th><th>الإجراءات</th>
+</tr>
+</thead>
+<tbody id="accountTreeBody">
+{% for a in accounts %}
+<tr class="level-{{a.level}} {% if not a.accepts_entries %}parent-account{% endif %}" data-account-id="{{a.id}}" data-parent-id="{{a.parent_id or ''}}" data-level="{{a.level}}" data-name="{{a.account_name_ar}}" data-code="{{a.account_code}}">
+<td>{{a.account_code}}</td>
+<td>
+<div style="padding-right:{{(a.level-1)*24}}px">
+{% if a.children_count %}<button type="button" class="tree-toggle" aria-label="توسيع الحساب">−</button>{% else %}<span class="tree-dot">•</span>{% endif %}
+<strong>{{a.account_name_ar}}</strong>
+{% if a.account_name_en %}<small class="text-muted d-block">{{a.account_name_en}}</small>{% endif %}
+</div>
+</td>
+<td>{{a.account_type}}</td>
+<td>{{a.normal_balance}}</td>
+<td>{{a.statement_type}}</td>
+<td>{{'نعم' if a.accepts_entries else 'لا'}}</td>
+<td>{{a.entries_count}}</td>
+<td>{{"%.2f"|format(a.balance)}}</td>
+<td><span class="badge {{'bg-success' if a.active else 'bg-secondary'}}">{{'نشط' if a.active else 'غير نشط'}}</span></td>
+<td class="text-nowrap">
+<a class="btn btn-sm btn-outline-primary" href="{{url_for('account_view',account_id=a.id)}}">عرض</a>
+<a class="btn btn-sm btn-outline-warning" href="{{url_for('account_edit',account_id=a.id)}}">تعديل</a>
+<form class="d-inline" method="post" action="{{url_for('account_delete',account_id=a.id)}}" onsubmit="return confirm('تأكيد حذف الحساب؟')">
+<button class="btn btn-sm btn-outline-danger">حذف</button></form>
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</div>
+<style>
+.account-tree-table .parent-account{background:#f8fafc;font-weight:600}
+.tree-icon{display:inline-block;width:20px;color:#174ea6}
+@media print{form,.btn,.sidebar{display:none!important}.form-card{box-shadow:none;border:0}}
+
+.tree-toggle{
+  width:23px;height:23px;border:0;border-radius:5px;background:#eaf1ff;
+  color:#174ea6;font-weight:bold;line-height:1;cursor:pointer;margin-left:5px
+}
+.tree-dot{display:inline-block;width:23px;text-align:center;color:#94a3b8}
+.account-tree-table tr.hidden-child{display:none}
+.account-tree-table tbody tr:hover{background:#f8fafc}
+.account-tree-table .matched-row{outline:2px solid #f59e0b;outline-offset:-2px}
+</style>
+<script>
+const rows=[...document.querySelectorAll('#accountTreeBody tr')];
+
+function directChildren(parentId){
+  return rows.filter(r=>r.dataset.parentId===String(parentId));
+}
+function hideDescendants(parentId){
+  directChildren(parentId).forEach(child=>{
+    child.classList.add('hidden-child');
+    hideDescendants(child.dataset.accountId);
+  });
+}
+function showDirectChildren(parentId){
+  directChildren(parentId).forEach(child=>child.classList.remove('hidden-child'));
+}
+function toggleChildren(button,row){
+  const expanded=button.textContent==='−';
+  if(expanded){
+    hideDescendants(row.dataset.accountId);
+    button.textContent='+';
+  }else{
+    showDirectChildren(row.dataset.accountId);
+    button.textContent='−';
+  }
+}
+document.querySelectorAll('.tree-toggle').forEach(button=>{
+  button.addEventListener('click',()=>toggleChildren(button,button.closest('tr')));
+});
+document.getElementById('collapseAll')?.addEventListener('click',()=>{
+  rows.filter(r=>Number(r.dataset.level)>1).forEach(r=>r.classList.add('hidden-child'));
+  document.querySelectorAll('.tree-toggle').forEach(b=>b.textContent='+');
+});
+document.getElementById('expandAll')?.addEventListener('click',()=>{
+  rows.forEach(r=>r.classList.remove('hidden-child'));
+  document.querySelectorAll('.tree-toggle').forEach(b=>b.textContent='−');
+});
+document.addEventListener('keydown',e=>{
+  if(e.ctrlKey && e.key.toLowerCase()==='f'){
+    const input=document.querySelector('input[name="q"]');
+    if(input){e.preventDefault();input.focus();input.select();}
+  }
+});
+</script>
+{% endblock %}

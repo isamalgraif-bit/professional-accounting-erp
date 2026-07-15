@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-<div><h3 class="mb-1">قيود يومية متعددة</h3><small class="text-muted">Multiple Journal Entries</small></div>
+<div><h3 class="mb-1">قيود يومية متعددة</h3><small class="text-muted">Multiple Journal Entries</small><div class="mt-2 d-flex gap-2 flex-wrap"><span class="shortcut-hint">Ctrl+S حفظ</span><span class="shortcut-hint">F2 إضافة سطر</span><span class="shortcut-hint">F3 مجموعة جديدة</span><span class="shortcut-hint">المسودة تحفظ تلقائيًا</span></div></div>
 </div>
 
 <div class="form-card mb-4">
@@ -115,5 +115,48 @@ addLine.addEventListener('click',()=>{const last=document.querySelector('.batch-
 newGroup.addEventListener('click',()=>{const nums=[...document.querySelectorAll('.group-no')].map(x=>Number(x.value||1));const next=Math.max(...nums)+1;const r=document.querySelector('.batch-row').cloneNode(true);reset(r,next);batchBody.appendChild(r);bind(r);checkGroups()});
 const second=document.querySelector('.batch-row').cloneNode(true);reset(second,1);batchBody.appendChild(second);
 document.querySelectorAll('.batch-row').forEach(bind);batchDate.value=new Date().toISOString().slice(0,10);checkGroups();
+
+const MULTI_DRAFT_KEY='west_erp_multi_journal_draft_v1';
+
+function multiDraftData(){
+  return {
+    batchDate:document.getElementById('batchDate')?.value||'',
+    status:document.querySelector('[name="status"]')?.value||'مسودة',
+    description:document.querySelector('[name="description"]')?.value||'',
+    rows:[...document.querySelectorAll('.batch-row')].map(r=>({
+      group:r.querySelector('.group-no')?.value||'1',
+      code:r.querySelector('.account-code')?.value||'',
+      name:r.querySelector('.account-name')?.value||'',
+      debit:r.querySelector('.debit')?.value||'0',
+      credit:r.querySelector('.credit')?.value||'0',
+      taxable:r.querySelector('.taxable')?.value||'0',
+      direction:r.querySelector('.direction')?.value||'غير مطبق',
+      partyType:r.querySelector('.party-type')?.value||'',
+      supplier:r.querySelector('.supplier')?.value||'',
+      customer:r.querySelector('.customer')?.value||'',
+      invoiceNumber:r.querySelector('[name="invoice_number[]"]')?.value||'',
+      invoiceDate:r.querySelector('[name="invoice_date[]"]')?.value||'',
+      description:r.querySelector('[name="line_description[]"]')?.value||'',
+      costCenter:r.querySelector('[name="cost_center_id[]"]')?.value||''
+    }))
+  };
+}
+let multiSaveTimer;
+function saveMultiDraft(){
+  clearTimeout(multiSaveTimer);
+  multiSaveTimer=setTimeout(()=>{
+    localStorage.setItem(MULTI_DRAFT_KEY,JSON.stringify(multiDraftData()));
+    const toast=document.getElementById('globalSaveToast');
+    if(toast){toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),1200);}
+  },700);
+}
+document.getElementById('batchForm')?.addEventListener('input',saveMultiDraft);
+document.getElementById('batchForm')?.addEventListener('change',saveMultiDraft);
+document.getElementById('batchForm')?.addEventListener('submit',()=>localStorage.removeItem(MULTI_DRAFT_KEY));
+document.addEventListener('keydown',e=>{
+  if(e.key==='F2'){e.preventDefault();document.getElementById('addLine')?.click();}
+  if(e.key==='F3'){e.preventDefault();document.getElementById('newGroup')?.click();}
+  if(e.ctrlKey && e.key.toLowerCase()==='s'){e.preventDefault();document.getElementById('batchForm')?.requestSubmit();}
+});
 </script>
 {% endblock %}
