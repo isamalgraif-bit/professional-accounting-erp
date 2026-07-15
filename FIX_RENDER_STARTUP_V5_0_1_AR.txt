@@ -1,0 +1,11 @@
+West ERP 5.0.1 — إصلاح تشغيل Render
+
+السبب:
+كانت الدالة login_required معرفة بعد أول استخدام لها في مسار الترجمة، مما تسبب في NameError وإيقاف Gunicorn.
+
+الإصلاح:
+- نقل تعريف login_required قبل جميع المسارات التي تستخدمها.
+- التحقق من ترتيب التعريف والاستخدام.
+- اجتياز فحص Python syntax.
+
+ارفع app.py فقط، ثم Commit changes وDeploy latest commit.

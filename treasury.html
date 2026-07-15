@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="erp-sticky-header">
+<div><h3 class="mb-1">الخزينة والسندات</h3><small class="text-muted">Receipts, Payments & Transfers</small></div>
+<div class="erp-toolbar no-print">
+<button class="erp-tool-btn" type="button" data-new-document="1" data-new-url="{{url_for('treasury')}}">📄 جديد</button>
+<button class="erp-tool-btn primary" type="button" id="saveTop">💾 حفظ</button>
+<button class="erp-tool-btn dark" type="button" id="savePrint">🖨️ حفظ وطباعة</button>
+<button class="erp-tool-btn" type="button" id="previewDraft">👁️ معاينة</button>
+<a class="erp-tool-btn success" href="{{url_for('treasury_export')}}">📊 Excel</a>
+</div></div>
+
+<div class="form-card mb-4">
+<form method="post" id="treasuryForm" data-track-unsaved="1">
+<input type="hidden" name="print_after_save" id="printAfterSave" value="0">
+<div class="row g-3">
+<div class="col-md-2"><label>نوع السند</label><select class="form-select" name="voucher_type" id="voucherType"><option>قبض</option><option>صرف</option><option>تحويل</option></select></div>
+<div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="voucher_date" id="voucherDate" required></div>
+<div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>مسودة</option><option>معتمد</option></select></div>
+<div class="col-md-2"><label>طريقة الدفع</label><select class="form-select" name="payment_method"><option>نقدي</option><option>تحويل بنكي</option><option>شيك</option></select></div>
+<div class="col-md-4"><label>المرجع</label><input class="form-control" name="reference"></div>
+
+<div class="col-md-2"><label>نوع الطرف</label><select class="form-select" name="party_type" id="partyType"><option value="">بدون</option><option>عميل</option><option>مورد</option></select></div>
+<div class="col-md-4" id="customerWrap"><label>العميل</label><select class="form-select" name="customer_id"><option value="">اختر العميل</option>{% for c in customers %}<option value="{{c.id}}">{{c.name}}{% if c.name_en %} / {{c.name_en}}{% endif %}</option>{% endfor %}</select></div>
+<div class="col-md-4" id="supplierWrap" style="display:none"><label>المورد</label><select class="form-select" name="supplier_id"><option value="">اختر المورد</option>{% for s in suppliers %}<option value="{{s.id}}">{{s.name}}{% if s.name_en %} / {{s.name_en}}{% endif %}</option>{% endfor %}</select></div>
+
+<div class="col-md-4"><label>حساب الصندوق / البنك (المصدر)</label><select class="form-select" name="cash_bank_account_id" required><option value="">اختر</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-4"><label>الحساب المقابل / الوجهة</label><select class="form-select" name="counter_account_id" required><option value="">اختر</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>المبلغ</label><input class="form-control" type="number" step=".01" min=".01" name="amount" required></div>
+<div class="col-md-2"><label>مركز التكلفة</label><select class="form-select" name="cost_center_id"><option value="">بدون</option>{% for c in centers %}<option value="{{c.id}}">{{c.code}} - {{c.name}}</option>{% endfor %}</select></div>
+<div class="col-md-12"><label>البيان</label><input class="form-control" name="description"></div>
+<div class="col-12 text-end"><button class="btn btn-primary">💾 حفظ السند</button></div>
+</div></form></div>
+
+<div class="form-card mb-3"><form method="get"><div class="row g-2"><div class="col-md-9"><input class="form-control" name="q" value="{{q}}" placeholder="بحث برقم السند أو المرجع أو الطرف"></div><div class="col-md-3"><button class="btn btn-primary w-100">بحث</button></div></div></form></div>
+
+<div class="form-card"><div class="table-responsive"><table class="table table-striped align-middle">
+<thead><tr><th>رقم السند</th><th>النوع</th><th>التاريخ</th><th>الطرف</th><th>المبلغ</th><th>الحساب</th><th>الحساب المقابل</th><th>الحالة</th><th>القيد</th><th>الإجراءات</th></tr></thead>
+<tbody>{% for v in vouchers %}<tr>
+<td>{{v.voucher_no}}</td><td>{{v.voucher_type}}</td><td>{{v.voucher_date}}</td><td>{{v.customer_name or v.supplier_name or '-'}}</td><td>{{"%.2f"|format(v.amount)}}</td><td>{{v.cash_account_name}}</td><td>{{v.counter_account_name}}</td><td>{{v.status}}</td>
+<td>{% if v.journal_id %}<a href="{{url_for('journal_view',journal_id=v.journal_id)}}">{{v.journal_no}}</a>{% else %}-{% endif %}</td>
+<td class="text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{{url_for('treasury_view',voucher_id=v.id)}}">عرض</a>
+<a class="btn btn-sm btn-dark" target="_blank" href="{{url_for('treasury_view',voucher_id=v.id,print=1)}}">طباعة/PDF</a>
+{% if not v.journal_id %}<form class="d-inline" method="post" action="{{url_for('treasury_post',voucher_id=v.id)}}"><button class="btn btn-sm btn-success">ترحيل</button></form>
+<form class="d-inline" method="post" action="{{url_for('treasury_delete',voucher_id=v.id)}}" onsubmit="return confirm('تأكيد الحذف؟')"><button class="btn btn-sm btn-danger">حذف</button></form>{% endif %}</td>
+</tr>{% endfor %}</tbody></table></div></div>
+
+<style>
+.erp-sticky-header{position:sticky;top:0;z-index:50;display:flex;justify-content:space-between;align-items:center;gap:15px;margin:-8px -4px 18px;padding:12px 14px;background:rgba(241,245,249,.96);border-bottom:1px solid #dbe3ec}
+.erp-toolbar{display:flex;gap:7px;flex-wrap:wrap}.erp-tool-btn{border:1px solid #cbd5e1;background:#fff;border-radius:9px;padding:8px 11px;text-decoration:none}.erp-tool-btn.primary{background:#1769e0;color:#fff}.erp-tool-btn.dark{background:#172033;color:#fff}.erp-tool-btn.success{background:#16803b;color:#fff}
+</style>
+<script>
+voucherDate.value=new Date().toISOString().slice(0,10);
+function syncParty(){const t=partyType.value;customerWrap.style.display=t==='عميل'?'':'none';supplierWrap.style.display=t==='مورد'?'':'none'}
+partyType.addEventListener('change',syncParty);syncParty();
+function submitVoucher(p){printAfterSave.value=p?'1':'0';treasuryForm.requestSubmit()}
+saveTop.onclick=()=>submitVoucher(false);savePrint.onclick=()=>submitVoucher(true);
+previewDraft.onclick=()=>{alert('استخدم حفظ وطباعة للحصول على النموذج الرسمي بعد إنشاء رقم السند.');}
+</script>
+{% endblock %}

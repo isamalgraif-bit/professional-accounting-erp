@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "3.1.0"
+APP_VERSION = "5.0.1"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -123,6 +123,14 @@ def next_batch_number(batch_date_value):
     return f"JB-{batch_year}-{latest + 1:06d}"
 
 
+
+def login_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        return fn(*args, **kwargs)
+    return wrapper
 
 def get_default_accounts():
     return row("""SELECT customer_account_id,supplier_account_id,sales_account_id,
@@ -275,6 +283,124 @@ def transliterate_arabic_name(value):
 def transliterate_name_api():
     payload = request.get_json(silent=True) or {}
     return {"english_name": transliterate_arabic_name(payload.get("name",""))}
+
+
+
+def next_treasury_number(voucher_type, voucher_date):
+    prefix = {"قبض":"RV","صرف":"PV","تحويل":"TV"}.get(voucher_type,"TV")
+    year = datetime.strptime(voucher_date,"%Y-%m-%d").year if isinstance(voucher_date,str) else voucher_date.year
+    count = db.session.execute(text("""SELECT COUNT(*) FROM treasury_vouchers
+        WHERE voucher_type=:t AND EXTRACT(YEAR FROM voucher_date)=:y"""),
+        {"t":voucher_type,"y":year}).scalar() or 0
+    return f"{prefix}-{year}-{count+1:06d}"
+
+def post_treasury_voucher(voucher_id):
+    v = row("""SELECT tv.*,c.name customer_name,c.vat_number customer_vat,
+                     s.name supplier_name,s.vat_number supplier_vat
+              FROM treasury_vouchers tv
+              LEFT JOIN customers c ON c.id=tv.customer_id
+              LEFT JOIN suppliers s ON s.id=tv.supplier_id
+              WHERE tv.id=:id""", {"id":voucher_id})
+    if not v:
+        raise ValueError("السند غير موجود.")
+    if v.get("journal_id"):
+        return v["journal_id"]
+    ensure_open_period(v["voucher_date"])
+
+    common = {
+        "customer_id":v["customer_id"],"supplier_id":v["supplier_id"],
+        "party_type":v["party_type"],"tax_number":v["customer_vat"] or v["supplier_vat"] or "",
+        "line_description":v["description"] or v["voucher_type"],
+        "cost_center_id":v["cost_center_id"]
+    }
+    amount = float(v["amount"])
+    if v["voucher_type"] == "قبض":
+        lines = [
+            {"account_id":v["cash_bank_account_id"],"debit":amount,**common},
+            {"account_id":v["counter_account_id"],"credit":amount,**common},
+        ]
+    elif v["voucher_type"] == "صرف":
+        lines = [
+            {"account_id":v["counter_account_id"],"debit":amount,**common},
+            {"account_id":v["cash_bank_account_id"],"credit":amount,**common},
+        ]
+    else:
+        lines = [
+            {"account_id":v["counter_account_id"],"debit":amount,**common},
+            {"account_id":v["cash_bank_account_id"],"credit":amount,**common},
+        ]
+
+    jid = create_system_journal(
+        v["voucher_date"], f"سند {v['voucher_type']} {v['voucher_no']}",
+        v["reference"] or v["voucher_no"], "TREASURY", voucher_id, lines
+    )
+    execute("""UPDATE treasury_vouchers
+               SET journal_id=:j,posting_status='مرحّل',status='معتمد'
+               WHERE id=:id""", {"j":jid,"id":voucher_id})
+    return jid
+
+
+
+def next_document_number(table_name, date_field, prefix, document_date):
+    year = datetime.strptime(document_date,"%Y-%m-%d").year if isinstance(document_date,str) else document_date.year
+    allowed = {
+        "purchase_requisitions": "requisition_date",
+        "purchase_orders": "po_date",
+        "goods_receipts": "grn_date",
+        "supplier_invoices": "invoice_date",
+    }
+    if table_name not in allowed or allowed[table_name] != date_field:
+        raise ValueError("Invalid document sequence.")
+    count = db.session.execute(
+        text(f"SELECT COUNT(*) FROM {table_name} WHERE EXTRACT(YEAR FROM {date_field})=:y"),
+        {"y":year}
+    ).scalar() or 0
+    return f"{prefix}-{year}-{count+1:06d}"
+
+def get_required_approver(document_type, amount):
+    rule = row("""SELECT approver_role FROM approval_rules
+                  WHERE document_type=:t AND active=1
+                    AND :amount >= min_amount
+                    AND (max_amount IS NULL OR :amount <= max_amount)
+                  ORDER BY min_amount DESC LIMIT 1""",
+               {"t":document_type,"amount":amount})
+    return rule["approver_role"] if rule else "المدير المالي"
+
+def post_supplier_invoice(invoice_id):
+    inv = row("""SELECT si.*,s.vat_number supplier_vat
+                 FROM supplier_invoices si
+                 JOIN suppliers s ON s.id=si.supplier_id
+                 WHERE si.id=:id""", {"id":invoice_id})
+    if not inv:
+        raise ValueError("فاتورة المورد غير موجودة.")
+    if inv.get("journal_id"):
+        return inv["journal_id"]
+    acc = require_accounts(["supplier_account_id","vat_input_account_id"])
+    common = {
+        "supplier_id":inv["supplier_id"],"party_type":"مورد",
+        "tax_number":inv["supplier_vat"] or "",
+        "invoice_number":inv["supplier_invoice_no"],
+        "invoice_date":inv["invoice_date"],
+        "cost_center_id":inv["cost_center_id"],
+    }
+    lines = [
+        {"account_id":inv["expense_or_inventory_account_id"],"debit":inv["subtotal"],
+         "line_description":"فاتورة مورد - قيمة قبل الضريبة",**common}
+    ]
+    if float(inv["vat"] or 0) > 0:
+        lines.append({"account_id":acc["vat_input_account_id"],"debit":inv["vat"],
+                      "taxable":1,"tax_direction":"مدخلات",
+                      "line_description":"ضريبة القيمة المضافة - مدخلات",**common})
+    lines.append({"account_id":acc["supplier_account_id"],"credit":inv["total"],
+                  "line_description":"ذمم المورد",**common})
+    jid = create_system_journal(
+        inv["invoice_date"], f"فاتورة مورد {inv['supplier_invoice_no']}",
+        inv["supplier_invoice_no"], "SUPPLIER_INVOICE", invoice_id, lines
+    )
+    execute("""UPDATE supplier_invoices
+               SET journal_id=:j,posting_status='مرحّل',status='معتمدة'
+               WHERE id=:id""", {"j":jid,"id":invoice_id})
+    return jid
 
 
 def init_db():
@@ -456,6 +582,141 @@ def init_db():
             name VARCHAR(100) NOT NULL,start_date DATE NOT NULL,end_date DATE NOT NULL,
             status VARCHAR(30) NOT NULL DEFAULT 'مفتوحة'
         )""",
+        """CREATE TABLE IF NOT EXISTS treasury_vouchers(
+            id SERIAL PRIMARY KEY,
+            voucher_no VARCHAR(100) UNIQUE NOT NULL,
+            voucher_type VARCHAR(30) NOT NULL,
+            voucher_date DATE NOT NULL,
+            party_type VARCHAR(20) DEFAULT '',
+            customer_id INTEGER REFERENCES customers(id),
+            supplier_id INTEGER REFERENCES suppliers(id),
+            cash_bank_account_id INTEGER NOT NULL REFERENCES chart_of_accounts(id),
+            counter_account_id INTEGER NOT NULL REFERENCES chart_of_accounts(id),
+            amount NUMERIC(18,2) NOT NULL,
+            payment_method VARCHAR(30) DEFAULT 'نقدي',
+            reference VARCHAR(100) DEFAULT '',
+            description TEXT DEFAULT '',
+            cost_center_id INTEGER REFERENCES cost_centers(id),
+            status VARCHAR(30) DEFAULT 'مسودة',
+            posting_status VARCHAR(30) DEFAULT 'غير مرحّل',
+            journal_id INTEGER,
+            reversed_by INTEGER,
+            created_by INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS purchase_requisitions(
+            id SERIAL PRIMARY KEY,
+            requisition_no VARCHAR(100) UNIQUE NOT NULL,
+            requisition_date DATE NOT NULL,
+            branch_id INTEGER REFERENCES branches(id),
+            cost_center_id INTEGER REFERENCES cost_centers(id),
+            requested_by VARCHAR(255) DEFAULT '',
+            department VARCHAR(255) DEFAULT '',
+            priority VARCHAR(30) DEFAULT 'عادية',
+            reason TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            status VARCHAR(50) DEFAULT 'مسودة',
+            total_estimated NUMERIC(18,2) DEFAULT 0,
+            approved_by INTEGER,
+            approved_at TIMESTAMP,
+            created_by INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS purchase_requisition_items(
+            id SERIAL PRIMARY KEY,
+            requisition_id INTEGER NOT NULL REFERENCES purchase_requisitions(id) ON DELETE CASCADE,
+            item_code VARCHAR(100) DEFAULT '',
+            item_name VARCHAR(255) NOT NULL,
+            description TEXT DEFAULT '',
+            quantity NUMERIC(18,3) NOT NULL,
+            unit VARCHAR(50) DEFAULT '',
+            estimated_price NUMERIC(18,2) DEFAULT 0,
+            required_date DATE,
+            suggested_supplier_id INTEGER REFERENCES suppliers(id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS purchase_orders(
+            id SERIAL PRIMARY KEY,
+            po_no VARCHAR(100) UNIQUE NOT NULL,
+            po_date DATE NOT NULL,
+            requisition_id INTEGER REFERENCES purchase_requisitions(id),
+            supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+            branch_id INTEGER REFERENCES branches(id),
+            cost_center_id INTEGER REFERENCES cost_centers(id),
+            payment_terms VARCHAR(255) DEFAULT '',
+            delivery_terms VARCHAR(255) DEFAULT '',
+            warehouse VARCHAR(255) DEFAULT '',
+            notes TEXT DEFAULT '',
+            status VARCHAR(50) DEFAULT 'مسودة',
+            subtotal NUMERIC(18,2) DEFAULT 0,
+            vat NUMERIC(18,2) DEFAULT 0,
+            total NUMERIC(18,2) DEFAULT 0,
+            approved_by INTEGER,
+            approved_at TIMESTAMP,
+            created_by INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS purchase_order_items(
+            id SERIAL PRIMARY KEY,
+            po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+            item_code VARCHAR(100) DEFAULT '',
+            item_name VARCHAR(255) NOT NULL,
+            description TEXT DEFAULT '',
+            quantity NUMERIC(18,3) NOT NULL,
+            received_qty NUMERIC(18,3) DEFAULT 0,
+            unit VARCHAR(50) DEFAULT '',
+            unit_price NUMERIC(18,2) NOT NULL,
+            vat_rate NUMERIC(5,2) DEFAULT 15
+        )""",
+        """CREATE TABLE IF NOT EXISTS goods_receipts(
+            id SERIAL PRIMARY KEY,
+            grn_no VARCHAR(100) UNIQUE NOT NULL,
+            grn_date DATE NOT NULL,
+            po_id INTEGER NOT NULL REFERENCES purchase_orders(id),
+            supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+            warehouse VARCHAR(255) DEFAULT '',
+            notes TEXT DEFAULT '',
+            status VARCHAR(50) DEFAULT 'معتمد',
+            created_by INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS goods_receipt_items(
+            id SERIAL PRIMARY KEY,
+            grn_id INTEGER NOT NULL REFERENCES goods_receipts(id) ON DELETE CASCADE,
+            po_item_id INTEGER NOT NULL REFERENCES purchase_order_items(id),
+            received_qty NUMERIC(18,3) NOT NULL,
+            accepted_qty NUMERIC(18,3) NOT NULL,
+            rejected_qty NUMERIC(18,3) DEFAULT 0,
+            notes TEXT DEFAULT ''
+        )""",
+        """CREATE TABLE IF NOT EXISTS supplier_invoices(
+            id SERIAL PRIMARY KEY,
+            supplier_invoice_no VARCHAR(100) NOT NULL,
+            internal_no VARCHAR(100) UNIQUE NOT NULL,
+            invoice_date DATE NOT NULL,
+            supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+            po_id INTEGER REFERENCES purchase_orders(id),
+            grn_id INTEGER REFERENCES goods_receipts(id),
+            cost_center_id INTEGER REFERENCES cost_centers(id),
+            expense_or_inventory_account_id INTEGER NOT NULL REFERENCES chart_of_accounts(id),
+            subtotal NUMERIC(18,2) NOT NULL,
+            vat NUMERIC(18,2) DEFAULT 0,
+            total NUMERIC(18,2) NOT NULL,
+            status VARCHAR(50) DEFAULT 'مسودة',
+            posting_status VARCHAR(30) DEFAULT 'غير مرحّل',
+            journal_id INTEGER,
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(supplier_id,supplier_invoice_no)
+        )""",
+        """CREATE TABLE IF NOT EXISTS approval_rules(
+            id SERIAL PRIMARY KEY,
+            document_type VARCHAR(50) NOT NULL,
+            min_amount NUMERIC(18,2) DEFAULT 0,
+            max_amount NUMERIC(18,2),
+            approver_role VARCHAR(100) NOT NULL,
+            active INTEGER DEFAULT 1
+        )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
@@ -609,6 +870,19 @@ def init_db():
         VALUES('CC-001','الإدارة العامة',1)
         ON CONFLICT (code) DO NOTHING
     """))
+    for min_amount,max_amount,role in [
+        (0,5000,"مدير القسم"),
+        (5000.01,20000,"المدير المالي"),
+        (20000.01,None,"المدير العام")
+    ]:
+        db.session.execute(text("""INSERT INTO approval_rules(
+            document_type,min_amount,max_amount,approver_role,active)
+            SELECT 'طلب شراء',:mn,:mx,:role,1
+            WHERE NOT EXISTS(
+              SELECT 1 FROM approval_rules WHERE document_type='طلب شراء'
+              AND min_amount=:mn AND COALESCE(max_amount,-1)=COALESCE(:mx,-1)
+            )"""), {"mn":min_amount,"mx":max_amount,"role":role})
+
     current_year = datetime.now().year
     fy_id = db.session.execute(text("""INSERT INTO fiscal_years(name,start_date,end_date,status)
         VALUES(:n,:s,:e,'مفتوحة') ON CONFLICT(start_date,end_date)
@@ -639,14 +913,6 @@ def init_db():
       "bank":ids.get("1120"),"inv":ids.get("1200"),"cos":ids.get("5000"),"re":ids.get("3100")})
 
     db.session.commit()
-
-def login_required(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if "user_id" not in session:
-            return redirect(url_for("login"))
-        return fn(*args, **kwargs)
-    return wrapper
 
 @app.before_request
 def ensure_database():
@@ -2297,6 +2563,496 @@ def report_context(slug, filters):
         "data": data,
         "summary": summary,
     }
+
+
+
+
+@app.route("/procurement")
+@login_required
+def procurement_center():
+    stats = {
+        "requisitions": row("SELECT COUNT(*) count FROM purchase_requisitions")["count"],
+        "orders": row("SELECT COUNT(*) count FROM purchase_orders")["count"],
+        "receipts": row("SELECT COUNT(*) count FROM goods_receipts")["count"],
+        "supplier_invoices": row("SELECT COUNT(*) count FROM supplier_invoices")["count"],
+    }
+    return render_template("procurement_center.html",stats=stats)
+
+@app.route("/purchase-requisitions",methods=["GET","POST"])
+@login_required
+def purchase_requisitions():
+    if request.method=="POST":
+        item_names=request.form.getlist("item_name[]")
+        quantities=request.form.getlist("quantity[]")
+        units=request.form.getlist("unit[]")
+        prices=request.form.getlist("estimated_price[]")
+        descriptions=request.form.getlist("description[]")
+        required_dates=request.form.getlist("required_date[]")
+        supplier_ids=request.form.getlist("suggested_supplier_id[]")
+        item_codes=request.form.getlist("item_code[]")
+        items=[]; total=0
+        for i,name in enumerate(item_names):
+            if not name.strip(): continue
+            qty=float(quantities[i] or 0); price=float(prices[i] or 0)
+            if qty<=0: continue
+            total += qty*price
+            items.append({"name":name.strip(),"qty":qty,"unit":units[i],
+                          "price":price,"description":descriptions[i],
+                          "required_date":required_dates[i] or None,
+                          "supplier_id":supplier_ids[i] or None,
+                          "item_code":item_codes[i]})
+        if not items:
+            flash("أدخل صنفًا واحدًا على الأقل","danger")
+            return redirect(url_for("purchase_requisitions"))
+        no=next_document_number("purchase_requisitions","requisition_date","PR",request.form["requisition_date"])
+        execute("""INSERT INTO purchase_requisitions(
+          requisition_no,requisition_date,branch_id,cost_center_id,requested_by,
+          department,priority,reason,notes,status,total_estimated,created_by,created_at)
+          VALUES(:no,:dt,:branch,:cc,:requested,:department,:priority,:reason,
+          :notes,:status,:total,:uid,:created)""",
+          {"no":no,"dt":request.form["requisition_date"],
+           "branch":request.form.get("branch_id") or None,
+           "cc":request.form.get("cost_center_id") or None,
+           "requested":request.form.get("requested_by",""),
+           "department":request.form.get("department",""),
+           "priority":request.form.get("priority","عادية"),
+           "reason":request.form.get("reason",""),
+           "notes":request.form.get("notes",""),
+           "status":request.form.get("status","مسودة"),
+           "total":round(total,2),"uid":session.get("user_id"),"created":datetime.now()})
+        req_id=row("SELECT id FROM purchase_requisitions WHERE requisition_no=:n",{"n":no})["id"]
+        for x in items:
+            execute("""INSERT INTO purchase_requisition_items(
+              requisition_id,item_code,item_name,description,quantity,unit,
+              estimated_price,required_date,suggested_supplier_id)
+              VALUES(:rid,:code,:name,:des,:qty,:unit,:price,:rd,:sid)""",
+              {"rid":req_id,"code":x["item_code"],"name":x["name"],"des":x["description"],
+               "qty":x["qty"],"unit":x["unit"],"price":x["price"],
+               "rd":x["required_date"],"sid":x["supplier_id"]})
+        audit("CREATE","PURCHASE_REQUISITION",f"إنشاء طلب شراء {no}")
+        flash(f"تم إنشاء طلب الشراء {no}","success")
+        return redirect(url_for("purchase_requisition_view",req_id=req_id))
+    reqs=rows("""SELECT pr.*,b.name branch_name,cc.name cost_center_name
+                 FROM purchase_requisitions pr
+                 LEFT JOIN branches b ON b.id=pr.branch_id
+                 LEFT JOIN cost_centers cc ON cc.id=pr.cost_center_id
+                 ORDER BY pr.requisition_date DESC,pr.id DESC""")
+    return render_template("purchase_requisitions.html",reqs=reqs,
+      branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
+      centers=rows("SELECT * FROM cost_centers WHERE active=1 ORDER BY code"),
+      suppliers=rows("SELECT id,name,name_en FROM suppliers ORDER BY name"))
+
+@app.route("/purchase-requisitions/<int:req_id>")
+@login_required
+def purchase_requisition_view(req_id):
+    req=row("""SELECT pr.*,b.name branch_name,cc.name cost_center_name
+               FROM purchase_requisitions pr
+               LEFT JOIN branches b ON b.id=pr.branch_id
+               LEFT JOIN cost_centers cc ON cc.id=pr.cost_center_id
+               WHERE pr.id=:id""",{"id":req_id})
+    if not req:return "طلب الشراء غير موجود",404
+    items=rows("""SELECT i.*,s.name supplier_name FROM purchase_requisition_items i
+                  LEFT JOIN suppliers s ON s.id=i.suggested_supplier_id
+                  WHERE i.requisition_id=:id ORDER BY i.id""",{"id":req_id})
+    return render_template("purchase_requisition_view.html",req=req,items=items,
+                           approver=get_required_approver("طلب شراء",float(req["total_estimated"])))
+
+@app.route("/purchase-requisitions/<int:req_id>/approve",methods=["POST"])
+@login_required
+def purchase_requisition_approve(req_id):
+    execute("""UPDATE purchase_requisitions SET status='معتمد',
+               approved_by=:u,approved_at=:t WHERE id=:id""",
+            {"u":session.get("user_id"),"t":datetime.now(),"id":req_id})
+    audit("APPROVE","PURCHASE_REQUISITION",f"اعتماد طلب شراء {req_id}")
+    flash("تم اعتماد طلب الشراء","success")
+    return redirect(url_for("purchase_requisition_view",req_id=req_id))
+
+@app.route("/purchase-orders",methods=["GET","POST"])
+@login_required
+def purchase_orders():
+    if request.method=="POST":
+        req_id=request.form.get("requisition_id") or None
+        if req_id:
+            req=row("SELECT status FROM purchase_requisitions WHERE id=:id",{"id":req_id})
+            if not req or req["status"]!="معتمد":
+                flash("لا يمكن إصدار أمر شراء من طلب غير معتمد","danger")
+                return redirect(url_for("purchase_orders"))
+        names=request.form.getlist("item_name[]")
+        qtys=request.form.getlist("quantity[]")
+        prices=request.form.getlist("unit_price[]")
+        vats=request.form.getlist("vat_rate[]")
+        units=request.form.getlist("unit[]")
+        codes=request.form.getlist("item_code[]")
+        descriptions=request.form.getlist("description[]")
+        items=[]; subtotal=0; vat=0
+        for i,n in enumerate(names):
+            if not n.strip(): continue
+            q=float(qtys[i] or 0); p=float(prices[i] or 0); vr=float(vats[i] or 0)
+            if q<=0:continue
+            base=q*p; tax=base*vr/100
+            subtotal+=base; vat+=tax
+            items.append({"name":n.strip(),"qty":q,"price":p,"vat":vr,
+                          "unit":units[i],"code":codes[i],"description":descriptions[i]})
+        if not items:
+            flash("أدخل صنفًا واحدًا على الأقل","danger")
+            return redirect(url_for("purchase_orders"))
+        no=next_document_number("purchase_orders","po_date","PO",request.form["po_date"])
+        execute("""INSERT INTO purchase_orders(
+          po_no,po_date,requisition_id,supplier_id,branch_id,cost_center_id,
+          payment_terms,delivery_terms,warehouse,notes,status,subtotal,vat,total,
+          created_by,created_at)
+          VALUES(:no,:dt,:req,:supplier,:branch,:cc,:pay,:delivery,:warehouse,
+          :notes,:status,:sub,:vat,:total,:uid,:created)""",
+          {"no":no,"dt":request.form["po_date"],"req":req_id,
+           "supplier":request.form["supplier_id"],"branch":request.form.get("branch_id") or None,
+           "cc":request.form.get("cost_center_id") or None,
+           "pay":request.form.get("payment_terms",""),
+           "delivery":request.form.get("delivery_terms",""),
+           "warehouse":request.form.get("warehouse",""),
+           "notes":request.form.get("notes",""),
+           "status":request.form.get("status","مسودة"),
+           "sub":round(subtotal,2),"vat":round(vat,2),"total":round(subtotal+vat,2),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        po_id=row("SELECT id FROM purchase_orders WHERE po_no=:n",{"n":no})["id"]
+        for x in items:
+            execute("""INSERT INTO purchase_order_items(
+              po_id,item_code,item_name,description,quantity,unit,unit_price,vat_rate)
+              VALUES(:po,:code,:name,:des,:qty,:unit,:price,:vat)""",
+              {"po":po_id,"code":x["code"],"name":x["name"],"des":x["description"],
+               "qty":x["qty"],"unit":x["unit"],"price":x["price"],"vat":x["vat"]})
+        if req_id:
+            execute("UPDATE purchase_requisitions SET status='تم إصدار أمر شراء' WHERE id=:id",{"id":req_id})
+        audit("CREATE","PURCHASE_ORDER",f"إنشاء أمر شراء {no}")
+        flash(f"تم إنشاء أمر الشراء {no}","success")
+        return redirect(url_for("purchase_order_view",po_id=po_id))
+    return render_template("purchase_orders.html",
+      orders=rows("""SELECT po.*,s.name supplier_name FROM purchase_orders po
+                     JOIN suppliers s ON s.id=po.supplier_id
+                     ORDER BY po.po_date DESC,po.id DESC"""),
+      requisitions=rows("""SELECT id,requisition_no,total_estimated FROM purchase_requisitions
+                           WHERE status='معتمد' ORDER BY requisition_date DESC"""),
+      suppliers=rows("SELECT id,name,name_en,vat_number FROM suppliers ORDER BY name"),
+      branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
+      centers=rows("SELECT * FROM cost_centers WHERE active=1 ORDER BY code"))
+
+@app.route("/purchase-orders/<int:po_id>")
+@login_required
+def purchase_order_view(po_id):
+    po=row("""SELECT po.*,s.name supplier_name,s.name_en supplier_name_en,
+              s.vat_number supplier_vat,b.name branch_name,cc.name cost_center_name
+              FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id
+              LEFT JOIN branches b ON b.id=po.branch_id
+              LEFT JOIN cost_centers cc ON cc.id=po.cost_center_id WHERE po.id=:id""",{"id":po_id})
+    if not po:return "أمر الشراء غير موجود",404
+    items=rows("SELECT * FROM purchase_order_items WHERE po_id=:id ORDER BY id",{"id":po_id})
+    company=row("SELECT * FROM settings WHERE id=1")
+    return render_template("purchase_order_view.html",po=po,items=items,company=company)
+
+@app.route("/purchase-orders/<int:po_id>/approve",methods=["POST"])
+@login_required
+def purchase_order_approve(po_id):
+    execute("""UPDATE purchase_orders SET status='معتمد',
+               approved_by=:u,approved_at=:t WHERE id=:id""",
+            {"u":session.get("user_id"),"t":datetime.now(),"id":po_id})
+    flash("تم اعتماد أمر الشراء","success")
+    return redirect(url_for("purchase_order_view",po_id=po_id))
+
+@app.route("/goods-receipts",methods=["GET","POST"])
+@login_required
+def goods_receipts():
+    if request.method=="POST":
+        po_id=int(request.form["po_id"])
+        po=row("SELECT * FROM purchase_orders WHERE id=:id",{"id":po_id})
+        if not po or po["status"]!="معتمد":
+            flash("يجب اعتماد أمر الشراء أولًا","danger")
+            return redirect(url_for("goods_receipts"))
+        item_ids=request.form.getlist("po_item_id[]")
+        qtys=request.form.getlist("received_qty[]")
+        accepted=request.form.getlist("accepted_qty[]")
+        rejected=request.form.getlist("rejected_qty[]")
+        notes=request.form.getlist("line_notes[]")
+        lines=[]
+        for i,item_id in enumerate(item_ids):
+            item=row("SELECT * FROM purchase_order_items WHERE id=:id",{"id":item_id})
+            if not item:continue
+            rq=float(qtys[i] or 0); aq=float(accepted[i] or 0); rej=float(rejected[i] or 0)
+            remaining=float(item["quantity"])-float(item["received_qty"])
+            if rq<0 or rq>remaining+1e-9:
+                flash(f"الكمية المستلمة للصنف {item['item_name']} تتجاوز المتبقي","danger")
+                return redirect(url_for("goods_receipts"))
+            if abs((aq+rej)-rq)>0.001:
+                flash("المقبول + المرفوض يجب أن يساوي المستلم","danger")
+                return redirect(url_for("goods_receipts"))
+            if rq>0:lines.append((item_id,rq,aq,rej,notes[i]))
+        if not lines:
+            flash("أدخل كمية استلام","danger")
+            return redirect(url_for("goods_receipts"))
+        no=next_document_number("goods_receipts","grn_date","GRN",request.form["grn_date"])
+        execute("""INSERT INTO goods_receipts(
+          grn_no,grn_date,po_id,supplier_id,warehouse,notes,status,created_by,created_at)
+          VALUES(:no,:dt,:po,:supplier,:wh,:notes,'معتمد',:uid,:created)""",
+          {"no":no,"dt":request.form["grn_date"],"po":po_id,"supplier":po["supplier_id"],
+           "wh":request.form.get("warehouse",""),"notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        grn_id=row("SELECT id FROM goods_receipts WHERE grn_no=:n",{"n":no})["id"]
+        for item_id,rq,aq,rej,note in lines:
+            execute("""INSERT INTO goods_receipt_items(
+              grn_id,po_item_id,received_qty,accepted_qty,rejected_qty,notes)
+              VALUES(:grn,:item,:r,:a,:rej,:notes)""",
+              {"grn":grn_id,"item":item_id,"r":rq,"a":aq,"rej":rej,"notes":note})
+            execute("""UPDATE purchase_order_items SET received_qty=received_qty+:q
+                       WHERE id=:id""",{"q":rq,"id":item_id})
+        remaining=row("""SELECT COUNT(*) count FROM purchase_order_items
+                         WHERE po_id=:po AND received_qty<quantity""",{"po":po_id})["count"]
+        execute("UPDATE purchase_orders SET status=:s WHERE id=:id",
+                {"s":"مستلم بالكامل" if remaining==0 else "مستلم جزئيًا","id":po_id})
+        audit("CREATE","GOODS_RECEIPT",f"إنشاء استلام {no}")
+        flash(f"تم إنشاء استلام المواد {no}","success")
+        return redirect(url_for("goods_receipt_view",grn_id=grn_id))
+    return render_template("goods_receipts.html",
+      pos=rows("""SELECT po.id,po.po_no,po.po_date,s.name supplier_name
+                  FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id
+                  WHERE po.status IN ('معتمد','مستلم جزئيًا') ORDER BY po.po_date DESC"""),
+      receipts=rows("""SELECT g.*,po.po_no,s.name supplier_name FROM goods_receipts g
+                       JOIN purchase_orders po ON po.id=g.po_id
+                       JOIN suppliers s ON s.id=g.supplier_id
+                       ORDER BY g.grn_date DESC,g.id DESC"""))
+
+@app.route("/purchase-orders/<int:po_id>/open-items")
+@login_required
+def purchase_order_open_items(po_id):
+    po=row("SELECT * FROM purchase_orders WHERE id=:id",{"id":po_id})
+    items=rows("""SELECT id,item_code,item_name,quantity,received_qty,unit
+                  FROM purchase_order_items WHERE po_id=:id ORDER BY id""",{"id":po_id})
+    return {"po":dict(po) if po else None,"items":[dict(x) for x in items]}
+
+@app.route("/goods-receipts/<int:grn_id>")
+@login_required
+def goods_receipt_view(grn_id):
+    grn=row("""SELECT g.*,po.po_no,s.name supplier_name FROM goods_receipts g
+               JOIN purchase_orders po ON po.id=g.po_id
+               JOIN suppliers s ON s.id=g.supplier_id WHERE g.id=:id""",{"id":grn_id})
+    if not grn:return "الاستلام غير موجود",404
+    items=rows("""SELECT gi.*,pi.item_code,pi.item_name,pi.unit
+                  FROM goods_receipt_items gi JOIN purchase_order_items pi ON pi.id=gi.po_item_id
+                  WHERE gi.grn_id=:id ORDER BY gi.id""",{"id":grn_id})
+    return render_template("goods_receipt_view.html",grn=grn,items=items)
+
+@app.route("/supplier-invoices",methods=["GET","POST"])
+@login_required
+def supplier_invoices():
+    if request.method=="POST":
+        subtotal=round(float(request.form["subtotal"] or 0),2)
+        vat=round(float(request.form["vat"] or 0),2)
+        total=round(subtotal+vat,2)
+        internal=next_document_number("supplier_invoices","invoice_date","SI",request.form["invoice_date"])
+        try:
+            execute("""INSERT INTO supplier_invoices(
+              supplier_invoice_no,internal_no,invoice_date,supplier_id,po_id,grn_id,
+              cost_center_id,expense_or_inventory_account_id,subtotal,vat,total,status,
+              posting_status,notes,created_by,created_at)
+              VALUES(:supplier_no,:internal,:dt,:supplier,:po,:grn,:cc,:account,
+              :subtotal,:vat,:total,:status,'غير مرحّل',:notes,:uid,:created)""",
+              {"supplier_no":request.form["supplier_invoice_no"],"internal":internal,
+               "dt":request.form["invoice_date"],"supplier":request.form["supplier_id"],
+               "po":request.form.get("po_id") or None,"grn":request.form.get("grn_id") or None,
+               "cc":request.form.get("cost_center_id") or None,
+               "account":request.form["expense_or_inventory_account_id"],
+               "subtotal":subtotal,"vat":vat,"total":total,
+               "status":request.form.get("status","مسودة"),
+               "notes":request.form.get("notes",""),
+               "uid":session.get("user_id"),"created":datetime.now()})
+        except Exception:
+            db.session.rollback()
+            flash("رقم فاتورة المورد مستخدم مسبقًا لهذا المورد","danger")
+            return redirect(url_for("supplier_invoices"))
+        inv_id=row("SELECT id FROM supplier_invoices WHERE internal_no=:n",{"n":internal})["id"]
+        if request.form.get("status")=="معتمدة":
+            try:
+                post_supplier_invoice(inv_id)
+                flash(f"تم حفظ وترحيل فاتورة المورد {internal}","success")
+            except Exception as exc:
+                db.session.rollback()
+                execute("UPDATE supplier_invoices SET status='مسودة',posting_status='خطأ' WHERE id=:id",{"id":inv_id})
+                flash(f"تم حفظها كمسودة ولم تُرحّل: {exc}","danger")
+        else:flash(f"تم حفظ فاتورة المورد {internal} كمسودة","success")
+        return redirect(url_for("supplier_invoice_view",invoice_id=inv_id))
+    accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+                     WHERE active=1 AND accepts_entries=1 ORDER BY account_code""")
+    return render_template("supplier_invoices.html",
+      invoices=rows("""SELECT si.*,s.name supplier_name,j.journal_no FROM supplier_invoices si
+                       JOIN suppliers s ON s.id=si.supplier_id
+                       LEFT JOIN journal_entries j ON j.id=si.journal_id
+                       ORDER BY si.invoice_date DESC,si.id DESC"""),
+      suppliers=rows("SELECT id,name,name_en FROM suppliers ORDER BY name"),
+      pos=rows("SELECT id,po_no,supplier_id,total FROM purchase_orders ORDER BY po_date DESC"),
+      grns=rows("SELECT id,grn_no,supplier_id,po_id FROM goods_receipts ORDER BY grn_date DESC"),
+      centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"),
+      accounts=accounts)
+
+@app.route("/supplier-invoices/<int:invoice_id>")
+@login_required
+def supplier_invoice_view(invoice_id):
+    inv=row("""SELECT si.*,s.name supplier_name,s.name_en supplier_name_en,
+              s.vat_number supplier_vat,po.po_no,g.grn_no,a.account_code,a.account_name_ar,
+              j.journal_no FROM supplier_invoices si
+              JOIN suppliers s ON s.id=si.supplier_id
+              LEFT JOIN purchase_orders po ON po.id=si.po_id
+              LEFT JOIN goods_receipts g ON g.id=si.grn_id
+              JOIN chart_of_accounts a ON a.id=si.expense_or_inventory_account_id
+              LEFT JOIN journal_entries j ON j.id=si.journal_id WHERE si.id=:id""",{"id":invoice_id})
+    if not inv:return "فاتورة المورد غير موجودة",404
+    return render_template("supplier_invoice_view.html",inv=inv)
+
+@app.route("/supplier-invoices/<int:invoice_id>/post",methods=["POST"])
+@login_required
+def supplier_invoice_post(invoice_id):
+    try:
+        post_supplier_invoice(invoice_id)
+        flash("تم ترحيل فاتورة المورد","success")
+    except Exception as exc:flash(str(exc),"danger")
+    return redirect(url_for("supplier_invoice_view",invoice_id=invoice_id))
+
+
+@app.route("/treasury", methods=["GET","POST"])
+@login_required
+def treasury():
+    if request.method == "POST":
+        voucher_type = request.form["voucher_type"]
+        voucher_date = request.form["voucher_date"]
+        amount = round(float(request.form["amount"] or 0),2)
+        if amount <= 0:
+            flash("المبلغ يجب أن يكون أكبر من صفر","danger")
+            return redirect(url_for("treasury"))
+
+        try:
+            ensure_open_period(voucher_date)
+        except Exception as exc:
+            flash(str(exc),"danger")
+            return redirect(url_for("treasury"))
+
+        voucher_no = next_treasury_number(voucher_type, voucher_date)
+        execute("""INSERT INTO treasury_vouchers(
+            voucher_no,voucher_type,voucher_date,party_type,customer_id,supplier_id,
+            cash_bank_account_id,counter_account_id,amount,payment_method,reference,
+            description,cost_center_id,status,posting_status,created_by,created_at)
+            VALUES(:no,:type,:dt,:ptype,:cid,:sid,:cash,:counter,:amount,:method,
+                   :ref,:des,:cc,:status,'غير مرحّل',:uid,:created)""",
+            {"no":voucher_no,"type":voucher_type,"dt":voucher_date,
+             "ptype":request.form.get("party_type",""),
+             "cid":request.form.get("customer_id") or None,
+             "sid":request.form.get("supplier_id") or None,
+             "cash":request.form["cash_bank_account_id"],
+             "counter":request.form["counter_account_id"],
+             "amount":amount,"method":request.form.get("payment_method","نقدي"),
+             "ref":request.form.get("reference",""),
+             "des":request.form.get("description",""),
+             "cc":request.form.get("cost_center_id") or None,
+             "status":request.form.get("status","مسودة"),
+             "uid":session.get("user_id"),"created":datetime.now()})
+        voucher_id = row("SELECT id FROM treasury_vouchers WHERE voucher_no=:n",{"n":voucher_no})["id"]
+
+        if request.form.get("status") == "معتمد":
+            try:
+                post_treasury_voucher(voucher_id)
+                flash(f"تم حفظ وترحيل السند {voucher_no}","success")
+            except Exception as exc:
+                db.session.rollback()
+                execute("UPDATE treasury_vouchers SET status='مسودة',posting_status='خطأ' WHERE id=:id",
+                        {"id":voucher_id})
+                flash(f"تم حفظ السند كمسودة ولم يُرحّل: {exc}","danger")
+        else:
+            flash(f"تم حفظ السند {voucher_no} كمسودة","success")
+
+        if request.form.get("print_after_save") == "1":
+            return redirect(url_for("treasury_view",voucher_id=voucher_id,print=1))
+        return redirect(url_for("treasury_view",voucher_id=voucher_id))
+
+    q = request.args.get("q","").strip()
+    conditions=[]; params={}
+    if q:
+        conditions.append("""(tv.voucher_no ILIKE :q OR COALESCE(tv.reference,'') ILIKE :q
+                           OR COALESCE(tv.description,'') ILIKE :q
+                           OR COALESCE(c.name,'') ILIKE :q OR COALESCE(s.name,'') ILIKE :q)""")
+        params["q"]=f"%{q}%"
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    vouchers = rows(f"""SELECT tv.*,c.name customer_name,s.name supplier_name,
+                        a.account_name_ar cash_account_name,b.account_name_ar counter_account_name,
+                        j.journal_no
+                        FROM treasury_vouchers tv
+                        LEFT JOIN customers c ON c.id=tv.customer_id
+                        LEFT JOIN suppliers s ON s.id=tv.supplier_id
+                        JOIN chart_of_accounts a ON a.id=tv.cash_bank_account_id
+                        JOIN chart_of_accounts b ON b.id=tv.counter_account_id
+                        LEFT JOIN journal_entries j ON j.id=tv.journal_id
+                        {where}
+                        ORDER BY tv.voucher_date DESC,tv.id DESC""",params)
+    accounts = rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+                       WHERE active=1 AND accepts_entries=1 ORDER BY account_code""")
+    return render_template("treasury.html",vouchers=vouchers,accounts=accounts,
+        customers=rows("SELECT id,name,name_en,vat_number FROM customers ORDER BY name"),
+        suppliers=rows("SELECT id,name,name_en,vat_number FROM suppliers ORDER BY name"),
+        centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"),
+        q=q)
+
+@app.route("/treasury/<int:voucher_id>")
+@login_required
+def treasury_view(voucher_id):
+    voucher = row("""SELECT tv.*,c.name customer_name,c.name_en customer_name_en,
+                     s.name supplier_name,s.name_en supplier_name_en,
+                     a.account_code cash_account_code,a.account_name_ar cash_account_name,
+                     b.account_code counter_account_code,b.account_name_ar counter_account_name,
+                     cc.code cost_center_code,cc.name cost_center_name,j.journal_no
+                     FROM treasury_vouchers tv
+                     LEFT JOIN customers c ON c.id=tv.customer_id
+                     LEFT JOIN suppliers s ON s.id=tv.supplier_id
+                     JOIN chart_of_accounts a ON a.id=tv.cash_bank_account_id
+                     JOIN chart_of_accounts b ON b.id=tv.counter_account_id
+                     LEFT JOIN cost_centers cc ON cc.id=tv.cost_center_id
+                     LEFT JOIN journal_entries j ON j.id=tv.journal_id
+                     WHERE tv.id=:id""",{"id":voucher_id})
+    if not voucher:
+        return "السند غير موجود",404
+    company=row("SELECT * FROM settings WHERE id=1")
+    return render_template("treasury_view.html",voucher=voucher,company=company,
+                           print_lang=request.args.get("lang","ar"))
+
+@app.route("/treasury/<int:voucher_id>/post", methods=["POST"])
+@login_required
+def treasury_post(voucher_id):
+    try:
+        post_treasury_voucher(voucher_id)
+        flash("تم ترحيل السند محاسبيًا","success")
+    except Exception as exc:
+        flash(str(exc),"danger")
+    return redirect(url_for("treasury_view",voucher_id=voucher_id))
+
+@app.route("/treasury/<int:voucher_id>/delete", methods=["POST"])
+@login_required
+def treasury_delete(voucher_id):
+    v=row("SELECT * FROM treasury_vouchers WHERE id=:id",{"id":voucher_id})
+    if not v:
+        return "السند غير موجود",404
+    if v["journal_id"]:
+        flash("لا يمكن حذف سند مرحّل. يجب إنشاء قيد عكسي.","danger")
+    else:
+        execute("DELETE FROM treasury_vouchers WHERE id=:id",{"id":voucher_id})
+        audit("DELETE","TREASURY",f"حذف السند {v['voucher_no']}")
+        flash("تم حذف السند","success")
+    return redirect(url_for("treasury"))
+
+@app.route("/treasury/export.xlsx")
+@login_required
+def treasury_export():
+    data=rows("""SELECT voucher_no,voucher_type,voucher_date,party_type,amount,
+                 payment_method,reference,description,status,posting_status
+                 FROM treasury_vouchers ORDER BY voucher_date DESC,id DESC""")
+    headers=["رقم السند","النوع","التاريخ","نوع الطرف","المبلغ","طريقة الدفع",
+             "المرجع","البيان","الحالة","الترحيل"]
+    keys=["voucher_no","voucher_type","voucher_date","party_type","amount",
+          "payment_method","reference","description","status","posting_status"]
+    return xlsx_response("treasury_vouchers.xlsx","سندات الخزينة",headers,
+                         [[r.get(k) for k in keys] for r in data])
 
 
 @app.route("/fiscal-periods",methods=["GET","POST"])

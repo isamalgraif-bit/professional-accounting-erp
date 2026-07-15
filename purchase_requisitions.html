@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>طلبات الشراء</h3><small class="text-muted">Purchase Requisitions</small></div><button class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('purchase_requisitions')}}">📄 جديد</button></div>
+<div class="form-card mb-4"><form method="post" id="reqForm" data-track-unsaved="1"><div class="row g-3">
+<div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="requisition_date" id="reqDate" required></div>
+<div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>مسودة</option><option>بانتظار الاعتماد</option></select></div>
+<div class="col-md-2"><label>الأولوية</label><select class="form-select" name="priority"><option>عادية</option><option>عاجلة</option><option>طارئة</option></select></div>
+<div class="col-md-3"><label>طالب الشراء</label><input class="form-control" name="requested_by"></div>
+<div class="col-md-3"><label>القسم</label><input class="form-control" name="department"></div>
+<div class="col-md-3"><label>الفرع</label><select class="form-select" name="branch_id"><option value="">بدون</option>{% for b in branches %}<option value="{{b.id}}">{{b.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>مركز التكلفة</label><select class="form-select" name="cost_center_id"><option value="">بدون</option>{% for c in centers %}<option value="{{c.id}}">{{c.code}} - {{c.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>سبب الطلب</label><input class="form-control" name="reason"></div>
+<div class="col-md-3"><label>ملاحظات</label><input class="form-control" name="notes"></div>
+</div>
+<div class="table-responsive mt-3"><table class="table table-bordered" style="min-width:1300px"><thead><tr><th>الكود</th><th>الصنف</th><th>الوصف</th><th>الكمية</th><th>الوحدة</th><th>السعر التقديري</th><th>تاريخ الحاجة</th><th>المورد المقترح</th><th></th></tr></thead><tbody id="reqBody">
+<tr class="item-row"><td><input class="form-control" name="item_code[]"></td><td><input class="form-control" name="item_name[]" required></td><td><input class="form-control" name="description[]"></td><td><input class="form-control" type="number" step=".001" name="quantity[]" value="1"></td><td><input class="form-control" name="unit[]" value="وحدة"></td><td><input class="form-control" type="number" step=".01" name="estimated_price[]" value="0"></td><td><input class="form-control" type="date" name="required_date[]"></td><td><select class="form-select" name="suggested_supplier_id[]"><option value="">بدون</option>{% for s in suppliers %}<option value="{{s.id}}">{{s.name}}</option>{% endfor %}</select></td><td><button type="button" class="btn btn-danger remove">×</button></td></tr>
+</tbody></table></div>
+<div class="d-flex justify-content-between"><button type="button" class="btn btn-outline-primary" id="addReqRow">+ سطر</button><button class="btn btn-primary">💾 حفظ</button></div>
+</form></div>
+<div class="form-card"><table class="table table-striped"><thead><tr><th>الرقم</th><th>التاريخ</th><th>الطالب</th><th>الأولوية</th><th>الإجمالي التقديري</th><th>الحالة</th><th></th></tr></thead><tbody>{% for r in reqs %}<tr><td>{{r.requisition_no}}</td><td>{{r.requisition_date}}</td><td>{{r.requested_by}}</td><td>{{r.priority}}</td><td>{{r.total_estimated}}</td><td>{{r.status}}</td><td><a class="btn btn-sm btn-primary" href="{{url_for('purchase_requisition_view',req_id=r.id)}}">عرض</a></td></tr>{% endfor %}</tbody></table></div>
+<script>reqDate.value=new Date().toISOString().slice(0,10);function bind(r){r.querySelector('.remove').onclick=()=>{if(document.querySelectorAll('.item-row').length>1)r.remove()}}document.querySelectorAll('.item-row').forEach(bind);addReqRow.onclick=()=>{const r=document.querySelector('.item-row').cloneNode(true);r.querySelectorAll('input').forEach(x=>x.value=x.name==='quantity[]'?'1':x.name==='unit[]'?'وحدة':'');reqBody.appendChild(r);bind(r)}</script>
+{% endblock %}

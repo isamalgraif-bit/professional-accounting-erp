@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>دورة المشتريات</h3><small class="text-muted">Procure-to-Pay</small></div></div>
+<div class="row g-3">
+{% for title,desc,url,count in [
+('طلبات الشراء','الإنشاء والموافقة',url_for('purchase_requisitions'),stats.requisitions),
+('أوامر الشراء','التوريد والأسعار',url_for('purchase_orders'),stats.orders),
+('استلام المواد','الكميات المقبولة والمرفوضة',url_for('goods_receipts'),stats.receipts),
+('فواتير الموردين','الضريبة والترحيل المحاسبي',url_for('supplier_invoices'),stats.supplier_invoices)
+] %}
+<div class="col-md-3"><a href="{{url}}" class="form-card d-block text-decoration-none text-dark h-100">
+<h5>{{title}}</h5><p class="text-muted">{{desc}}</p><h2>{{count}}</h2></a></div>{% endfor %}
+</div>{% endblock %}
