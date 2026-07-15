@@ -1,0 +1,11 @@
+West ERP 5.0.3 — إصلاح قيود اليومية وإظهار المشتريات
+
+تم إصلاح:
+- خطأ قالب قيود اليومية.
+- إضافة المشتريات إلى القائمة الجانبية.
+
+ارفع:
+base.html
+journal_entries.html
+
+ثم Commit changes وDeploy latest commit.
