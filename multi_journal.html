@@ -63,9 +63,14 @@
 <table class="table table-striped">
 <thead><tr><th>رقم الدفعة</th><th>التاريخ</th><th>الوصف</th><th>الحالة</th><th>الإجراءات</th></tr></thead>
 <tbody>{% for b in batches %}<tr><td>{{b.batch_no}}</td><td>{{b.batch_date}}</td><td>{{b.description}}</td><td>{{b.status}}</td>
-<td><a class="btn btn-sm btn-outline-primary" href="{{url_for('multi_journal_view',batch_id=b.id)}}">عرض / طباعة</a>
+<td class="text-nowrap">
+<a class="btn btn-sm btn-outline-primary" href="{{url_for('multi_journal_view',batch_id=b.id)}}">عرض</a>
+<a class="btn btn-sm btn-dark" target="_blank" href="{{url_for('multi_journal_view',batch_id=b.id,print=1)}}">طباعة الدفعة / PDF</a>
+<a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{url_for('multi_journal_view',batch_id=b.id)}}#print-each">كل قيد صفحة</a>
 <a class="btn btn-sm btn-outline-success" href="{{url_for('multi_journal_export',batch_id=b.id)}}">Excel</a>
-<form class="d-inline" method="post" action="{{url_for('multi_journal_delete',batch_id=b.id)}}" onsubmit="return confirm('تأكيد الحذف؟')"><button class="btn btn-sm btn-outline-danger">حذف</button></form>
+<form class="d-inline" method="post" action="{{url_for('multi_journal_delete',batch_id=b.id)}}" onsubmit="return confirm('تأكيد الحذف؟')">
+<button class="btn btn-sm btn-outline-danger">حذف</button>
+</form>
 </td></tr>{% endfor %}</tbody>
 </table>
 </div>

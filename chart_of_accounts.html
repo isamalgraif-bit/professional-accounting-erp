@@ -46,11 +46,15 @@
 <h5 class="mb-3">إضافة حساب جديد</h5>
 <form method="post">
 <div class="row g-3">
-<div class="col-md-2"><label>كود الحساب</label><input class="form-control" name="account_code" required></div>
+<div class="col-md-2">
+<label>كود الحساب</label>
+<input class="form-control" id="accountCode" name="account_code" required>
+<small class="text-muted" id="codeHint">اختر الحساب الأب ليُقترح الكود تلقائيًا.</small>
+</div>
 <div class="col-md-3"><label>اسم الحساب</label><input class="form-control" name="account_name_ar" required></div>
 <div class="col-md-3"><label>الاسم الإنجليزي</label><input class="form-control" name="account_name_en"></div>
 <div class="col-md-2"><label>نوع الحساب</label><select class="form-select" name="account_type"><option>أصل</option><option>خصم</option><option>حقوق ملكية</option><option>إيراد</option><option>مصروف</option></select></div>
-<div class="col-md-2"><label>الحساب الأب</label><select class="form-select" name="parent_id"><option value="">حساب رئيسي</option>{% for p in parents %}<option value="{{p.id}}">{{p.account_code}} - {{p.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>الحساب الأب</label><select class="form-select" id="parentAccount" name="parent_id"><option value="">حساب رئيسي</option>{% for p in parents %}<option value="{{p.id}}">{{p.account_code}} - {{p.account_name_ar}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>يقبل حركة</label><select class="form-select" name="accepts_entries"><option value="1">نعم</option><option value="0">لا</option></select></div>
 <div class="col-md-2"><label>طبيعة الرصيد</label><select class="form-select" name="normal_balance"><option>مدين</option><option>دائن</option></select></div>
 <div class="col-md-3"><label>القائمة المالية</label><select class="form-select" name="statement_type"><option>الميزانية العمومية</option><option>قائمة الدخل</option></select></div>
@@ -155,5 +159,39 @@ document.addEventListener('keydown',e=>{
     if(input){e.preventDefault();input.focus();input.select();}
   }
 });
+</script>
+
+<script>
+async function loadSuggestedAccountCode(){
+  const parentSelect=document.getElementById('parentAccount');
+  const codeInput=document.getElementById('accountCode');
+  const hint=document.getElementById('codeHint');
+  const parentId=parentSelect.value;
+
+  if(!parentId){
+    hint.textContent='هذا حساب رئيسي؛ أدخل الكود يدويًا.';
+    return;
+  }
+
+  hint.textContent='جارٍ اقتراح الكود...';
+
+  try{
+    const response=await fetch(`{{ url_for('chart_next_code') }}?parent_id=${encodeURIComponent(parentId)}`);
+    const data=await response.json();
+
+    if(!response.ok){
+      throw new Error(data.message || 'تعذر إنشاء الكود');
+    }
+
+    codeInput.value=data.code;
+    codeInput.focus();
+    codeInput.select();
+    hint.textContent=`الكود المقترح تحت الحساب ${data.parent_code}. يمكنك تعديله قبل الحفظ.`;
+  }catch(error){
+    hint.textContent=error.message;
+  }
+}
+
+document.getElementById('parentAccount')?.addEventListener('change',loadSuggestedAccountCode);
 </script>
 {% endblock %}

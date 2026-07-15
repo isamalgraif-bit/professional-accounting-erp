@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "1.9.0"
+APP_VERSION = "1.9.4"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -958,6 +958,69 @@ def chart_of_accounts():
     )
 
 
+
+@app.route("/chart-of-accounts/next-code")
+@login_required
+def chart_next_code():
+    parent_id = request.args.get("parent_id", type=int)
+    if not parent_id:
+        return {"code": "", "message": "اختر الحساب الرئيسي أولاً"}
+
+    parent = row("""
+        SELECT id, account_code, level
+        FROM chart_of_accounts
+        WHERE id=:id
+    """, {"id": parent_id})
+
+    if not parent:
+        return {"code": "", "message": "الحساب الرئيسي غير موجود"}, 404
+
+    children = rows("""
+        SELECT account_code
+        FROM chart_of_accounts
+        WHERE parent_id=:id
+        ORDER BY account_code
+    """, {"id": parent_id})
+
+    parent_code = str(parent["account_code"]).strip()
+    numeric_codes = []
+
+    for child in children:
+        code = str(child["account_code"]).strip()
+        if code.isdigit():
+            numeric_codes.append(int(code))
+
+    if parent_code.isdigit():
+        parent_number = int(parent_code)
+        parent_level = int(parent["level"] or 1)
+
+        # 1000 -> 1100, 1200 ...
+        # 1100 -> 1110, 1120 ...
+        # 1110 -> 1111, 1112 ...
+        step = 10 ** max(0, 3 - parent_level)
+
+        if numeric_codes:
+            candidate = max(numeric_codes) + step
+        else:
+            candidate = parent_number + step
+
+        width = max(len(parent_code), len(str(candidate)))
+        suggested_code = str(candidate).zfill(width)
+    else:
+        # Alphanumeric fallback: ABC -> ABC-01, ABC-02 ...
+        sequence = 1
+        existing = {str(c["account_code"]).strip() for c in children}
+        while f"{parent_code}-{sequence:02d}" in existing:
+            sequence += 1
+        suggested_code = f"{parent_code}-{sequence:02d}"
+
+    return {
+        "code": suggested_code,
+        "parent_code": parent_code,
+        "message": "تم اقتراح الكود تلقائيًا"
+    }
+
+
 @app.route("/chart-of-accounts/<int:account_id>")
 @login_required
 def account_view(account_id):
@@ -1579,7 +1642,7 @@ def multi_journal_view(batch_id):
         WHERE g.batch_id=:id ORDER BY g.group_no,l.id
     """, {"id": batch_id})
     company = row("SELECT * FROM settings WHERE id=1")
-    return render_template("multi_journal_view.html", batch=batch, groups=groups, lines=lines, company=company)
+    return render_template("multi_journal_view.html", batch=batch, groups=groups, lines=lines, company=company, auto_print=request.args.get("print")=="1")
 
 
 @app.route("/multi-journal/<int:batch_id>/group/<int:group_no>/print")
