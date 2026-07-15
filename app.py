@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "5.0.1"
+APP_VERSION = "5.0.2"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -880,7 +880,7 @@ def init_db():
             SELECT 'طلب شراء',:mn,:mx,:role,1
             WHERE NOT EXISTS(
               SELECT 1 FROM approval_rules WHERE document_type='طلب شراء'
-              AND min_amount=:mn AND COALESCE(max_amount,-1)=COALESCE(:mx,-1)
+              AND min_amount=:mn AND max_amount IS NOT DISTINCT FROM :mx
             )"""), {"mn":min_amount,"mx":max_amount,"role":role})
 
     current_year = datetime.now().year

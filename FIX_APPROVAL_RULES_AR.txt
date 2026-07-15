@@ -1,0 +1,16 @@
+West ERP 5.0.2 — إصلاح قواعد الموافقات
+
+المشكلة:
+PostgreSQL رفض مقارنة max_amount عندما تكون NULL باستخدام COALESCE مع -1،
+بسبب اختلاف نوع البيانات الرقمية.
+
+الإصلاح:
+استبدال المقارنة بـ:
+max_amount IS NOT DISTINCT FROM :mx
+
+وهي الصيغة الصحيحة في PostgreSQL لمقارنة القيم، بما فيها NULL.
+
+طريقة التحديث:
+1. ارفع app.py فقط.
+2. Commit changes.
+3. Render > Manual Deploy > Clear build cache & deploy.
