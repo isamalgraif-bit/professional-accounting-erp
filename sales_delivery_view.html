@@ -1,0 +1,3 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>إذن تسليم {{doc.delivery_no}}</h3><small>Delivery Note</small></div><button class="btn btn-dark" onclick="window.print()">طباعة/PDF</button></div>
+<div class="form-card"><p><b>التاريخ:</b> {{doc.delivery_date}} | <b>العميل:</b> {{doc.customer_name}} / {{doc.customer_name_en or ''}} | <b>أمر البيع:</b> {{doc.order_no}} | <b>المستودع:</b> {{doc.warehouse_name}}</p><table class="table table-bordered"><thead><tr><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>التكلفة</th></tr></thead><tbody>{% for i in items %}<tr><td>{{i.item_name}}</td><td>{{i.quantity}}</td><td>{{i.unit}}</td><td>{{i.unit_cost}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

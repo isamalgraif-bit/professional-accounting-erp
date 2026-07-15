@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "6.0.0"
+APP_VERSION = "7.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -480,6 +480,33 @@ def record_inventory_movement(movement_date,movement_type,item_id,warehouse_id,q
     return no
 
 
+
+def next_sales_no(table_name, date_field, prefix, doc_date):
+    allowed={"sales_quotations":"quotation_date","sales_orders":"order_date","sales_deliveries":"delivery_date"}
+    if allowed.get(table_name)!=date_field: raise ValueError("Invalid sequence")
+    y=datetime.strptime(doc_date,"%Y-%m-%d").year if isinstance(doc_date,str) else doc_date.year
+    n=db.session.execute(text(f"SELECT COUNT(*) FROM {table_name} WHERE EXTRACT(YEAR FROM {date_field})=:y"),{"y":y}).scalar() or 0
+    return f"{prefix}-{y}-{n+1:06d}"
+
+def parse_sales_lines(form):
+    ids=form.getlist("item_id[]"); qtys=form.getlist("quantity[]"); prices=form.getlist("unit_price[]")
+    discounts=form.getlist("discount_rate[]"); vats=form.getlist("vat_rate[]")
+    lines=[]; subtotal=discount_total=vat_total=total=0
+    for i,item_id in enumerate(ids):
+        if not item_id: continue
+        item=row("SELECT id,sku,name,unit,sale_price FROM inventory WHERE id=:id",{"id":item_id})
+        qty=float(qtys[i] or 0); price=float(prices[i] or item["sale_price"] or 0)
+        dr=float(discounts[i] or 0); vr=float(vats[i] or 0)
+        if qty<=0: raise ValueError("الكمية يجب أن تكون أكبر من صفر")
+        base=round(qty*price,2); disc=round(base*dr/100,2); taxable=base-disc
+        tax=round(taxable*vr/100,2); line_total=round(taxable+tax,2)
+        lines.append({"item_id":item["id"],"item_name":item["name"],"quantity":qty,"unit":item["unit"],
+                      "unit_price":price,"discount_rate":dr,"vat_rate":vr,
+                      "line_subtotal":base,"line_discount":disc,"line_vat":tax,"line_total":line_total})
+        subtotal+=base; discount_total+=disc; vat_total+=tax; total+=line_total
+    if not lines: raise ValueError("أدخل صنفًا واحدًا على الأقل")
+    return lines,round(subtotal,2),round(discount_total,2),round(vat_total,2),round(total,2)
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -849,6 +876,59 @@ def init_db():
             variance_qty NUMERIC(18,3) NOT NULL DEFAULT 0,
             unit_cost NUMERIC(18,4) DEFAULT 0
         )""",
+        """CREATE TABLE IF NOT EXISTS sales_quotations(
+            id SERIAL PRIMARY KEY, quotation_no VARCHAR(100) UNIQUE NOT NULL,
+            quotation_date DATE NOT NULL, valid_until DATE,
+            customer_id INTEGER NOT NULL REFERENCES customers(id),
+            branch_id INTEGER REFERENCES branches(id), cost_center_id INTEGER REFERENCES cost_centers(id),
+            status VARCHAR(40) DEFAULT 'مسودة', subtotal NUMERIC(18,2) DEFAULT 0,
+            discount NUMERIC(18,2) DEFAULT 0, vat NUMERIC(18,2) DEFAULT 0,
+            total NUMERIC(18,2) DEFAULT 0, notes TEXT DEFAULT '',
+            converted_order_id INTEGER, created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS sales_quotation_items(
+            id SERIAL PRIMARY KEY, quotation_id INTEGER NOT NULL REFERENCES sales_quotations(id) ON DELETE CASCADE,
+            item_id INTEGER REFERENCES inventory(id), item_name VARCHAR(255) NOT NULL,
+            quantity NUMERIC(18,3) NOT NULL, unit VARCHAR(50) DEFAULT 'وحدة',
+            unit_price NUMERIC(18,2) NOT NULL, discount_rate NUMERIC(5,2) DEFAULT 0,
+            vat_rate NUMERIC(5,2) DEFAULT 15, line_subtotal NUMERIC(18,2) DEFAULT 0,
+            line_discount NUMERIC(18,2) DEFAULT 0, line_vat NUMERIC(18,2) DEFAULT 0,
+            line_total NUMERIC(18,2) DEFAULT 0
+        )""",
+        """CREATE TABLE IF NOT EXISTS sales_orders(
+            id SERIAL PRIMARY KEY, order_no VARCHAR(100) UNIQUE NOT NULL,
+            order_date DATE NOT NULL, quotation_id INTEGER REFERENCES sales_quotations(id),
+            customer_id INTEGER NOT NULL REFERENCES customers(id),
+            branch_id INTEGER REFERENCES branches(id), cost_center_id INTEGER REFERENCES cost_centers(id),
+            warehouse_id INTEGER REFERENCES warehouses(id), status VARCHAR(40) DEFAULT 'مسودة',
+            subtotal NUMERIC(18,2) DEFAULT 0, discount NUMERIC(18,2) DEFAULT 0,
+            vat NUMERIC(18,2) DEFAULT 0, total NUMERIC(18,2) DEFAULT 0,
+            notes TEXT DEFAULT '', created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS sales_order_items(
+            id SERIAL PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
+            item_id INTEGER REFERENCES inventory(id), item_name VARCHAR(255) NOT NULL,
+            quantity NUMERIC(18,3) NOT NULL, delivered_qty NUMERIC(18,3) DEFAULT 0,
+            unit VARCHAR(50) DEFAULT 'وحدة', unit_price NUMERIC(18,2) NOT NULL,
+            discount_rate NUMERIC(5,2) DEFAULT 0, vat_rate NUMERIC(5,2) DEFAULT 15,
+            line_subtotal NUMERIC(18,2) DEFAULT 0, line_discount NUMERIC(18,2) DEFAULT 0,
+            line_vat NUMERIC(18,2) DEFAULT 0, line_total NUMERIC(18,2) DEFAULT 0
+        )""",
+        """CREATE TABLE IF NOT EXISTS sales_deliveries(
+            id SERIAL PRIMARY KEY, delivery_no VARCHAR(100) UNIQUE NOT NULL,
+            delivery_date DATE NOT NULL, order_id INTEGER NOT NULL REFERENCES sales_orders(id),
+            customer_id INTEGER NOT NULL REFERENCES customers(id),
+            warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
+            status VARCHAR(40) DEFAULT 'معتمد', notes TEXT DEFAULT '',
+            invoice_id INTEGER, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS sales_delivery_items(
+            id SERIAL PRIMARY KEY, delivery_id INTEGER NOT NULL REFERENCES sales_deliveries(id) ON DELETE CASCADE,
+            order_item_id INTEGER NOT NULL REFERENCES sales_order_items(id),
+            item_id INTEGER REFERENCES inventory(id), quantity NUMERIC(18,3) NOT NULL,
+            unit_cost NUMERIC(18,4) DEFAULT 0
+        )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
@@ -910,6 +990,11 @@ def init_db():
         "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS tax_number VARCHAR(50) DEFAULT ''",
         "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS normal_balance VARCHAR(20) DEFAULT 'مدين'",
         "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS statement_type VARCHAR(50) DEFAULT 'الميزانية العمومية'",
+        'ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS item_id INTEGER',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sales_order_id INTEGER',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_id INTEGER',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS warehouse_id INTEGER',
         "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
         "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS barcode VARCHAR(100) DEFAULT ''",
         "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS qr_code VARCHAR(255) DEFAULT ''",
@@ -2889,6 +2974,194 @@ def report_context(slug, filters):
 
 
 
+
+
+@app.route("/sales")
+@login_required
+def sales_center():
+    return render_template("sales_center.html",
+      quotations=row("SELECT COUNT(*) c FROM sales_quotations")["c"],
+      orders=row("SELECT COUNT(*) c FROM sales_orders")["c"],
+      deliveries=row("SELECT COUNT(*) c FROM sales_deliveries")["c"],
+      invoices=row("SELECT COUNT(*) c FROM invoices")["c"])
+
+@app.route("/sales/quotations",methods=["GET","POST"])
+@login_required
+def sales_quotations():
+    if request.method=="POST":
+        try: lines,sub,disc,vat,total=parse_sales_lines(request.form)
+        except Exception as exc:
+            flash(str(exc),"danger"); return redirect(url_for("sales_quotations"))
+        no=next_sales_no("sales_quotations","quotation_date","QT",request.form["quotation_date"])
+        execute("""INSERT INTO sales_quotations(quotation_no,quotation_date,valid_until,customer_id,
+          branch_id,cost_center_id,status,subtotal,discount,vat,total,notes,created_by,created_at)
+          VALUES(:no,:dt,:valid,:customer,:branch,:cc,:status,:sub,:disc,:vat,:total,:notes,:uid,:created)""",
+          {"no":no,"dt":request.form["quotation_date"],"valid":request.form.get("valid_until") or None,
+           "customer":request.form["customer_id"],"branch":request.form.get("branch_id") or None,
+           "cc":request.form.get("cost_center_id") or None,"status":request.form.get("status","مسودة"),
+           "sub":sub,"disc":disc,"vat":vat,"total":total,"notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        qid=row("SELECT id FROM sales_quotations WHERE quotation_no=:n",{"n":no})["id"]
+        for x in lines:
+            execute("""INSERT INTO sales_quotation_items(quotation_id,item_id,item_name,quantity,unit,
+              unit_price,discount_rate,vat_rate,line_subtotal,line_discount,line_vat,line_total)
+              VALUES(:qid,:item_id,:item_name,:quantity,:unit,:unit_price,:discount_rate,:vat_rate,
+              :line_subtotal,:line_discount,:line_vat,:line_total)""",{"qid":qid,**x})
+        flash(f"تم إنشاء عرض السعر {no}","success")
+        return redirect(url_for("sales_quotation_view",quotation_id=qid))
+    return render_template("sales_quotations.html",
+      docs=rows("""SELECT q.*,c.name customer_name FROM sales_quotations q JOIN customers c ON c.id=q.customer_id ORDER BY q.id DESC"""),
+      customers=rows("SELECT id,name,name_en FROM customers ORDER BY name"),
+      items=rows("SELECT id,sku,name,unit,sale_price,quantity FROM inventory WHERE active=1 ORDER BY name"),
+      branches=rows("SELECT id,name FROM branches WHERE active=1 ORDER BY name"),
+      centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"))
+
+@app.route("/sales/quotations/<int:quotation_id>")
+@login_required
+def sales_quotation_view(quotation_id):
+    doc=row("""SELECT q.*,c.name customer_name,c.name_en customer_name_en FROM sales_quotations q
+               JOIN customers c ON c.id=q.customer_id WHERE q.id=:id""",{"id":quotation_id})
+    items=rows("SELECT * FROM sales_quotation_items WHERE quotation_id=:id ORDER BY id",{"id":quotation_id})
+    return render_template("sales_doc_view.html",doc=doc,items=items,title="عرض سعر / Quotation",
+                           number=doc["quotation_no"],date=doc["quotation_date"],kind="quotation")
+
+@app.route("/sales/quotations/<int:quotation_id>/convert",methods=["POST"])
+@login_required
+def sales_quotation_convert(quotation_id):
+    q=row("SELECT * FROM sales_quotations WHERE id=:id",{"id":quotation_id})
+    if q.get("converted_order_id"): return redirect(url_for("sales_order_view",order_id=q["converted_order_id"]))
+    wh=row("SELECT id FROM warehouses WHERE active=1 ORDER BY id LIMIT 1")
+    no=next_sales_no("sales_orders","order_date","SO",datetime.now().date().isoformat())
+    execute("""INSERT INTO sales_orders(order_no,order_date,quotation_id,customer_id,branch_id,
+      cost_center_id,warehouse_id,status,subtotal,discount,vat,total,notes,created_by,created_at)
+      VALUES(:no,:dt,:qid,:customer,:branch,:cc,:wh,'مسودة',:sub,:disc,:vat,:total,:notes,:uid,:created)""",
+      {"no":no,"dt":datetime.now().date(),"qid":quotation_id,"customer":q["customer_id"],
+       "branch":q["branch_id"],"cc":q["cost_center_id"],"wh":wh["id"] if wh else None,
+       "sub":q["subtotal"],"disc":q["discount"],"vat":q["vat"],"total":q["total"],
+       "notes":f"من عرض السعر {q['quotation_no']}","uid":session.get("user_id"),"created":datetime.now()})
+    oid=row("SELECT id FROM sales_orders WHERE order_no=:n",{"n":no})["id"]
+    execute("""INSERT INTO sales_order_items(order_id,item_id,item_name,quantity,unit,unit_price,
+      discount_rate,vat_rate,line_subtotal,line_discount,line_vat,line_total)
+      SELECT :oid,item_id,item_name,quantity,unit,unit_price,discount_rate,vat_rate,
+      line_subtotal,line_discount,line_vat,line_total FROM sales_quotation_items WHERE quotation_id=:qid""",
+      {"oid":oid,"qid":quotation_id})
+    execute("UPDATE sales_quotations SET status='محوّل',converted_order_id=:oid WHERE id=:id",
+            {"oid":oid,"id":quotation_id})
+    return redirect(url_for("sales_order_view",order_id=oid))
+
+@app.route("/sales/orders",methods=["GET","POST"])
+@login_required
+def sales_orders():
+    if request.method=="POST":
+        try: lines,sub,disc,vat,total=parse_sales_lines(request.form)
+        except Exception as exc:
+            flash(str(exc),"danger"); return redirect(url_for("sales_orders"))
+        no=next_sales_no("sales_orders","order_date","SO",request.form["order_date"])
+        execute("""INSERT INTO sales_orders(order_no,order_date,customer_id,branch_id,cost_center_id,
+          warehouse_id,status,subtotal,discount,vat,total,notes,created_by,created_at)
+          VALUES(:no,:dt,:customer,:branch,:cc,:wh,:status,:sub,:disc,:vat,:total,:notes,:uid,:created)""",
+          {"no":no,"dt":request.form["order_date"],"customer":request.form["customer_id"],
+           "branch":request.form.get("branch_id") or None,"cc":request.form.get("cost_center_id") or None,
+           "wh":request.form["warehouse_id"],"status":request.form.get("status","مسودة"),
+           "sub":sub,"disc":disc,"vat":vat,"total":total,"notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        oid=row("SELECT id FROM sales_orders WHERE order_no=:n",{"n":no})["id"]
+        for x in lines:
+            execute("""INSERT INTO sales_order_items(order_id,item_id,item_name,quantity,unit,unit_price,
+              discount_rate,vat_rate,line_subtotal,line_discount,line_vat,line_total)
+              VALUES(:oid,:item_id,:item_name,:quantity,:unit,:unit_price,:discount_rate,:vat_rate,
+              :line_subtotal,:line_discount,:line_vat,:line_total)""",{"oid":oid,**x})
+        return redirect(url_for("sales_order_view",order_id=oid))
+    return render_template("sales_orders.html",
+      docs=rows("""SELECT o.*,c.name customer_name,w.name warehouse_name FROM sales_orders o
+                   JOIN customers c ON c.id=o.customer_id LEFT JOIN warehouses w ON w.id=o.warehouse_id ORDER BY o.id DESC"""),
+      customers=rows("SELECT id,name,name_en FROM customers ORDER BY name"),
+      items=rows("SELECT id,sku,name,unit,sale_price,quantity FROM inventory WHERE active=1 ORDER BY name"),
+      branches=rows("SELECT id,name FROM branches WHERE active=1 ORDER BY name"),
+      centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"),
+      warehouses=rows("SELECT id,code,name FROM warehouses WHERE active=1 ORDER BY code"))
+
+@app.route("/sales/orders/<int:order_id>")
+@login_required
+def sales_order_view(order_id):
+    doc=row("""SELECT o.*,c.name customer_name,c.name_en customer_name_en,w.name warehouse_name
+               FROM sales_orders o JOIN customers c ON c.id=o.customer_id
+               LEFT JOIN warehouses w ON w.id=o.warehouse_id WHERE o.id=:id""",{"id":order_id})
+    items=rows("SELECT * FROM sales_order_items WHERE order_id=:id ORDER BY id",{"id":order_id})
+    return render_template("sales_doc_view.html",doc=doc,items=items,title="أمر بيع / Sales Order",
+                           number=doc["order_no"],date=doc["order_date"],kind="order")
+
+@app.route("/sales/orders/<int:order_id>/approve",methods=["POST"])
+@login_required
+def sales_order_approve(order_id):
+    o=row("SELECT * FROM sales_orders WHERE id=:id",{"id":order_id})
+    for i in rows("SELECT * FROM sales_order_items WHERE order_id=:id",{"id":order_id}):
+        if warehouse_stock(i["item_id"],o["warehouse_id"]) < float(i["quantity"])-float(i["delivered_qty"]):
+            flash(f"الرصيد غير كافٍ للصنف {i['item_name']}","danger")
+            return redirect(url_for("sales_order_view",order_id=order_id))
+    execute("UPDATE sales_orders SET status='معتمد' WHERE id=:id",{"id":order_id})
+    return redirect(url_for("sales_order_view",order_id=order_id))
+
+@app.route("/sales/deliveries",methods=["GET","POST"])
+@login_required
+def sales_deliveries():
+    if request.method=="POST":
+        oid=int(request.form["order_id"]); order=row("SELECT * FROM sales_orders WHERE id=:id",{"id":oid})
+        item_ids=request.form.getlist("order_item_id[]"); qtys=request.form.getlist("delivery_qty[]")
+        lines=[]
+        for i,item_id in enumerate(item_ids):
+            oi=row("SELECT * FROM sales_order_items WHERE id=:id",{"id":item_id})
+            qty=float(qtys[i] or 0); remain=float(oi["quantity"])-float(oi["delivered_qty"])
+            if qty>remain+0.0001: flash("كمية التسليم تتجاوز المتبقي","danger"); return redirect(url_for("sales_deliveries"))
+            if qty>0:
+                if warehouse_stock(oi["item_id"],order["warehouse_id"])<qty:
+                    flash(f"الرصيد غير كافٍ للصنف {oi['item_name']}","danger"); return redirect(url_for("sales_deliveries"))
+                lines.append((oi,qty))
+        if not lines: flash("أدخل كمية تسليم","danger"); return redirect(url_for("sales_deliveries"))
+        no=next_sales_no("sales_deliveries","delivery_date","DN",request.form["delivery_date"])
+        execute("""INSERT INTO sales_deliveries(delivery_no,delivery_date,order_id,customer_id,
+          warehouse_id,status,notes,created_by,created_at)
+          VALUES(:no,:dt,:oid,:customer,:wh,'معتمد',:notes,:uid,:created)""",
+          {"no":no,"dt":request.form["delivery_date"],"oid":oid,"customer":order["customer_id"],
+           "wh":order["warehouse_id"],"notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        did=row("SELECT id FROM sales_deliveries WHERE delivery_no=:n",{"n":no})["id"]
+        for oi,qty in lines:
+            item=row("SELECT cost FROM inventory WHERE id=:id",{"id":oi["item_id"]})
+            execute("""INSERT INTO sales_delivery_items(delivery_id,order_item_id,item_id,quantity,unit_cost)
+                       VALUES(:did,:oi,:item,:qty,:cost)""",
+                    {"did":did,"oi":oi["id"],"item":oi["item_id"],"qty":qty,"cost":item["cost"]})
+            execute("UPDATE sales_order_items SET delivered_qty=delivered_qty+:q WHERE id=:id",
+                    {"q":qty,"id":oi["id"]})
+            record_inventory_movement(request.form["delivery_date"],"بيع",oi["item_id"],order["warehouse_id"],
+                                      qty,item["cost"],reference_type="DELIVERY",reference_id=did,reference_no=no)
+        remaining=row("SELECT COUNT(*) c FROM sales_order_items WHERE order_id=:id AND delivered_qty<quantity",
+                      {"id":oid})["c"]
+        execute("UPDATE sales_orders SET status=:s WHERE id=:id",
+                {"s":"مكتمل التسليم" if remaining==0 else "تسليم جزئي","id":oid})
+        return redirect(url_for("sales_delivery_view",delivery_id=did))
+    return render_template("sales_deliveries.html",
+      orders=rows("""SELECT o.id,o.order_no,c.name customer_name FROM sales_orders o
+                     JOIN customers c ON c.id=o.customer_id WHERE o.status IN ('معتمد','تسليم جزئي') ORDER BY o.id DESC"""),
+      docs=rows("""SELECT d.*,o.order_no,c.name customer_name FROM sales_deliveries d
+                   JOIN sales_orders o ON o.id=d.order_id JOIN customers c ON c.id=d.customer_id ORDER BY d.id DESC"""))
+
+@app.route("/sales/orders/<int:order_id>/items")
+@login_required
+def sales_order_items_api(order_id):
+    return {"items":[dict(x) for x in rows("""SELECT id,item_name,quantity,delivered_qty
+      FROM sales_order_items WHERE order_id=:id ORDER BY id""",{"id":order_id})]}
+
+@app.route("/sales/deliveries/<int:delivery_id>")
+@login_required
+def sales_delivery_view(delivery_id):
+    doc=row("""SELECT d.*,o.order_no,c.name customer_name,c.name_en customer_name_en,w.name warehouse_name
+               FROM sales_deliveries d JOIN sales_orders o ON o.id=d.order_id
+               JOIN customers c ON c.id=d.customer_id JOIN warehouses w ON w.id=d.warehouse_id
+               WHERE d.id=:id""",{"id":delivery_id})
+    items=rows("""SELECT di.*,oi.item_name,oi.unit FROM sales_delivery_items di
+                  JOIN sales_order_items oi ON oi.id=di.order_item_id WHERE di.delivery_id=:id""",{"id":delivery_id})
+    return render_template("sales_delivery_view.html",doc=doc,items=items)
 
 @app.route("/procurement")
 @login_required

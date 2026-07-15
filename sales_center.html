@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>إدارة المبيعات</h3><small>Quote-to-Cash</small></div></div>
+<div class="row g-3">
+{% for t,d,u,c in [('عروض الأسعار','التحويل إلى أمر بيع',url_for('sales_quotations'),quotations),('أوامر البيع','الاعتماد والمتابعة',url_for('sales_orders'),orders),('أذونات التسليم','الخصم من المخزون',url_for('sales_deliveries'),deliveries),('فواتير المبيعات','الفواتير الضريبية',url_for('invoices'),invoices)] %}
+<div class="col-md-3"><a href="{{u}}" class="form-card d-block text-decoration-none text-dark h-100"><h5>{{t}}</h5><p class="text-muted">{{d}}</p><h2>{{c}}</h2></a></div>{% endfor %}
+</div>{% endblock %}
