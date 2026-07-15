@@ -1,15 +1,21 @@
-{% extends "base.html" %}
-{% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4"><h3 class="mb-0">المصروفات</h3><a class="btn btn-success" href="{{ url_for('export_expenses') }}">تصدير Excel</a></div>
-<div class="form-card mb-4"><form method="post"><div class="row g-3">
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>المصروفات</h3><small class="text-muted">ترحيل محاسبي تلقائي</small></div><button class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('expenses')}}">📄 جديد</button></div>
+<div class="form-card mb-4"><form method="post" data-track-unsaved="1"><div class="row g-3">
 <div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="expense_date" required></div>
-<div class="col-md-2"><label>التصنيف</label><input class="form-control" name="category" required></div>
-<div class="col-md-3"><label>الوصف</label><input class="form-control" name="description"></div>
-<div class="col-md-2"><label>المبلغ</label><input class="form-control" type="number" step="0.01" name="amount" required></div>
+<div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>مسودة</option><option>معتمدة</option></select></div>
+<div class="col-md-3"><label>التصنيف</label><input class="form-control" name="category" required></div>
+<div class="col-md-5"><label>الوصف</label><input class="form-control" name="description"></div>
+<div class="col-md-2"><label>المبلغ قبل الضريبة</label><input class="form-control" type="number" step=".01" name="amount" required></div>
+<div class="col-md-2"><label>خاضع للضريبة</label><select class="form-select" name="taxable"><option value="0">لا</option><option value="1">نعم</option></select></div>
+<div class="col-md-3"><label>المورد</label><select class="form-select" name="supplier_id"><option value="">بدون</option>{% for s in suppliers %}<option value="{{s.id}}">{{s.name}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>رقم الفاتورة</label><input class="form-control" name="invoice_number"></div>
+<div class="col-md-2"><label>تاريخ الفاتورة</label><input class="form-control" type="date" name="invoice_date"></div>
+<div class="col-md-4"><label>حساب المصروف</label><select class="form-select" name="expense_account_id" required><option value="">اختر</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-4"><label>حساب السداد</label><select class="form-select" name="payment_account_id" required><option value="">اختر</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>مركز التكلفة</label><select class="form-select" name="cost_center_id"><option value="">بدون</option>{% for c in centers %}<option value="{{c.id}}">{{c.code}} - {{c.name}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>الفرع</label><select class="form-select" name="branch_id">{% for b in branches %}<option value="{{b.id}}">{{b.name}}</option>{% endfor %}</select></div>
-<div class="col-md-2"><label>خاضع للضريبة</label><select class="form-select" name="taxable"><option value="1">نعم</option><option value="0">لا</option></select></div>
-<div class="col-md-2"><button class="btn btn-primary w-100 mt-4">حفظ</button></div>
+<div class="col-12 text-end"><button class="btn btn-primary">💾 حفظ</button></div>
 </div></form></div>
-<div class="form-card"><table class="table table-striped"><thead><tr><th>التاريخ</th><th>التصنيف</th><th>الوصف</th><th>المبلغ</th><th>الضريبة</th><th>الإجمالي</th></tr></thead>
-<tbody>{% for r in rows %}<tr><td>{{r.expense_date}}</td><td>{{r.category}}</td><td>{{r.description}}</td><td>{{r.amount}}</td><td>{{r.vat}}</td><td>{{r.total}}</td></tr>{% endfor %}</tbody></table></div>
+<div class="form-card"><div class="table-responsive"><table class="table table-striped"><thead><tr><th>التاريخ</th><th>التصنيف</th><th>المورد</th><th>المصروف</th><th>السداد</th><th>قبل الضريبة</th><th>الضريبة</th><th>الإجمالي</th><th>الحالة</th><th>القيد</th><th></th></tr></thead>
+<tbody>{% for r in rows %}<tr><td>{{r.expense_date}}</td><td>{{r.category}}</td><td>{{r.supplier_name or '-'}}</td><td>{{r.expense_account_name or '-'}}</td><td>{{r.payment_account_name or '-'}}</td><td>{{r.amount}}</td><td>{{r.vat}}</td><td>{{r.total}}</td><td>{{r.status}}</td><td>{% if r.journal_id %}<a href="{{url_for('journal_view',journal_id=r.journal_id)}}">{{r.journal_no}}</a>{% else %}-{% endif %}</td><td>{% if not r.journal_id %}<form method="post" action="{{url_for('expense_post',expense_id=r.id)}}"><button class="btn btn-sm btn-success">ترحيل</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table></div></div>
 {% endblock %}

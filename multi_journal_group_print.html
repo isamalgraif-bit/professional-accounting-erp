@@ -5,97 +5,84 @@
 <title>{{group.journal_no}}</title>
 <style>
 *{box-sizing:border-box}
-body{font-family:Tahoma,Arial,sans-serif;background:#eef1f5;margin:0;color:#172033}
-.toolbar,.sheet{max-width:1100px;margin:18px auto}
-.toolbar{display:flex;gap:10px}
-.btn{padding:10px 15px;background:#174ea6;color:#fff;border:0;border-radius:7px;text-decoration:none;cursor:pointer}
-.sheet{background:#fff;padding:30px;box-shadow:0 5px 20px rgba(0,0,0,.08)}
-.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #174ea6;padding-bottom:15px;margin-bottom:20px}
-.logo img{max-width:150px;max-height:80px;object-fit:contain}
-.info{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
-.box{border:1px solid #dbe3ec;border-radius:8px;padding:10px;background:#f8fafc}
-table{width:100%;border-collapse:collapse;margin-bottom:20px}
-th,td{border:1px solid #cfd6df;padding:8px;font-size:12px;text-align:right}
-th{background:#edf2f7}
-.total{font-weight:bold;background:#f8fafc}
-.signature td{height:75px;text-align:center}
-@media print{
- body{background:#fff}
- .toolbar{display:none}
- .sheet{box-shadow:none;margin:0;max-width:none;padding:8mm}
- @page{size:A4 landscape;margin:7mm}
-}
+body{font-family:Tahoma,Arial,sans-serif;margin:0;background:#eee;color:#111}
+.toolbar{max-width:1100px;margin:15px auto}
+.toolbar button{padding:9px 15px;border:0;border-radius:6px;background:#174ea6;color:white}
+.sheet{width:1100px;min-height:760px;margin:0 auto 25px;background:#fff;padding:24px 26px;box-shadow:0 4px 20px rgba(0,0,0,.12)}
+.top-grid{display:grid;grid-template-columns:1.5fr 1fr 1fr;border:1px solid #777}
+.top-grid>div{border-left:1px solid #777;padding:7px 10px;min-height:30px}
+.top-grid>div:nth-child(3n){border-left:0}
+.title-box{display:flex;justify-content:center;margin:18px 0 14px}
+.title-box h2{margin:0;border:3px double #555;padding:7px 34px;font-size:20px}
+.doc-grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid #777;margin-bottom:14px}
+.doc-grid>div{padding:8px 12px;border-left:1px solid #777}
+.doc-grid>div:last-child{border-left:0}
+table{width:100%;border-collapse:collapse}
+th,td{border:1px solid #777;padding:7px 6px;font-size:12px;text-align:center}
+th{background:#f3f3f3}
+.total-row td{font-weight:bold;background:#fafafa}
+.total-boxes{display:flex;gap:14px;margin-top:8px}
+.total-box{border:3px double #555;padding:6px 18px;min-width:130px;text-align:center;font-weight:bold}
+.signatures{display:grid;grid-template-columns:repeat(3,1fr);gap:45px;margin-top:55px}
+.signature{text-align:center;font-weight:bold}.signature-line{border-bottom:1px dotted #777;height:55px;margin-top:8px}
+.logo{max-width:110px;max-height:65px;object-fit:contain}
+@media print{body{background:#fff}.toolbar{display:none}.sheet{box-shadow:none;margin:0;width:auto;padding:8mm}@page{size:A4 landscape;margin:7mm}}
 </style>
 </head>
 <body>
-<div class="toolbar">
-<button class="btn" onclick="window.print()">طباعة / PDF</button>
-</div>
-
+<div class="toolbar"><button onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div>
 <div class="sheet">
-<div class="header">
-<div class="logo">
-{% if company.logo_data and company.logo_mime %}
-<img src="data:{{company.logo_mime}};base64,{{company.logo_data}}" alt="الشعار">
-{% elif company.logo_url %}
-<img src="{{company.logo_url}}" alt="الشعار">
-{% endif %}
-</div>
-<div>
-<h2 style="margin:0">{{company.company_name_ar}}</h2>
-<div>{{company.company_name_en}}</div>
-</div>
-<div style="text-align:left">
-<h2 style="margin:0">قيد يومية</h2>
-<div>Journal Voucher</div>
-</div>
-</div>
+  <div class="top-grid">
+    <div><b>{{company.company_name_ar}}</b><br>{{company.company_name_en}}</div>
+    <div><b>تاريخ الطباعة:</b> <span id="pd"></span></div>
+    <div>{% if company.logo_data and company.logo_mime %}<img class="logo" src="data:{{company.logo_mime}};base64,{{company.logo_data}}">{% elif company.logo_url %}<img class="logo" src="{{company.logo_url}}">{% endif %}</div>
+    <div><b>الفرع الرئيسي:</b> {{company.address_ar or '-'}}</div>
+    <div><b>وقت الطباعة:</b> <span id="pt"></span></div>
+    <div><b>الرقم الضريبي:</b> {{company.vat_number or '-'}}</div>
+    <div><b>القائم بالطباعة:</b> {{session.get('username') or session.get('user_name') or '-'}}</div>
+    <div><b>رقم الصفحة:</b> Page 1 of 1</div>
+    <div></div>
+  </div>
 
-<div class="info">
-<div class="box"><strong>رقم القيد</strong><br>{{group.journal_no}}</div>
-<div class="box"><strong>رقم الدفعة</strong><br>{{batch.batch_no}}</div>
-<div class="box"><strong>التاريخ</strong><br>{{batch.batch_date}}</div>
-<div class="box"><strong>الحالة</strong><br>{{group.status}}</div>
-</div>
+  <div class="title-box"><h2>مستند قيد يومية</h2></div>
 
-<table>
-<thead>
-<tr>
-<th>م</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th>
-<th>الضريبة</th><th>الطرف</th><th>الرقم الضريبي</th>
-<th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th>
-</tr>
-</thead>
-<tbody>
-{% for l in lines %}
-<tr>
-<td>{{loop.index}}</td>
-<td>{{l.account_code}}</td>
-<td>{{l.account_name_ar}}</td>
-<td>{{"%.2f"|format(l.debit)}}</td>
-<td>{{"%.2f"|format(l.credit)}}</td>
-<td>{{l.tax_direction if l.taxable else 'غير خاضع'}}</td>
-<td>{{l.supplier_name or l.customer_name or '-'}}</td>
-<td>{{l.tax_number or '-'}}</td>
-<td>{{l.invoice_number or '-'}}</td>
-<td>{{l.invoice_date or '-'}}</td>
-<td>{{l.line_description or '-'}}</td>
-<td>{{l.cost_center_code or '-'}} {{l.cost_center_name or ''}}</td>
-</tr>
-{% endfor %}
-<tr class="total">
-<td colspan="3">الإجمالي</td>
-<td>{{"%.2f"|format(group.total_debit)}}</td>
-<td>{{"%.2f"|format(group.total_credit)}}</td>
-<td colspan="7"></td>
-</tr>
-</tbody>
-</table>
+  <div class="doc-grid">
+    <div><b>رقم المستند:</b> {{group.journal_no}}</div>
+    <div><b>التاريخ:</b> {{batch.batch_date}}</div>
+    <div><b>رقم الدفعة:</b> {{batch.batch_no}}</div>
+    <div><b>الوصف:</b> {{batch.description or '-'}}</div>
+  </div>
 
-<table class="signature">
-<tr><th>إعداد القيد</th><th>المراجعة</th><th>الاعتماد</th></tr>
-<tr><td></td><td></td><td></td></tr>
-</table>
+  <table>
+    <thead><tr><th>كود الجهة</th><th>اسم الجهة / الحساب</th><th>مدين</th><th>دائن</th><th>الضريبة</th><th>الوصف</th><th>مركز التكلفة</th></tr></thead>
+    <tbody>
+    {% for l in lines %}
+    <tr>
+      <td>{{l.account_code}}</td><td>{{l.account_name_ar}}</td>
+      <td>{{"%.3f"|format(l.debit)}}</td><td>{{"%.3f"|format(l.credit)}}</td>
+      <td>{{l.tax_direction if l.taxable else '0.000'}}</td>
+      <td>{{l.line_description or batch.description or '-'}}</td>
+      <td>{{l.cost_center_code or '-'}} {{l.cost_center_name or ''}}</td>
+    </tr>
+    {% endfor %}
+    <tr class="total-row"><td colspan="2">الإجمالي</td><td>{{"%.3f"|format(group.total_debit)}}</td><td>{{"%.3f"|format(group.total_credit)}}</td><td>0.000</td><td colspan="2"></td></tr>
+    </tbody>
+  </table>
+
+  <div class="total-boxes">
+    <div class="total-box">{{"%.3f"|format(group.total_debit)}}</div>
+    <div class="total-box">{{"%.3f"|format(group.total_credit)}}</div>
+    <div class="total-box">{{"%.3f"|format(group.total_debit-group.total_credit)}}</div>
+  </div>
+
+  <div class="signatures">
+    <div class="signature">المحاسب<div class="signature-line"></div></div>
+    <div class="signature">رئيس الحسابات<div class="signature-line"></div></div>
+    <div class="signature">المدير المالي<div class="signature-line"></div></div>
+  </div>
 </div>
+<script>
+const n=new Date();pd.textContent=n.toLocaleDateString('en-GB');pt.textContent=n.toLocaleTimeString('en-US');
+</script>
 </body>
 </html>

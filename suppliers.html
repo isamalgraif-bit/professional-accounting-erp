@@ -1,18 +1,39 @@
 {% extends "base.html" %}
 {% block content %}
-<h3 class="mb-4">الموردون</h3>
+<div class="d-flex justify-content-between align-items-center mb-4 no-print">
+  <div><h3 class="mb-0">الموردون</h3><small class="text-muted">Arabic & English Names</small></div>
+  <button type="button" class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('suppliers')}}">📄 جديد</button>
+</div>
 <div class="form-card mb-4">
-<form method="post"><div class="row g-3">
-<div class="col-md-3"><label>اسم المورد</label><input class="form-control" name="name" required></div>
-<div class="col-md-3"><label>الرقم الضريبي</label><input class="form-control" name="vat_number"></div>
+<form method="post" data-track-unsaved="1"><div class="row g-3">
+<div class="col-md-4"><label>اسم المورد بالعربية</label>
+<input class="form-control" id="partyNameAr" name="name" required placeholder="اكتب الاسم العربي"></div>
+<div class="col-md-4"><label>Supplier Name in English</label>
+<div class="input-group"><input class="form-control" id="partyNameEn" name="name_en" placeholder="Generated automatically">
+<button class="btn btn-outline-primary" type="button" id="generateEnglish">🌐 توليد</button></div>
+<small class="text-muted">تحويل مجاني محلي ويمكن تعديل الاسم قبل الحفظ.</small></div>
+<div class="col-md-2"><label>الرقم الضريبي</label><input class="form-control" name="vat_number"></div>
 <div class="col-md-2"><label>الجوال</label><input class="form-control" name="phone"></div>
-<div class="col-md-2"><label>البريد</label><input class="form-control" name="email"></div>
-
-<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">حفظ</button></div>
-</div></form>
-</div>
-<div class="form-card">
-<table class="table table-striped"><thead><tr><th>الرقم</th><th>الاسم</th><th>الرقم الضريبي</th><th>الجوال</th><th>البريد</th></tr></thead>
-<tbody>{% for r in rows %}<tr><td>{{ r.id }}</td><td>{{ r.name }}</td><td>{{ r.vat_number }}</td><td>{{ r.phone }}</td><td>{{ r.email }}</td></tr>{% endfor %}</tbody></table>
-</div>
+<div class="col-md-4"><label>البريد</label><input class="form-control" name="email"></div>
+<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">💾 حفظ</button></div>
+</div></form></div>
+<div class="form-card"><div class="table-responsive"><table class="table table-striped align-middle">
+<thead><tr><th>الرقم</th><th>الاسم العربي</th><th>English Name</th><th>الرقم الضريبي</th><th>الجوال</th><th>البريد</th></tr></thead>
+<tbody>{% for r in rows %}<tr><td>{{r.id}}</td><td>{{r.name}}</td><td dir="ltr">{{r.name_en or '-'}}</td><td>{{r.vat_number or '-'}}</td><td>{{r.phone or '-'}}</td><td>{{r.email or '-'}}</td></tr>{% endfor %}</tbody>
+</table></div></div>
+<script>
+async function generateEnglishName(){
+ const ar=document.getElementById('partyNameAr').value.trim();
+ if(!ar){alert('اكتب الاسم العربي أولاً.');return;}
+ const response=await fetch('{{url_for("transliterate_name_api")}}',{
+   method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:ar})
+ });
+ const data=await response.json();
+ document.getElementById('partyNameEn').value=data.english_name||'';
+}
+document.getElementById('generateEnglish').addEventListener('click',generateEnglishName);
+document.getElementById('partyNameAr').addEventListener('blur',()=>{
+ if(!document.getElementById('partyNameEn').value.trim()) generateEnglishName();
+});
+</script>
 {% endblock %}

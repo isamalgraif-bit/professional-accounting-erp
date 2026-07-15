@@ -1,7 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
-<h3 class="mb-4">الموظفون</h3>
-<div class="form-card mb-4"><form method="post"><div class="row g-3">
+
+<div class="d-flex justify-content-between align-items-center mb-4 no-print">
+  <h3 class="mb-0">الموظفون</h3>
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="button" class="btn btn-outline-primary" data-new-document="1" data-new-url="{{ url_for('employees') }}">📄 جديد</button>
+  </div>
+</div>
+
+<div class="form-card mb-4"><form method="post" data-track-unsaved="1"><div class="row g-3">
 <div class="col-md-2"><label>رقم الموظف</label><input class="form-control" name="employee_no"></div>
 <div class="col-md-3"><label>الاسم</label><input class="form-control" name="name" required></div>
 <div class="col-md-2"><label>المسمى الوظيفي</label><input class="form-control" name="job_title"></div>

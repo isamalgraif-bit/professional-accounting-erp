@@ -70,7 +70,7 @@ th{background:#edf2f7}
 
 {% for g in groups %}
 <section class="group-page" data-group="{{g.group_no}}">
-<h3 class="group-title">المجموعة {{g.group_no}} — القيد {{g.journal_no}}</h3>
+<div style="text-align:center;margin:10px 0"><h3 style="display:inline-block;border:3px double #555;padding:7px 28px;margin:0">مستند قيد يومية</h3></div><div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #777;margin-bottom:10px"><div style="padding:7px;border-left:1px solid #777"><b>رقم المستند:</b> {{g.journal_no}}</div><div style="padding:7px"><b>التاريخ:</b> {{batch.batch_date}}</div></div>
 
 <div class="group-tools">
 <a class="btn secondary" target="_blank"

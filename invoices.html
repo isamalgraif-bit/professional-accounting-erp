@@ -1,38 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
+
+<div class="erp-sticky-header">
   <div>
     <h3 class="mb-1">فواتير المبيعات</h3>
-    <small class="text-muted">فاتورة متعددة البنود مع الحساب التلقائي ورقم متسلسل مثل INV-2026-000001</small>
+    <small class="text-muted">Sales Invoices</small>
   </div>
-  <a class="btn btn-success" href="{{ url_for('export_invoices') }}">تصدير Excel</a>
-</div>
-
-<div class="form-card mb-4">
-<form method="post" id="invoiceForm">
-<div class="row g-3 mb-4">
-  <div class="col-md-4">
-    <label class="form-label">العميل</label>
-    <select class="form-select" name="customer_id" required>
-      <option value="">اختر العميل</option>
-      {% for c in customers %}<option value="{{c.id}}">{{c.name}}</option>{% endfor %}
-    </select>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label">تاريخ الفاتورة</label>
-    <input class="form-control" type="date" name="invoice_date" id="invoiceDate" required>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label">الحالة</label>
-    <select class="form-select" name="status"><option>مسودة</option><option>معتمدة</option></select>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label">الفرع</label>
-    <select class="form-select" name="branch_id">{% for b in branches %}<option value="{{b.id}}">{{b.name}}</option>{% endfor %}</select>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label">نسبة الضريبة</label>
-    <input class="form-control" value="{{ app_settings.vat_rate or 15 }}%" readonly>
+  <div class="erp-toolbar no-print">
+    <button type="button" class="erp-tool-btn" data-new-document="1" data-new-url="{{ url_for('invoices') }}">📄 <span>مستند جديد</span></button>
+    <button type="button" class="erp-tool-btn primary" id="saveInvoiceTop">💾 <span>حفظ</span></button>
+    <button type="button" class="erp-tool-btn dark" id="savePrintInvoice">🖨️ <span>حفظ وطباعة</span></button>
+    <button type="button" class="erp-tool-btn" id="previewInvoice">👁️ <span>معاينة المسودة</span></button>
+    <button type="button" class="erp-tool-btn" id="addInvoiceRowTop">➕ <span>إضافة مادة</span></button>
+    <a class="erp-tool-btn success" href="{{ url_for('export_invoices') }}">📊 <span>Excel</span></a>
+    <span class="shortcut-hint">Ctrl+S حفظ</span>
+    <span class="shortcut-hint">F2 مادة جديدة</span>
   </div>
 </div>
 
@@ -92,7 +74,7 @@
     <textarea class="form-control" name="notes" rows="2"></textarea>
   </div>
   <div class="col-md-4 d-flex align-items-end">
-    <button class="btn btn-primary btn-lg w-100">إنشاء الفاتورة</button>
+    <button class="btn btn-primary btn-lg w-100" id="saveInvoiceBottom">💾 إنشاء الفاتورة</button>
   </div>
 </div>
 </form>
@@ -125,6 +107,29 @@
 .summary-box div{display:flex;justify-content:space-between;gap:30px;padding:7px 0}
 .summary-box .grand{font-size:18px;border-top:2px solid #dbe3ec;margin-top:5px;padding-top:12px}
 #itemsTable th{text-align:center;vertical-align:middle}
+</style>
+
+
+<style>
+.erp-sticky-header{
+  position:sticky;top:0;z-index:50;
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  margin:-8px -4px 18px;padding:12px 14px;
+  background:rgba(241,245,249,.96);backdrop-filter:blur(8px);
+  border-bottom:1px solid #dbe3ec;
+}
+.erp-toolbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.erp-tool-btn{
+  border:1px solid #cbd5e1;background:#fff;color:#172033;border-radius:9px;
+  min-height:38px;padding:7px 11px;display:inline-flex;align-items:center;
+  gap:6px;cursor:pointer;text-decoration:none;transition:.18s ease
+}
+.erp-tool-btn:hover{background:#eef4ff;border-color:#7aa2e3;transform:translateY(-1px)}
+.erp-tool-btn.primary{background:#1769e0;color:#fff;border-color:#1769e0}
+.erp-tool-btn.dark{background:#172033;color:#fff;border-color:#172033}
+.erp-tool-btn.success{background:#16803b;color:#fff;border-color:#16803b}
+@media(max-width:1000px){.erp-sticky-header{position:relative;align-items:flex-start;flex-direction:column}}
+@media print{.erp-sticky-header{display:none!important}}
 </style>
 
 <script>
@@ -170,5 +175,64 @@ document.getElementById('addRow').addEventListener('click',()=>{
 document.querySelectorAll('.item-row').forEach(bindRow);
 document.getElementById('invoiceDate').value=new Date().toISOString().slice(0,10);
 calculateInvoice();
+
+function submitInvoice(printAfter=false){
+  document.getElementById('invoicePrintAfterSave').value=printAfter?'1':'0';
+  document.getElementById('invoiceForm').requestSubmit();
+}
+document.getElementById('saveInvoiceTop')?.addEventListener('click',()=>submitInvoice(false));
+document.getElementById('savePrintInvoice')?.addEventListener('click',()=>submitInvoice(true));
+document.getElementById('addInvoiceRowTop')?.addEventListener('click',()=>document.getElementById('addRow')?.click());
+
+function invoiceEsc(v){
+  return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+}
+function invoiceSelectedText(selector){
+  const e=document.querySelector(selector);
+  return e?.selectedOptions?.[0]?.textContent?.trim()||'';
+}
+function previewInvoiceDraft(){
+  const customer=invoiceSelectedText('[name="customer_id"]');
+  const invoiceDate=document.getElementById('invoiceDate')?.value||'';
+  const status=invoiceSelectedText('[name="status"]');
+  const branch=invoiceSelectedText('[name="branch_id"]');
+  const notes=document.querySelector('[name="notes"]')?.value||'';
+  const rows=[...document.querySelectorAll('.item-row')].map((r,i)=>({
+    no:i+1,
+    item:r.querySelector('[name="item_name[]"]')?.value||'',
+    description:r.querySelector('[name="description[]"]')?.value||'',
+    quantity:Number(r.querySelector('.quantity')?.value||0),
+    unit:r.querySelector('[name="unit[]"]')?.value||'',
+    price:Number(r.querySelector('.unit-price')?.value||0),
+    vat:Number(r.querySelector('.line-vat')?.value||0),
+    total:Number(r.querySelector('.line-total')?.value||0)
+  })).filter(x=>x.item);
+  if(!rows.length){alert('أدخل مادة واحدة على الأقل قبل المعاينة.');return;}
+  const subtotal=Number(document.getElementById('subtotalDisplay')?.textContent||0);
+  const vat=Number(document.getElementById('vatDisplay')?.textContent||0);
+  const total=Number(document.getElementById('totalDisplay')?.textContent||0);
+  const win=window.open('','_blank');
+  win.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>معاينة فاتورة</title>
+  <style>body{font-family:Tahoma;margin:20px;color:#172033}.tools{margin-bottom:15px}.tools button{padding:9px 14px;background:#174ea6;color:#fff;border:0;border-radius:7px}
+  .head{display:flex;justify-content:space-between;border-bottom:3px solid #174ea6;padding-bottom:12px;margin-bottom:15px}
+  table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:7px;font-size:12px}th{background:#edf2f7}.total{font-weight:bold;background:#f8fafc}
+  @media print{.tools{display:none}@page{size:A4 portrait;margin:10mm}}</style></head><body>
+  <div class="tools"><button onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div>
+  <div class="head"><div><h2>فاتورة ضريبية - مسودة</h2><div>لم يتم حفظها بعد</div></div>
+  <div><b>العميل:</b> ${invoiceEsc(customer)}<br><b>التاريخ:</b> ${invoiceEsc(invoiceDate)}<br><b>الحالة:</b> ${invoiceEsc(status)}<br><b>الفرع:</b> ${invoiceEsc(branch)}</div></div>
+  <table><thead><tr><th>م</th><th>المادة</th><th>وصف العملية</th><th>الكمية</th><th>الوحدة</th><th>سعر الوحدة</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>
+  ${rows.map(x=>`<tr><td>${x.no}</td><td>${invoiceEsc(x.item)}</td><td>${invoiceEsc(x.description)}</td><td>${x.quantity.toFixed(3)}</td><td>${invoiceEsc(x.unit)}</td><td>${x.price.toFixed(2)}</td><td>${x.vat.toFixed(2)}</td><td>${x.total.toFixed(2)}</td></tr>`).join('')}
+  <tr class="total"><td colspan="6">الإجمالي قبل الضريبة</td><td colspan="2">${subtotal.toFixed(2)}</td></tr>
+  <tr class="total"><td colspan="6">ضريبة القيمة المضافة</td><td colspan="2">${vat.toFixed(2)}</td></tr>
+  <tr class="total"><td colspan="6">الإجمالي المستحق</td><td colspan="2">${total.toFixed(2)}</td></tr>
+  </tbody></table><p><b>ملاحظات:</b> ${invoiceEsc(notes)||'-'}</p></body></html>`);
+  win.document.close();
+}
+document.getElementById('previewInvoice')?.addEventListener('click',previewInvoiceDraft);
+document.addEventListener('keydown',e=>{
+  if(e.ctrlKey&&e.key.toLowerCase()==='s'){e.preventDefault();submitInvoice(false);}
+  if(e.key==='F2'){e.preventDefault();document.getElementById('addRow')?.click();}
+});
+
 </script>
 {% endblock %}

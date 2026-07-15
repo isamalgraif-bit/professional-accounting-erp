@@ -8,6 +8,7 @@
   </div>
 
   <div class="multi-toolbar no-print">
+    <button type="button" class="tool-btn" data-new-document="1" data-new-url="{{ url_for('multi_journal') }}">📄 <span>مستند جديد</span></button>
     <button type="button" class="tool-btn primary" id="saveBatchTop" title="حفظ الدفعة">
       💾 <span>حفظ</span>
     </button>
@@ -31,7 +32,7 @@
 </div>
 
 <div class="form-card mb-4">
-<form method="post" id="batchForm">
+<form method="post" id="batchForm" data-track-unsaved="1">
 <input type="hidden" name="print_after_save" id="printAfterSave" value="0">
 <div class="row g-3 mb-3">
 <div class="col-md-2"><label>تاريخ الدفعة</label><input class="form-control" type="date" name="batch_date" id="batchDate" required></div>

@@ -5,7 +5,8 @@
 <h3 class="mb-1">دليل الحسابات</h3>
 <small class="text-muted">Chart of Accounts — عرض شجري متكامل</small>
 </div>
-<div class="d-flex gap-2">
+<div class="d-flex gap-2 flex-wrap">
+<button type="button" class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('chart_of_accounts')}}">📄 جديد</button>
 <a class="btn btn-success" href="{{url_for('chart_export')}}">تصدير Excel</a>
 <button class="btn btn-outline-dark" onclick="window.print()">طباعة / PDF</button>
 </div>
@@ -44,7 +45,7 @@
 
 <div class="form-card mb-4">
 <h5 class="mb-3">إضافة حساب جديد</h5>
-<form method="post" id="addAccountForm">
+<form method="post" id="addAccountForm" data-track-unsaved="1">
 <div class="row g-3">
 <div class="col-md-2">
 <label>كود الحساب</label>

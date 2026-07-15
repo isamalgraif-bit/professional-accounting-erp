@@ -1,13 +1,137 @@
-<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>{{journal.journal_no}}</title>
-<style>body{font-family:Tahoma;background:#eee}.toolbar,.sheet{max-width:1100px;margin:18px auto}.sheet{background:white;padding:30px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:8px}th{background:#eee}.header{display:flex;justify-content:space-between}.total{font-weight:bold}.btn{padding:10px 15px;background:#174ea6;color:white;border:0;text-decoration:none}@media print{body{background:white}.toolbar{display:none}.sheet{margin:0;max-width:none}}</style></head><body>
-<div class="toolbar"><button class="btn" onclick="window.print()">طباعة / PDF</button></div>
-<div class="sheet"><div class="header"><div><h2>{{company.company_name_ar}}</h2><div>{{company.company_name_en}}</div></div><div><h2>قيد يومية</h2><div>JOURNAL VOUCHER</div></div></div>
-<hr><p><b>رقم القيد:</b> {{journal.journal_no}} &nbsp; <b>التاريخ:</b> {{journal.journal_date}} &nbsp; <b>الحالة:</b> {{journal.status}}</p>
-<p><b>المرجع:</b> {{journal.reference or '-'}} &nbsp; <b>البيان:</b> {{journal.description or '-'}}</p>
-<table><thead><tr><th>م</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>الضريبة</th><th>نوع الطرف</th><th>اسم الطرف</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th></tr></thead>
-<tbody>{% for l in lines %}<tr><td>{{loop.index}}</td><td>{{l.account_code}}</td><td>{{l.account_name_ar}}</td><td>{{"%.2f"|format(l.debit)}}</td><td>{{"%.2f"|format(l.credit)}}</td><td>{{l.tax_direction if l.taxable else 'غير خاضع'}}</td><td>{{l.party_type or '-'}}</td>
-<td>{{l.supplier_name or l.customer_name or '-'}}</td>
-<td>{{l.tax_number or '-'}}</td>
-<td>{{l.invoice_number or '-'}}</td><td>{{l.invoice_date or '-'}}</td><td>{{l.line_description or '-'}}</td><td>{{l.cost_center_code or '-'}} {{l.cost_center_name or ''}}</td></tr>{% endfor %}
-<tr class="total"><td colspan="3">الإجمالي</td><td>{{"%.2f"|format(journal.total_debit)}}</td><td>{{"%.2f"|format(journal.total_credit)}}</td><td colspan="6"></td></tr></tbody></table>
-<br><table><tr><th>إعداد القيد</th><th>المراجعة</th><th>الاعتماد</th></tr><tr><td style="height:70px"></td><td></td><td></td></tr></table></div></body></html>
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>{{journal.journal_no}}</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:Tahoma,Arial,sans-serif;margin:0;background:#eee;color:#111}
+.toolbar{max-width:1100px;margin:15px auto;display:flex;gap:8px}
+.toolbar button{padding:9px 15px;border:0;border-radius:6px;background:#174ea6;color:white;cursor:pointer}
+.sheet{width:1100px;min-height:760px;margin:0 auto 25px;background:#fff;padding:24px 26px;box-shadow:0 4px 20px rgba(0,0,0,.12)}
+.top-grid{display:grid;grid-template-columns:1.5fr 1fr 1fr;border:1px solid #777}
+.top-grid>div{border-left:1px solid #777;padding:7px 10px;min-height:30px}
+.top-grid>div:nth-child(3n){border-left:0}
+.company-block{text-align:right}
+.company-name{font-size:15px;font-weight:bold}
+.meta-label{font-weight:bold}
+.title-box{display:flex;justify-content:center;margin:18px 0 14px}
+.title-box h2{margin:0;border:3px double #555;padding:7px 34px;font-size:20px}
+.doc-grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid #777;margin-bottom:14px}
+.doc-grid>div{padding:8px 12px;border-left:1px solid #777}
+.doc-grid>div:last-child{border-left:0}
+.main-table{width:100%;border-collapse:collapse}
+.main-table th,.main-table td{border:1px solid #777;padding:7px 6px;font-size:12px;text-align:center}
+.main-table th{background:#f3f3f3;font-weight:bold}
+.main-table td.description{text-align:right}
+.total-row td{font-weight:bold;background:#fafafa}
+.total-boxes{display:flex;justify-content:flex-start;gap:14px;margin-top:8px}
+.total-box{border:3px double #555;padding:6px 18px;min-width:130px;text-align:center;font-weight:bold}
+.signatures{display:grid;grid-template-columns:repeat(3,1fr);gap:45px;margin-top:55px}
+.signature{text-align:center;font-weight:bold}
+.signature-line{border-bottom:1px dotted #777;height:55px;margin-top:8px}
+.footer-note{margin-top:18px;font-size:10px;color:#666;text-align:left}
+.logo{max-width:110px;max-height:65px;object-fit:contain}
+@media print{
+  body{background:#fff}
+  .toolbar{display:none}
+  .sheet{box-shadow:none;margin:0;width:auto;min-height:auto;padding:8mm}
+  @page{size:A4 landscape;margin:7mm}
+}
+</style>
+</head>
+<body>
+<div class="toolbar"><button onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div>
+
+<div class="sheet">
+  <div class="top-grid">
+    <div class="company-block">
+      <div class="company-name">{{company.company_name_ar}}</div>
+      <div>{{company.company_name_en}}</div>
+    </div>
+    <div><span class="meta-label">تاريخ الطباعة:</span> <span id="printDate"></span></div>
+    <div rowspan="2">
+      {% if company.logo_data and company.logo_mime %}
+      <img class="logo" src="data:{{company.logo_mime}};base64,{{company.logo_data}}">
+      {% elif company.logo_url %}
+      <img class="logo" src="{{company.logo_url}}">
+      {% endif %}
+    </div>
+
+    <div><span class="meta-label">الفرع الرئيسي:</span> {{company.address_ar or '-'}}</div>
+    <div><span class="meta-label">وقت الطباعة:</span> <span id="printTime"></span></div>
+    <div></div>
+
+    <div><span class="meta-label">القائم بالطباعة:</span> {{session.get('username') or session.get('user_name') or '-'}}</div>
+    <div><span class="meta-label">رقم الصفحة:</span> Page 1 of 1</div>
+    <div><span class="meta-label">الرقم الضريبي:</span> {{company.vat_number or '-'}}</div>
+  </div>
+
+  <div class="title-box"><h2>مستند قيد يومية</h2></div>
+
+  <div class="doc-grid">
+    <div><b>رقم المستند:</b> {{journal.journal_no}}</div>
+    <div><b>التاريخ:</b> {{journal.journal_date}}</div>
+    <div><b>المرجع:</b> {{journal.reference or '-'}}</div>
+    <div><b>الوصف:</b> {{journal.description or '-'}}</div>
+  </div>
+
+  <table class="main-table">
+    <thead>
+      <tr>
+        <th style="width:8%">كود الجهة</th>
+        <th style="width:21%">اسم الجهة / الحساب</th>
+        <th style="width:11%">مدين</th>
+        <th style="width:11%">دائن</th>
+        <th style="width:11%">الضريبة</th>
+        <th style="width:22%">الوصف</th>
+        <th style="width:16%">مركز التكلفة</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for l in lines %}
+      <tr>
+        <td>{{l.account_code}}</td>
+        <td>{{l.account_name_ar}}</td>
+        <td>{{"%.3f"|format(l.debit)}}</td>
+        <td>{{"%.3f"|format(l.credit)}}</td>
+        <td>{{l.tax_direction if l.taxable else '0.000'}}</td>
+        <td class="description">{{l.line_description or journal.description or '-'}}</td>
+        <td>{{l.cost_center_code or '-'}} {{l.cost_center_name or ''}}</td>
+      </tr>
+      {% endfor %}
+      <tr class="total-row">
+        <td colspan="2">الإجمالي</td>
+        <td>{{"%.3f"|format(journal.total_debit)}}</td>
+        <td>{{"%.3f"|format(journal.total_credit)}}</td>
+        <td>0.000</td>
+        <td colspan="2"></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="total-boxes">
+    <div class="total-box">{{"%.3f"|format(journal.total_debit)}}</div>
+    <div class="total-box">{{"%.3f"|format(journal.total_credit)}}</div>
+    <div class="total-box">{{"%.3f"|format(journal.total_debit-journal.total_credit)}}</div>
+  </div>
+
+  <div class="signatures">
+    <div class="signature">المحاسب<div class="signature-line"></div></div>
+    <div class="signature">رئيس الحسابات<div class="signature-line"></div></div>
+    <div class="signature">المدير المالي<div class="signature-line"></div></div>
+  </div>
+
+  <div class="footer-note">تم إنشاء هذا المستند بواسطة West ERP</div>
+</div>
+
+<script>
+const now=new Date();
+document.getElementById('printDate').textContent=now.toLocaleDateString('en-GB');
+document.getElementById('printTime').textContent=now.toLocaleTimeString('en-US');
+{% if request.args.get('print') %}
+window.addEventListener('load',()=>setTimeout(()=>window.print(),350));
+{% endif %}
+</script>
+</body>
+</html>

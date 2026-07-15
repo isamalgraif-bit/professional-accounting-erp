@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="{{'en' if print_lang=='en' else 'ar'}}" dir="{{'ltr' if print_lang=='en' else 'rtl'}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>فاتورة {{ invoice.invoice_no }}</title>
+<title>{{"Tax Invoice" if print_lang=="en" else "فاتورة ضريبية"}} {{invoice.invoice_no}}</title>
 <style>
 *{box-sizing:border-box}
 body{font-family:Tahoma,Arial,sans-serif;background:#eef1f5;margin:0;color:#172033}
@@ -43,8 +43,11 @@ th{background:#174ea6;color:white}
 }
 </style>
 </head>
-<body>
+<body class="lang-{{print_lang}}">
 <div class="toolbar">
+<a class="btn secondary" href="{{url_for('invoice_view',invoice_id=invoice.id,lang='ar')}}">العربية</a>
+<a class="btn secondary" href="{{url_for('invoice_view',invoice_id=invoice.id,lang='en')}}">English</a>
+<a class="btn secondary" href="{{url_for('invoice_view',invoice_id=invoice.id,lang='bi')}}">عربي / English</a>
 <button class="btn" onclick="window.print()">طباعة أو حفظ PDF</button>
 <a class="btn secondary" href="{{ url_for('invoices') }}">العودة للفواتير</a>
 </div>
@@ -64,9 +67,9 @@ th{background:#174ea6;color:white}
 <div>{{ company.address or '' }}</div>
 </div>
 <div class="title">
-<h2>فاتورة ضريبية</h2>
+<h2>{% if print_lang=="en" %}Tax Invoice{% elif print_lang=="bi" %}فاتورة ضريبية<br><small>Tax Invoice</small>{% else %}فاتورة ضريبية{% endif %}</h2>
 <div><strong>TAX INVOICE</strong></div>
-<div class="line"><strong>رقم الفاتورة:</strong> {{ invoice.invoice_no }}</div>
+<div class="line"><strong>{% if print_lang=="en" %}Invoice No.{% elif print_lang=="bi" %}رقم الفاتورة / Invoice No.{% else %}رقم الفاتورة{% endif %}:</strong> {{ invoice.invoice_no }}</div>
 <div class="line"><strong>التاريخ:</strong> {{ invoice.invoice_date }}</div>
 </div>
 </div>
@@ -74,15 +77,15 @@ th{background:#174ea6;color:white}
 <div class="meta">
 <div class="box">
 <h3>بيانات البائع | Seller</h3>
-<div class="line"><strong>الرقم الضريبي:</strong> {{ company.vat_number or '-' }}</div>
+<div class="line"><strong>{% if print_lang=="en" %}VAT Number{% elif print_lang=="bi" %}الرقم الضريبي / VAT No.{% else %}الرقم الضريبي{% endif %}:</strong> {{ company.vat_number or '-' }}</div>
 <div class="line"><strong>السجل التجاري:</strong> {{ company.cr_number or '-' }}</div>
 <div class="line"><strong>الهاتف:</strong> {{ company.phone or '-' }}</div>
 <div class="line"><strong>البريد:</strong> {{ company.email or '-' }}</div>
 </div>
 <div class="box">
-<h3>بيانات العميل | Customer</h3>
-<div class="line"><strong>الاسم:</strong> {{ invoice.customer_name }}</div>
-<div class="line"><strong>الرقم الضريبي:</strong> {{ invoice.customer_vat or '-' }}</div>
+<h3>{% if print_lang=="en" %}Customer Details{% elif print_lang=="bi" %}بيانات العميل / Customer Details{% else %}بيانات العميل{% endif %} | Customer</h3>
+<div class="line"><strong>الاسم:</strong> {% if print_lang=="en" %}{{invoice.customer_name_en or invoice.customer_name}}{% elif print_lang=="bi" %}{{invoice.customer_name}}<br><span dir="ltr">{{invoice.customer_name_en or invoice.customer_name}}</span>{% else %}{{invoice.customer_name}}{% endif %}</div>
+<div class="line"><strong>{% if print_lang=="en" %}VAT Number{% elif print_lang=="bi" %}الرقم الضريبي / VAT No.{% else %}الرقم الضريبي{% endif %}:</strong> {{ invoice.customer_vat or '-' }}</div>
 <div class="line"><strong>الهاتف:</strong> {{ invoice.customer_phone or '-' }}</div>
 <div class="line"><strong>البريد:</strong> {{ invoice.customer_email or '-' }}</div>
 </div>
@@ -93,8 +96,8 @@ th{background:#174ea6;color:white}
 <table>
 <thead>
 <tr>
-<th>م</th><th>المادة</th><th>وصف العملية</th><th>الكمية</th><th>الوحدة</th>
-<th>سعر الوحدة</th><th>ضريبة القيمة المضافة {{ "%.0f"|format(company.vat_rate or 15) }}%</th><th>الإجمالي</th>
+<th>م</th><th>{% if print_lang=="en" %}Item{% elif print_lang=="bi" %}المادة / Item{% else %}المادة{% endif %}</th><th>{% if print_lang=="en" %}Description{% elif print_lang=="bi" %}وصف العملية / Description{% else %}وصف العملية{% endif %}</th><th>{% if print_lang=="en" %}Quantity{% elif print_lang=="bi" %}الكمية / Qty{% else %}الكمية{% endif %}</th><th>{% if print_lang=="en" %}Unit{% elif print_lang=="bi" %}الوحدة / Unit{% else %}الوحدة{% endif %}</th>
+<th>{% if print_lang=="en" %}Unit Price{% elif print_lang=="bi" %}سعر الوحدة / Unit Price{% else %}سعر الوحدة{% endif %}</th><th>ضريبة القيمة المضافة {{ "%.0f"|format(company.vat_rate or 15) }}%</th><th>{% if print_lang=="en" %}Total{% elif print_lang=="bi" %}الإجمالي / Total{% else %}الإجمالي{% endif %}</th>
 </tr>
 </thead>
 <tbody>
@@ -112,17 +115,17 @@ th{background:#174ea6;color:white}
 <div class="totals-wrap">
 <div class="qr-card">
 <img src="{{ qr_image }}" alt="QR Code">
-<small>امسح الرمز لعرض بيانات الفاتورة</small>
+<small>امسح الرمز لعرض {% if print_lang=="en" %}Invoice Details{% elif print_lang=="bi" %}بيانات الفاتورة / Invoice Details{% else %}بيانات الفاتورة{% endif %}</small>
 </div>
 <table class="totals">
-<tr><td>الإجمالي قبل الضريبة</td><td>{{ "%.2f"|format(invoice.subtotal) }}</td></tr>
+<tr><td>{% if print_lang=="en" %}Subtotal Before VAT{% elif print_lang=="bi" %}الإجمالي قبل الضريبة / Subtotal{% else %}الإجمالي قبل الضريبة{% endif %}</td><td>{{ "%.2f"|format(invoice.subtotal) }}</td></tr>
 <tr><td>ضريبة القيمة المضافة</td><td>{{ "%.2f"|format(invoice.vat) }}</td></tr>
-<tr class="grand"><td>الإجمالي المستحق</td><td>{{ "%.2f"|format(invoice.total) }} {{ company.currency }}</td></tr>
+<tr class="grand"><td>{% if print_lang=="en" %}Total Due{% elif print_lang=="bi" %}الإجمالي المستحق / Total Due{% else %}الإجمالي المستحق{% endif %}</td><td>{{ "%.2f"|format(invoice.total) }} {{ company.currency }}</td></tr>
 </table>
 </div>
 
 {% if invoice.notes %}
-<div class="notes"><strong>ملاحظات:</strong> {{ invoice.notes }}</div>
+<div class="notes"><strong>{% if print_lang=="en" %}Notes{% elif print_lang=="bi" %}ملاحظات / Notes{% else %}ملاحظات{% endif %}:</strong> {{ invoice.notes }}</div>
 {% endif %}
 
 <div class="footer">

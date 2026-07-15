@@ -1,10 +1,22 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
+
+<div class="erp-sticky-header">
   <div>
     <h3 class="mb-1">قيود اليومية</h3>
-    <small class="text-muted">General Journal — إدخال سريع بالبحث عن الكود أو اسم الحساب</small><div class="mt-2 d-flex gap-2 flex-wrap"><span class="shortcut-hint">Ctrl+S حفظ</span><span class="shortcut-hint">F2 سطر جديد</span><span class="shortcut-hint">Ctrl+P طباعة</span><span class="shortcut-hint">المسودة تحفظ تلقائيًا</span></div>
+    <small class="text-muted">General Journal</small>
   </div>
+  <div class="erp-toolbar no-print">
+    <button type="button" class="erp-tool-btn" data-new-document="1" data-new-url="{{ url_for('journal_entries') }}">📄 <span>مستند جديد</span></button>
+    <button type="button" class="erp-tool-btn primary" id="saveJournalTop">💾 <span>حفظ</span></button>
+    <button type="button" class="erp-tool-btn dark" id="savePrintJournal">🖨️ <span>حفظ وطباعة</span></button>
+    <button type="button" class="erp-tool-btn" id="previewJournal">👁️ <span>معاينة المسودة</span></button>
+    <button type="button" class="erp-tool-btn" id="addJournalRowTop">➕ <span>إضافة سطر</span></button>
+    <a class="erp-tool-btn success" href="{{ url_for('journal_export', q=q) }}">📊 <span>Excel</span></a>
+    <span class="shortcut-hint">Ctrl+S حفظ</span>
+    <span class="shortcut-hint">F2 سطر جديد</span>
+  </div>
+</div>
   <div class="d-flex gap-2">
     <a class="btn btn-success" href="{{ url_for('journal_export', q=q) }}">تصدير Excel</a>
     <button class="btn btn-outline-dark" onclick="window.print()">طباعة القائمة</button>
@@ -22,7 +34,8 @@
 </form>
 
 <div class="form-card mb-4">
-<form method="post" id="journalForm">
+<form method="post" id="journalForm" data-track-unsaved="1">
+<input type="hidden" name="print_after_save" id="journalPrintAfterSave" value="0">
 <div class="row g-3 mb-3">
   <div class="col-md-2">
     <label class="form-label">تاريخ القيد</label>
@@ -163,7 +176,7 @@
 </div>
 
 <div class="mt-4 text-end">
-  <button class="btn btn-primary btn-lg">حفظ القيد</button>
+  <button class="btn btn-primary btn-lg" id="saveJournalBottom">💾 حفظ القيد</button>
 </div>
 </form>
 </div>
@@ -199,6 +212,29 @@
 </table>
 </div>
 </div>
+
+
+<style>
+.erp-sticky-header{
+  position:sticky;top:0;z-index:50;
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  margin:-8px -4px 18px;padding:12px 14px;
+  background:rgba(241,245,249,.96);backdrop-filter:blur(8px);
+  border-bottom:1px solid #dbe3ec;
+}
+.erp-toolbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.erp-tool-btn{
+  border:1px solid #cbd5e1;background:#fff;color:#172033;border-radius:9px;
+  min-height:38px;padding:7px 11px;display:inline-flex;align-items:center;
+  gap:6px;cursor:pointer;text-decoration:none;transition:.18s ease
+}
+.erp-tool-btn:hover{background:#eef4ff;border-color:#7aa2e3;transform:translateY(-1px)}
+.erp-tool-btn.primary{background:#1769e0;color:#fff;border-color:#1769e0}
+.erp-tool-btn.dark{background:#172033;color:#fff;border-color:#172033}
+.erp-tool-btn.success{background:#16803b;color:#fff;border-color:#16803b}
+@media(max-width:1000px){.erp-sticky-header{position:relative;align-items:flex-start;flex-direction:column}}
+@media print{.erp-sticky-header{display:none!important}}
+</style>
 
 <style>
 .journal-grid-wrap{max-height:520px;border:1px solid #dbe3ec;border-radius:10px}
@@ -456,5 +492,58 @@ document.addEventListener('keydown',e=>{
     if(idx>=0 && idx<fields.length-1){e.preventDefault();fields[idx+1].focus();}
   }
 });
+
+function submitJournal(printAfter=false){
+  document.getElementById('journalPrintAfterSave').value=printAfter?'1':'0';
+  document.getElementById('journalForm').requestSubmit();
+}
+document.getElementById('saveJournalTop')?.addEventListener('click',()=>submitJournal(false));
+document.getElementById('savePrintJournal')?.addEventListener('click',()=>submitJournal(true));
+document.getElementById('addJournalRowTop')?.addEventListener('click',()=>document.getElementById('addRow')?.click());
+
+function journalEsc(v){
+  return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+}
+function journalSelectedText(el){return el?.selectedOptions?.[0]?.textContent?.trim()||'';}
+function previewJournalDraft(){
+  const date=document.getElementById('journalDate')?.value||'';
+  const status=journalSelectedText(document.querySelector('[name="status"]'));
+  const reference=document.querySelector('[name="reference"]')?.value||'';
+  const general=document.querySelector('[name="description"]')?.value||'';
+  const rows=[...document.querySelectorAll('.journal-row')].map((r,i)=>({
+    no:i+1,
+    code:r.querySelector('.account-code')?.value||'',
+    account:r.querySelector('.account-name')?.value||'',
+    debit:Number(r.querySelector('.debit')?.value||0),
+    credit:Number(r.querySelector('.credit')?.value||0),
+    direction:journalSelectedText(r.querySelector('.tax-direction')),
+    party:r.querySelector('.party-type')?.value==='مورد'
+      ? journalSelectedText(r.querySelector('.supplier-select'))
+      : journalSelectedText(r.querySelector('.customer-select')),
+    tax:r.querySelector('.tax-number')?.value||'',
+    invoice:r.querySelector('.invoice-number')?.value||'',
+    invoiceDate:r.querySelector('.invoice-date')?.value||'',
+    description:r.querySelector('[name="line_description[]"]')?.value||'',
+    center:r.querySelector('.cost-center-search')?.value||''
+  })).filter(x=>x.code||x.debit>0||x.credit>0);
+  if(!rows.length){alert('أدخل سطرًا واحدًا على الأقل قبل المعاينة.');return;}
+  const td=rows.reduce((s,x)=>s+x.debit,0), tc=rows.reduce((s,x)=>s+x.credit,0);
+  const win=window.open('','_blank');
+  win.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>معاينة قيد</title>
+  <style>body{font-family:Tahoma;margin:20px;color:#172033}.tools{margin-bottom:15px}.tools button{padding:9px 14px;background:#174ea6;color:#fff;border:0;border-radius:7px}
+  .head{display:flex;justify-content:space-between;border-bottom:3px solid #174ea6;padding-bottom:12px;margin-bottom:15px}
+  table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:6px;font-size:11px}th{background:#edf2f7}.total{font-weight:bold;background:#f8fafc}
+  @media print{.tools{display:none}@page{size:A4 landscape;margin:7mm}}</style></head><body>
+  <div class="tools"><button onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div>
+  <div class="head"><div><h2>قيد يومية - مسودة</h2><div>لم يتم حفظه بعد</div></div>
+  <div><b>التاريخ:</b> ${journalEsc(date)}<br><b>الحالة:</b> ${journalEsc(status)}<br><b>المرجع:</b> ${journalEsc(reference)}<br><b>البيان:</b> ${journalEsc(general)}</div></div>
+  <table><thead><tr><th>م</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>الضريبة</th><th>الطرف</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th></tr></thead><tbody>
+  ${rows.map(x=>`<tr><td>${x.no}</td><td>${journalEsc(x.code)}</td><td>${journalEsc(x.account)}</td><td>${x.debit.toFixed(2)}</td><td>${x.credit.toFixed(2)}</td><td>${journalEsc(x.direction)}</td><td>${journalEsc(x.party)}</td><td>${journalEsc(x.tax)}</td><td>${journalEsc(x.invoice)}</td><td>${journalEsc(x.invoiceDate)}</td><td>${journalEsc(x.description)}</td><td>${journalEsc(x.center)}</td></tr>`).join('')}
+  <tr class="total"><td colspan="3">الإجمالي</td><td>${td.toFixed(2)}</td><td>${tc.toFixed(2)}</td><td colspan="7"></td></tr>
+  </tbody></table></body></html>`);
+  win.document.close();
+}
+document.getElementById('previewJournal')?.addEventListener('click',previewJournalDraft);
+
 </script>
-{% endblock %}
+{% endblock %>

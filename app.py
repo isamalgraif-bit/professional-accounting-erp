@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "2.0.1"
+APP_VERSION = "3.1.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -123,6 +123,160 @@ def next_batch_number(batch_date_value):
     return f"JB-{batch_year}-{latest + 1:06d}"
 
 
+
+def get_default_accounts():
+    return row("""SELECT customer_account_id,supplier_account_id,sales_account_id,
+                         purchases_account_id,vat_input_account_id,vat_output_account_id,
+                         cash_account_id,bank_account_id,inventory_account_id,
+                         cost_of_sales_account_id,retained_earnings_account_id
+                  FROM settings WHERE id=1""")
+
+def require_accounts(names):
+    acc = get_default_accounts()
+    missing = [n for n in names if not acc or not acc.get(n)]
+    if missing:
+        raise ValueError("أكمل ربط الحسابات الافتراضية من الإعدادات.")
+    return acc
+
+def ensure_open_period(document_date):
+    p = row("""SELECT id,name,status FROM fiscal_periods
+               WHERE :d BETWEEN start_date AND end_date
+               ORDER BY start_date DESC LIMIT 1""", {"d":document_date})
+    if not p:
+        raise ValueError("لا توجد فترة مالية تغطي تاريخ المستند.")
+    if p["status"] != "مفتوحة":
+        raise ValueError(f"الفترة المالية {p['name']} مغلقة.")
+    return p
+
+def create_system_journal(journal_date, description, reference, source_type, source_id, lines):
+    ensure_open_period(journal_date)
+    td = round(sum(float(x.get("debit",0)) for x in lines),2)
+    tc = round(sum(float(x.get("credit",0)) for x in lines),2)
+    if td <= 0 or td != tc:
+        raise ValueError("القيد التلقائي غير متوازن.")
+    journal_no = next_journal_number(journal_date)
+    db.session.execute(text("""INSERT INTO journal_entries(
+        journal_no,journal_date,reference,description,status,total_debit,total_credit,
+        created_by,created_at,source_type,source_id,posted_at)
+        VALUES(:no,:dt,:ref,:des,'مرحّل',:td,:tc,:uid,:created,:stype,:sid,:posted)"""),
+        {"no":journal_no,"dt":journal_date,"ref":reference,"des":description,
+         "td":td,"tc":tc,"uid":session.get("user_id"),"created":datetime.now(),
+         "stype":source_type,"sid":source_id,"posted":datetime.now()})
+    journal_id = db.session.execute(text("SELECT id FROM journal_entries WHERE journal_no=:n"),
+                                    {"n":journal_no}).scalar_one()
+    for x in lines:
+        db.session.execute(text("""INSERT INTO journal_entry_lines(
+            journal_id,account_id,debit,credit,taxable,tax_direction,supplier_id,
+            customer_id,party_type,tax_number,invoice_number,invoice_date,
+            line_description,cost_center_id)
+            VALUES(:jid,:aid,:debit,:credit,:taxable,:direction,:sid,:cid,:ptype,
+                   :tax,:inv,:invdt,:des,:cc)"""),
+            {"jid":journal_id,"aid":x["account_id"],"debit":round(float(x.get("debit",0)),2),
+             "credit":round(float(x.get("credit",0)),2),"taxable":1 if x.get("taxable") else 0,
+             "direction":x.get("tax_direction","غير مطبق"),"sid":x.get("supplier_id"),
+             "cid":x.get("customer_id"),"ptype":x.get("party_type",""),
+             "tax":x.get("tax_number",""),"inv":x.get("invoice_number",""),
+             "invdt":x.get("invoice_date"),"des":x.get("line_description",""),
+             "cc":x.get("cost_center_id")})
+    db.session.commit()
+    audit("POST",source_type,f"ترحيل تلقائي بالقيد {journal_no}")
+    return journal_id
+
+def post_invoice_to_ledger(invoice_id):
+    inv = row("""SELECT i.*,c.vat_number customer_vat FROM invoices i
+                 JOIN customers c ON c.id=i.customer_id WHERE i.id=:id""",{"id":invoice_id})
+    if not inv: raise ValueError("الفاتورة غير موجودة.")
+    if inv.get("journal_id"): return inv["journal_id"]
+    a = require_accounts(["customer_account_id","sales_account_id","vat_output_account_id"])
+    lines = [
+      {"account_id":a["customer_account_id"],"debit":inv["total"],"customer_id":inv["customer_id"],
+       "party_type":"عميل","tax_number":inv["customer_vat"] or "","invoice_number":inv["invoice_no"],
+       "invoice_date":inv["invoice_date"],"line_description":"إجمالي فاتورة المبيعات"},
+      {"account_id":a["sales_account_id"],"credit":inv["subtotal"],"customer_id":inv["customer_id"],
+       "party_type":"عميل","tax_number":inv["customer_vat"] or "","invoice_number":inv["invoice_no"],
+       "invoice_date":inv["invoice_date"],"line_description":"إيرادات المبيعات"},
+    ]
+    if float(inv["vat"] or 0):
+        lines.append({"account_id":a["vat_output_account_id"],"credit":inv["vat"],"taxable":1,
+          "tax_direction":"مخرجات","customer_id":inv["customer_id"],"party_type":"عميل",
+          "tax_number":inv["customer_vat"] or "","invoice_number":inv["invoice_no"],
+          "invoice_date":inv["invoice_date"],"line_description":"ضريبة المخرجات"})
+    jid = create_system_journal(inv["invoice_date"],f"فاتورة مبيعات {inv['invoice_no']}",
+                                inv["invoice_no"],"INVOICE",invoice_id,lines)
+    execute("UPDATE invoices SET journal_id=:j,posting_status='مرحّل' WHERE id=:id",
+            {"j":jid,"id":invoice_id})
+    return jid
+
+def post_expense_to_ledger(expense_id):
+    e = row("""SELECT e.*,s.vat_number supplier_vat FROM expenses e
+               LEFT JOIN suppliers s ON s.id=e.supplier_id WHERE e.id=:id""",{"id":expense_id})
+    if not e: raise ValueError("المصروف غير موجود.")
+    if e.get("journal_id"): return e["journal_id"]
+    if not e["expense_account_id"] or not e["payment_account_id"]:
+        raise ValueError("حدد حساب المصروف وحساب السداد.")
+    a = require_accounts(["vat_input_account_id"] if float(e["vat"] or 0) else [])
+    common = {"supplier_id":e["supplier_id"],"party_type":"مورد" if e["supplier_id"] else "",
+              "tax_number":e["supplier_vat"] or "","invoice_number":e["invoice_number"] or "",
+              "invoice_date":e["invoice_date"],"cost_center_id":e["cost_center_id"]}
+    lines = [{"account_id":e["expense_account_id"],"debit":e["amount"],
+              "line_description":e["description"] or e["category"],**common}]
+    if float(e["vat"] or 0):
+        lines.append({"account_id":a["vat_input_account_id"],"debit":e["vat"],"taxable":1,
+                      "tax_direction":"مدخلات","line_description":"ضريبة المدخلات",**common})
+    lines.append({"account_id":e["payment_account_id"],"credit":e["total"],
+                  "line_description":"سداد المصروف",**common})
+    jid = create_system_journal(e["expense_date"],f"مصروف {e['category']}",
+                                e["invoice_number"] or f"EXP-{expense_id}",
+                                "EXPENSE",expense_id,lines)
+    execute("UPDATE expenses SET journal_id=:j,posting_status='مرحّل' WHERE id=:id",
+            {"j":jid,"id":expense_id})
+    return jid
+
+
+
+ARABIC_TRANSLITERATION = {
+    "ا":"a","أ":"a","إ":"i","آ":"aa","ب":"b","ت":"t","ث":"th","ج":"j","ح":"h",
+    "خ":"kh","د":"d","ذ":"dh","ر":"r","ز":"z","س":"s","ش":"sh","ص":"s","ض":"d",
+    "ط":"t","ظ":"z","ع":"a","غ":"gh","ف":"f","ق":"q","ك":"k","ل":"l","م":"m",
+    "ن":"n","ه":"h","ة":"a","و":"w","ؤ":"o","ي":"y","ى":"a","ئ":"e","ء":"",
+    "َ":"a","ُ":"u","ِ":"i","ّ":"","ْ":"","ً":"","ٌ":"","ٍ":"","ـ":""
+}
+BUSINESS_WORDS = {
+    "شركة":"Company","الشركة":"Company","مؤسسة":"Establishment","المؤسسة":"Establishment",
+    "محدودة":"Limited","المحدودة":"Limited","ذمم":"LLC","للمقاولات":"Contracting",
+    "مقاولات":"Contracting","تجارة":"Trading","للتجارة":"Trading","صناعة":"Industries",
+    "للصناعة":"Industries","خدمات":"Services","للخدمات":"Services","مجموعة":"Group",
+    "مصنع":"Factory","مكتب":"Office","مركز":"Center","الدولية":"International",
+    "العالمية":"International","العربية":"Arabian","السعودية":"Saudi","الخليج":"Gulf"
+}
+
+def transliterate_arabic_name(value):
+    value = (value or "").strip()
+    if not value:
+        return ""
+    words = value.split()
+    result = []
+    for word in words:
+        normalized = word.strip("،,.-_/()")
+        if normalized in BUSINESS_WORDS:
+            result.append(BUSINESS_WORDS[normalized])
+            continue
+        latin = "".join(ARABIC_TRANSLITERATION.get(ch, ch) for ch in normalized)
+        latin = re.sub(r"[^A-Za-z0-9]+", "", latin)
+        if latin:
+            result.append(latin[:1].upper() + latin[1:])
+    # Improve common company suffix order.
+    if result and result[0] == "Company":
+        result = result[1:] + ["Company"]
+    return " ".join(result)
+
+@app.route("/api/transliterate", methods=["POST"])
+@login_required
+def transliterate_name_api():
+    payload = request.get_json(silent=True) or {}
+    return {"english_name": transliterate_arabic_name(payload.get("name",""))}
+
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -155,6 +309,7 @@ def init_db():
         """CREATE TABLE IF NOT EXISTS customers(
             id SERIAL PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
+            name_en VARCHAR(255) DEFAULT '',
             vat_number VARCHAR(50),
             phone VARCHAR(50),
             email VARCHAR(255),
@@ -163,6 +318,7 @@ def init_db():
         """CREATE TABLE IF NOT EXISTS suppliers(
             id SERIAL PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
+            name_en VARCHAR(255) DEFAULT '',
             vat_number VARCHAR(50),
             phone VARCHAR(50),
             email VARCHAR(255),
@@ -290,6 +446,16 @@ def init_db():
             line_description TEXT DEFAULT '',
             cost_center_id INTEGER REFERENCES cost_centers(id)
         )""",
+        """CREATE TABLE IF NOT EXISTS fiscal_years(
+            id SERIAL PRIMARY KEY,name VARCHAR(100) NOT NULL,start_date DATE NOT NULL,
+            end_date DATE NOT NULL,status VARCHAR(30) NOT NULL DEFAULT 'مفتوحة',
+            UNIQUE(start_date,end_date)
+        )""",
+        """CREATE TABLE IF NOT EXISTS fiscal_periods(
+            id SERIAL PRIMARY KEY,fiscal_year_id INTEGER NOT NULL REFERENCES fiscal_years(id) ON DELETE CASCADE,
+            name VARCHAR(100) NOT NULL,start_date DATE NOT NULL,end_date DATE NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'مفتوحة'
+        )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
@@ -336,6 +502,8 @@ def init_db():
     # Safe schema upgrades for existing Neon databases.
     migrations = [
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS address TEXT DEFAULT ''",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS phone VARCHAR(50) DEFAULT ''",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT ''",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS logo_url TEXT DEFAULT ''",
@@ -348,7 +516,35 @@ def init_db():
         "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS party_type VARCHAR(20) DEFAULT ''",
         "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS tax_number VARCHAR(50) DEFAULT ''",
         "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS normal_balance VARCHAR(20) DEFAULT 'مدين'",
-        "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS statement_type VARCHAR(50) DEFAULT 'الميزانية العمومية'"
+        "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS statement_type VARCHAR(50) DEFAULT 'الميزانية العمومية'",
+        'ALTER TABLE settings ADD COLUMN IF NOT EXISTS customer_account_id INTEGER',
+        'ALTER TABLE settings ADD COLUMN IF NOT EXISTS supplier_account_id INTEGER',
+        'ALTER TABLE settings ADD COLUMN IF NOT EXISTS sales_account_id INTEGER',
+        'ALTER TABLE settings ADD COLUMN IF NOT EXISTS purchases_account_id INTEGER',
+        'ALTER TABLE settings ADD COLUMN IF NOT EXISTS vat_input_account_id INTEGER',
+        'ALTER TABLE settings ADD COLUMN IF NOT EXISTS vat_output_account_id INTEGER',
+        'ALTER TABLE settings ADD COLUMN IF NOT EXISTS cash_account_id INTEGER',
+        'ALTER TABLE settings ADD COLUMN IF NOT EXISTS bank_account_id INTEGER',
+        'ALTER TABLE settings ADD COLUMN IF NOT EXISTS inventory_account_id INTEGER',
+        'ALTER TABLE settings ADD COLUMN IF NOT EXISTS cost_of_sales_account_id INTEGER',
+        'ALTER TABLE settings ADD COLUMN IF NOT EXISTS retained_earnings_account_id INTEGER',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS journal_id INTEGER',
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS posting_status VARCHAR(30) DEFAULT 'غير مرحّل'",
+        "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS source_type VARCHAR(50) DEFAULT 'MANUAL'",
+        'ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS source_id INTEGER',
+        'ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP',
+        'ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS reversal_of INTEGER',
+        'ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS reversed_by INTEGER',
+        'ALTER TABLE expenses ADD COLUMN IF NOT EXISTS supplier_id INTEGER',
+        'ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_account_id INTEGER',
+        'ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_account_id INTEGER',
+        'ALTER TABLE expenses ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
+        'ALTER TABLE expenses ADD COLUMN IF NOT EXISTS taxable INTEGER DEFAULT 0',
+        "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS invoice_number VARCHAR(100) DEFAULT ''",
+        'ALTER TABLE expenses ADD COLUMN IF NOT EXISTS invoice_date DATE',
+        "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'مسودة'",
+        'ALTER TABLE expenses ADD COLUMN IF NOT EXISTS journal_id INTEGER',
+        "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS posting_status VARCHAR(30) DEFAULT 'غير مرحّل'"
     ]
     for migration in migrations:
         db.session.execute(text(migration))
@@ -413,6 +609,35 @@ def init_db():
         VALUES('CC-001','الإدارة العامة',1)
         ON CONFLICT (code) DO NOTHING
     """))
+    current_year = datetime.now().year
+    fy_id = db.session.execute(text("""INSERT INTO fiscal_years(name,start_date,end_date,status)
+        VALUES(:n,:s,:e,'مفتوحة') ON CONFLICT(start_date,end_date)
+        DO UPDATE SET name=EXCLUDED.name RETURNING id"""),
+        {"n":f"السنة المالية {current_year}","s":f"{current_year}-01-01","e":f"{current_year}-12-31"}).scalar_one()
+    import calendar
+    for m in range(1,13):
+        last=calendar.monthrange(current_year,m)[1]
+        db.session.execute(text("""INSERT INTO fiscal_periods(fiscal_year_id,name,start_date,end_date,status)
+            SELECT :fy,:n,:s,:e,'مفتوحة' WHERE NOT EXISTS(
+            SELECT 1 FROM fiscal_periods WHERE start_date=:s AND end_date=:e)"""),
+            {"fy":fy_id,"n":f"{current_year}-{m:02d}","s":f"{current_year}-{m:02d}-01",
+             "e":f"{current_year}-{m:02d}-{last:02d}"})
+    db.session.execute(text("""UPDATE settings SET
+      customer_account_id=COALESCE(customer_account_id,:c),
+      supplier_account_id=COALESCE(supplier_account_id,:s),
+      sales_account_id=COALESCE(sales_account_id,:sales),
+      purchases_account_id=COALESCE(purchases_account_id,:p),
+      vat_input_account_id=COALESCE(vat_input_account_id,:vi),
+      vat_output_account_id=COALESCE(vat_output_account_id,:vo),
+      cash_account_id=COALESCE(cash_account_id,:cash),
+      bank_account_id=COALESCE(bank_account_id,:bank),
+      inventory_account_id=COALESCE(inventory_account_id,:inv),
+      cost_of_sales_account_id=COALESCE(cost_of_sales_account_id,:cos),
+      retained_earnings_account_id=COALESCE(retained_earnings_account_id,:re)
+      WHERE id=1"""),{"c":ids.get("1130"),"s":ids.get("2100"),"sales":ids.get("4100"),
+      "p":ids.get("5100"),"vi":ids.get("1140"),"vo":ids.get("2200"),"cash":ids.get("1110"),
+      "bank":ids.get("1120"),"inv":ids.get("1200"),"cos":ids.get("5000"),"re":ids.get("3100")})
+
     db.session.commit()
 
 def login_required(fn):
@@ -573,7 +798,13 @@ def settings():
                    SET company_name_ar=:ar, company_name_en=:en, vat_number=:vat,
                        cr_number=:cr, currency=:cur, address=:address, phone=:phone,
                        email=:email, logo_url=:logo_url, logo_data=:logo_data,
-                       logo_mime=:logo_mime, vat_rate=:vat_rate
+                       logo_mime=:logo_mime, vat_rate=:vat_rate,
+                       customer_account_id=:customer_account_id,supplier_account_id=:supplier_account_id,
+                       sales_account_id=:sales_account_id,purchases_account_id=:purchases_account_id,
+                       vat_input_account_id=:vat_input_account_id,vat_output_account_id=:vat_output_account_id,
+                       cash_account_id=:cash_account_id,bank_account_id=:bank_account_id,
+                       inventory_account_id=:inventory_account_id,cost_of_sales_account_id=:cost_of_sales_account_id,
+                       retained_earnings_account_id=:retained_earnings_account_id
                    WHERE id=1""",
                 {"ar": request.form["company_name_ar"],
                  "en": request.form["company_name_en"],
@@ -586,13 +817,26 @@ def settings():
                  "logo_url": request.form.get("logo_url", ""),
                  "logo_data": logo_data,
                  "logo_mime": logo_mime,
-                 "vat_rate": float(request.form.get("vat_rate", 15) or 15)})
+                 "vat_rate": float(request.form.get("vat_rate", 15) or 15),
+                 "customer_account_id":request.form.get("customer_account_id") or None,
+                 "supplier_account_id":request.form.get("supplier_account_id") or None,
+                 "sales_account_id":request.form.get("sales_account_id") or None,
+                 "purchases_account_id":request.form.get("purchases_account_id") or None,
+                 "vat_input_account_id":request.form.get("vat_input_account_id") or None,
+                 "vat_output_account_id":request.form.get("vat_output_account_id") or None,
+                 "cash_account_id":request.form.get("cash_account_id") or None,
+                 "bank_account_id":request.form.get("bank_account_id") or None,
+                 "inventory_account_id":request.form.get("inventory_account_id") or None,
+                 "cost_of_sales_account_id":request.form.get("cost_of_sales_account_id") or None,
+                 "retained_earnings_account_id":request.form.get("retained_earnings_account_id") or None})
 
         audit("UPDATE", "SETTINGS", "تم تحديث إعدادات الشركة والشعار")
         flash("تم حفظ إعدادات الشركة والشعار", "success")
         return redirect(url_for("settings"))
 
-    return render_template("settings.html", row=current)
+    return render_template("settings.html",row=current,
+        accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+                         WHERE active=1 AND accepts_entries=1 ORDER BY account_code"""))
 
 @app.route("/branches", methods=["GET","POST"])
 @login_required
@@ -608,11 +852,13 @@ def branches():
 @login_required
 def customers():
     if request.method == "POST":
-        execute("""INSERT INTO customers(name,vat_number,phone,email)
-                   VALUES(:n,:v,:p,:e)""",
-                {"n": request.form["name"], "v": request.form["vat_number"],
-                 "p": request.form["phone"], "e": request.form["email"]})
-        audit("CREATE", "CUSTOMER", f"إضافة عميل: {request.form['name']}")
+        name_ar = request.form["name"].strip()
+        name_en = request.form.get("name_en","").strip() or transliterate_arabic_name(name_ar)
+        execute("""INSERT INTO customers(name,name_en,vat_number,phone,email)
+                   VALUES(:n,:ne,:v,:p,:e)""",
+                {"n":name_ar,"ne":name_en,"v":request.form["vat_number"],
+                 "p":request.form["phone"],"e":request.form["email"]})
+        audit("CREATE","CUSTOMER",f"إضافة عميل: {name_ar} / {name_en}")
         flash("تمت إضافة العميل", "success")
     return render_template("customers.html", rows=rows("SELECT * FROM customers ORDER BY id DESC"))
 
@@ -620,11 +866,13 @@ def customers():
 @login_required
 def suppliers():
     if request.method == "POST":
-        execute("""INSERT INTO suppliers(name,vat_number,phone,email)
-                   VALUES(:n,:v,:p,:e)""",
-                {"n": request.form["name"], "v": request.form["vat_number"],
-                 "p": request.form["phone"], "e": request.form["email"]})
-        audit("CREATE", "SUPPLIER", f"إضافة مورد: {request.form['name']}")
+        name_ar = request.form["name"].strip()
+        name_en = request.form.get("name_en","").strip() or transliterate_arabic_name(name_ar)
+        execute("""INSERT INTO suppliers(name,name_en,vat_number,phone,email)
+                   VALUES(:n,:ne,:v,:p,:e)""",
+                {"n":name_ar,"ne":name_en,"v":request.form["vat_number"],
+                 "p":request.form["phone"],"e":request.form["email"]})
+        audit("CREATE","SUPPLIER",f"إضافة مورد: {name_ar} / {name_en}")
         flash("تمت إضافة المورد", "success")
     return render_template("suppliers.html", rows=rows("SELECT * FROM suppliers ORDER BY id DESC"))
 
@@ -715,8 +963,19 @@ def invoices():
                           :vat_rate,:line_subtotal,:line_vat,:line_total
                        )""", {"invoice_id": invoice_id, **item})
 
-        audit("CREATE", "INVOICE", f"إنشاء فاتورة: {invoice_no}")
-        flash("تم إنشاء الفاتورة بجميع البنود بنجاح", "success")
+        audit("CREATE","INVOICE",f"إنشاء فاتورة: {invoice_no}")
+        if request.form["status"]=="معتمدة":
+            try:
+                post_invoice_to_ledger(invoice_id)
+                flash("تم إنشاء الفاتورة وترحيلها محاسبيًا","success")
+            except Exception as exc:
+                db.session.rollback()
+                execute("UPDATE invoices SET status='مسودة',posting_status='خطأ' WHERE id=:id",{"id":invoice_id})
+                flash(f"تم حفظ الفاتورة كمسودة ولم تُرحّل: {exc}","danger")
+        else:
+            flash("تم إنشاء الفاتورة كمسودة","success")
+        if request.form.get("print_after_save") == "1":
+            return redirect(url_for("invoice_view", invoice_id=invoice_id, print=1))
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
     invoice_rows = rows("""SELECT i.*, c.name customer_name, b.name branch_name
@@ -736,21 +995,50 @@ def invoices():
 @app.route("/expenses", methods=["GET","POST"])
 @login_required
 def expenses():
-    if request.method == "POST":
-        amount = float(request.form["amount"] or 0)
-        vat = round(amount * 0.15, 2) if request.form.get("taxable") == "1" else 0
-        total = round(amount + vat, 2)
-        execute("""INSERT INTO expenses(expense_date,category,description,amount,vat,total,branch_id)
-                   VALUES(:dt,:cat,:des,:amt,:vat,:tot,:bid)""",
-                {"dt": request.form["expense_date"], "cat": request.form["category"],
-                 "des": request.form["description"], "amt": amount, "vat": vat,
-                 "tot": total, "bid": request.form["branch_id"]})
-        audit("CREATE", "EXPENSE", f"إضافة مصروف: {request.form['category']}")
-        flash("تم تسجيل المصروف", "success")
-    expense_rows = rows("""SELECT e.*, b.name branch_name FROM expenses e
-                           LEFT JOIN branches b ON b.id=e.branch_id ORDER BY e.id DESC""")
-    return render_template("expenses.html", rows=expense_rows,
-                           branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"))
+    if request.method=="POST":
+        amount=round(float(request.form["amount"] or 0),2)
+        taxable=1 if request.form.get("taxable")=="1" else 0
+        rate=float(row("SELECT vat_rate FROM settings WHERE id=1")["vat_rate"] or 15)
+        vat=round(amount*rate/100,2) if taxable else 0
+        total=round(amount+vat,2)
+        execute("""INSERT INTO expenses(expense_date,category,description,amount,vat,total,
+          branch_id,supplier_id,expense_account_id,payment_account_id,cost_center_id,taxable,
+          invoice_number,invoice_date,status,posting_status)
+          VALUES(:dt,:cat,:des,:amt,:vat,:tot,:bid,:sid,:ea,:pa,:cc,:tax,:inv,:idate,:status,'غير مرحّل')""",
+          {"dt":request.form["expense_date"],"cat":request.form["category"],
+           "des":request.form.get("description",""),"amt":amount,"vat":vat,"tot":total,
+           "bid":request.form.get("branch_id") or None,"sid":request.form.get("supplier_id") or None,
+           "ea":request.form.get("expense_account_id") or None,"pa":request.form.get("payment_account_id") or None,
+           "cc":request.form.get("cost_center_id") or None,"tax":taxable,
+           "inv":request.form.get("invoice_number",""),"idate":request.form.get("invoice_date") or None,
+           "status":request.form.get("status","مسودة")})
+        expense_id=row("SELECT MAX(id) id FROM expenses")["id"]
+        if request.form.get("status")=="معتمدة":
+            try:
+                post_expense_to_ledger(expense_id)
+                flash("تم تسجيل المصروف وترحيله محاسبيًا","success")
+            except Exception as exc:
+                db.session.rollback()
+                execute("UPDATE expenses SET status='مسودة',posting_status='خطأ' WHERE id=:id",{"id":expense_id})
+                flash(f"تم حفظ المصروف كمسودة ولم يُرحّل: {exc}","danger")
+        else: flash("تم حفظ المصروف كمسودة","success")
+        audit("CREATE","EXPENSE",f"إضافة مصروف: {request.form['category']}")
+        return redirect(url_for("expenses"))
+    expense_rows=rows("""SELECT e.*,b.name branch_name,s.name supplier_name,
+      a.account_name_ar expense_account_name,p.account_name_ar payment_account_name,
+      cc.name cost_center_name,j.journal_no FROM expenses e
+      LEFT JOIN branches b ON b.id=e.branch_id LEFT JOIN suppliers s ON s.id=e.supplier_id
+      LEFT JOIN chart_of_accounts a ON a.id=e.expense_account_id
+      LEFT JOIN chart_of_accounts p ON p.id=e.payment_account_id
+      LEFT JOIN cost_centers cc ON cc.id=e.cost_center_id
+      LEFT JOIN journal_entries j ON j.id=e.journal_id ORDER BY e.id DESC""")
+    accts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+                  WHERE active=1 AND accepts_entries=1 ORDER BY account_code""")
+    return render_template("expenses.html",rows=expense_rows,
+      branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
+      suppliers=rows("SELECT * FROM suppliers ORDER BY name"),accounts=accts,
+      centers=rows("SELECT * FROM cost_centers WHERE active=1 ORDER BY code"))
+
 
 @app.route("/inventory", methods=["GET","POST"])
 @login_required
@@ -829,7 +1117,7 @@ def qr_data_uri(data):
 @login_required
 def invoice_view(invoice_id):
     invoice = row("""
-        SELECT i.*, c.name customer_name, c.vat_number customer_vat,
+        SELECT i.*, c.name customer_name, c.name_en customer_name_en, c.vat_number customer_vat,
                c.phone customer_phone, c.email customer_email,
                b.name branch_name
         FROM invoices i
@@ -866,7 +1154,8 @@ def invoice_view(invoice_id):
         items=items,
         company=company,
         qr_image=qr_image,
-        qr_payload=tlv
+        qr_payload=tlv,
+        print_lang=request.args.get("lang","ar") if request.args.get("lang","ar") in ("ar","en","bi") else "ar"
     )
 
 
@@ -1262,6 +1551,11 @@ def journal_entries():
         if total_debit!=total_credit:
             flash(f"القيد غير متوازن. الفرق {abs(total_debit-total_credit):.2f}","danger")
             return redirect(url_for("journal_entries"))
+        try:
+            ensure_open_period(request.form["journal_date"])
+        except Exception as exc:
+            flash(str(exc),"danger")
+            return redirect(url_for("journal_entries"))
         journal_no=next_journal_number(request.form["journal_date"])
         execute("""INSERT INTO journal_entries(
             journal_no,journal_date,reference,description,status,total_debit,total_credit,created_by,created_at)
@@ -1280,6 +1574,8 @@ def journal_entries():
                 :line_description,:cost_center_id)""",
                 {"journal_id":journal_id,**line})
         flash(f"تم حفظ القيد {journal_no}","success")
+        if request.form.get("print_after_save") == "1":
+            return redirect(url_for("journal_view", journal_id=journal_id, print=1))
         return redirect(url_for("journal_entries"))
     q = request.args.get("q", "").strip()
     journal_params = {}
@@ -2001,6 +2297,41 @@ def report_context(slug, filters):
         "data": data,
         "summary": summary,
     }
+
+
+@app.route("/fiscal-periods",methods=["GET","POST"])
+@login_required
+def fiscal_periods():
+    if request.method=="POST":
+        pid=request.form.get("period_id",type=int); action=request.form.get("action")
+        if pid and action in ("open","close"):
+            status="مفتوحة" if action=="open" else "مغلقة"
+            execute("UPDATE fiscal_periods SET status=:s WHERE id=:id",{"s":status,"id":pid})
+            audit("PERIOD","FISCAL_PERIOD",f"الفترة {pid}: {status}")
+        return redirect(url_for("fiscal_periods"))
+    return render_template("fiscal_periods.html",periods=rows("""SELECT p.*,y.name fiscal_year_name
+      FROM fiscal_periods p JOIN fiscal_years y ON y.id=p.fiscal_year_id ORDER BY p.start_date DESC"""))
+
+@app.route("/invoices/<int:invoice_id>/post",methods=["POST"])
+@login_required
+def invoice_post(invoice_id):
+    try:
+        post_invoice_to_ledger(invoice_id)
+        execute("UPDATE invoices SET status='معتمدة' WHERE id=:id",{"id":invoice_id})
+        flash("تم ترحيل الفاتورة محاسبيًا","success")
+    except Exception as exc: flash(str(exc),"danger")
+    return redirect(url_for("invoice_view",invoice_id=invoice_id))
+
+@app.route("/expenses/<int:expense_id>/post",methods=["POST"])
+@login_required
+def expense_post(expense_id):
+    try:
+        post_expense_to_ledger(expense_id)
+        execute("UPDATE expenses SET status='معتمدة' WHERE id=:id",{"id":expense_id})
+        flash("تم ترحيل المصروف محاسبيًا","success")
+    except Exception as exc: flash(str(exc),"danger")
+    return redirect(url_for("expenses"))
+
 
 @app.route("/reports")
 @login_required
