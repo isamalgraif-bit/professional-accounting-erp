@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "5.0.2"
+APP_VERSION = "6.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -403,6 +403,83 @@ def post_supplier_invoice(invoice_id):
     return jid
 
 
+
+def next_inventory_movement_number(movement_date):
+    year = datetime.strptime(movement_date,"%Y-%m-%d").year if isinstance(movement_date,str) else movement_date.year
+    count = db.session.execute(text("""SELECT COUNT(*) FROM inventory_movements
+        WHERE EXTRACT(YEAR FROM movement_date)=:y"""),{"y":year}).scalar() or 0
+    return f"IM-{year}-{count+1:07d}"
+
+def next_inventory_count_number(count_date):
+    year = datetime.strptime(count_date,"%Y-%m-%d").year if isinstance(count_date,str) else count_date.year
+    count = db.session.execute(text("""SELECT COUNT(*) FROM inventory_counts
+        WHERE EXTRACT(YEAR FROM count_date)=:y"""),{"y":year}).scalar() or 0
+    return f"IC-{year}-{count+1:06d}"
+
+def warehouse_stock(item_id, warehouse_id):
+    value = db.session.execute(text("""
+        SELECT COALESCE(SUM(
+          CASE
+            WHEN movement_type IN ('رصيد افتتاحي','استلام','تسوية زيادة','تحويل وارد','مرتجع مبيعات') THEN quantity
+            WHEN movement_type IN ('صرف','تسوية نقص','تحويل صادر','بيع','مرتجع مشتريات') THEN -quantity
+            ELSE 0 END
+        ),0)
+        FROM inventory_movements
+        WHERE item_id=:item AND warehouse_id=:warehouse
+    """),{"item":item_id,"warehouse":warehouse_id}).scalar()
+    return float(value or 0)
+
+def item_total_stock(item_id):
+    value = db.session.execute(text("""
+        SELECT COALESCE(SUM(
+          CASE
+            WHEN movement_type IN ('رصيد افتتاحي','استلام','تسوية زيادة','تحويل وارد','مرتجع مبيعات') THEN quantity
+            WHEN movement_type IN ('صرف','تسوية نقص','تحويل صادر','بيع','مرتجع مشتريات') THEN -quantity
+            ELSE 0 END
+        ),0)
+        FROM inventory_movements WHERE item_id=:item
+    """),{"item":item_id}).scalar()
+    return float(value or 0)
+
+def record_inventory_movement(movement_date,movement_type,item_id,warehouse_id,quantity,
+                              unit_cost=0,destination_warehouse_id=None,reference_type="",
+                              reference_id=None,reference_no="",batch_no="",serial_no="",
+                              production_date=None,expiry_date=None,notes=""):
+    quantity=round(float(quantity),3)
+    unit_cost=round(float(unit_cost or 0),4)
+    if quantity<=0:
+        raise ValueError("الكمية يجب أن تكون أكبر من صفر.")
+    if movement_type in ("صرف","بيع","تحويل صادر","مرتجع مشتريات","تسوية نقص"):
+        available=warehouse_stock(item_id,warehouse_id)
+        if quantity>available+0.0001:
+            raise ValueError(f"الرصيد غير كافٍ. المتاح {available:.3f}")
+    no=next_inventory_movement_number(movement_date)
+    execute("""INSERT INTO inventory_movements(
+      movement_no,movement_date,movement_type,item_id,warehouse_id,destination_warehouse_id,
+      quantity,unit_cost,total_cost,reference_type,reference_id,reference_no,batch_no,
+      serial_no,production_date,expiry_date,notes,created_by,created_at)
+      VALUES(:no,:dt,:type,:item,:warehouse,:dest,:qty,:cost,:total,:rtype,:rid,:rno,
+      :batch,:serial,:prod,:expiry,:notes,:uid,:created)""",
+      {"no":no,"dt":movement_date,"type":movement_type,"item":item_id,
+       "warehouse":warehouse_id,"dest":destination_warehouse_id,"qty":quantity,
+       "cost":unit_cost,"total":round(quantity*unit_cost,2),"rtype":reference_type,
+       "rid":reference_id,"rno":reference_no,"batch":batch_no,"serial":serial_no,
+       "prod":production_date,"expiry":expiry_date,"notes":notes,
+       "uid":session.get("user_id"),"created":datetime.now()})
+    # Moving-average cost on incoming movements.
+    if movement_type in ("رصيد افتتاحي","استلام","تسوية زيادة","تحويل وارد","مرتجع مبيعات"):
+        item=row("SELECT cost FROM inventory WHERE id=:id",{"id":item_id})
+        previous_qty=max(item_total_stock(item_id)-quantity,0)
+        old_cost=float(item["cost"] or 0)
+        new_cost=((previous_qty*old_cost)+(quantity*unit_cost))/(previous_qty+quantity) if previous_qty+quantity else unit_cost
+        execute("UPDATE inventory SET quantity=:q,cost=:c WHERE id=:id",
+                {"q":item_total_stock(item_id),"c":round(new_cost,4),"id":item_id})
+    else:
+        execute("UPDATE inventory SET quantity=:q WHERE id=:id",
+                {"q":item_total_stock(item_id),"id":item_id})
+    return no
+
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -717,6 +794,61 @@ def init_db():
             approver_role VARCHAR(100) NOT NULL,
             active INTEGER DEFAULT 1
         )""",
+        """CREATE TABLE IF NOT EXISTS warehouses(
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(50) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            branch_id INTEGER REFERENCES branches(id),
+            active INTEGER DEFAULT 1
+        )""",
+        """CREATE TABLE IF NOT EXISTS inventory_categories(
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(50) UNIQUE,
+            name VARCHAR(255) NOT NULL,
+            parent_id INTEGER REFERENCES inventory_categories(id),
+            active INTEGER DEFAULT 1
+        )""",
+        """CREATE TABLE IF NOT EXISTS inventory_movements(
+            id SERIAL PRIMARY KEY,
+            movement_no VARCHAR(100) UNIQUE NOT NULL,
+            movement_date DATE NOT NULL,
+            movement_type VARCHAR(50) NOT NULL,
+            item_id INTEGER NOT NULL REFERENCES inventory(id),
+            warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
+            destination_warehouse_id INTEGER REFERENCES warehouses(id),
+            quantity NUMERIC(18,3) NOT NULL,
+            unit_cost NUMERIC(18,4) DEFAULT 0,
+            total_cost NUMERIC(18,2) DEFAULT 0,
+            reference_type VARCHAR(50) DEFAULT '',
+            reference_id INTEGER,
+            reference_no VARCHAR(100) DEFAULT '',
+            batch_no VARCHAR(100) DEFAULT '',
+            serial_no VARCHAR(100) DEFAULT '',
+            production_date DATE,
+            expiry_date DATE,
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS inventory_counts(
+            id SERIAL PRIMARY KEY,
+            count_no VARCHAR(100) UNIQUE NOT NULL,
+            count_date DATE NOT NULL,
+            warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
+            status VARCHAR(30) DEFAULT 'مسودة',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS inventory_count_items(
+            id SERIAL PRIMARY KEY,
+            count_id INTEGER NOT NULL REFERENCES inventory_counts(id) ON DELETE CASCADE,
+            item_id INTEGER NOT NULL REFERENCES inventory(id),
+            system_qty NUMERIC(18,3) NOT NULL DEFAULT 0,
+            counted_qty NUMERIC(18,3) NOT NULL DEFAULT 0,
+            variance_qty NUMERIC(18,3) NOT NULL DEFAULT 0,
+            unit_cost NUMERIC(18,4) DEFAULT 0
+        )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
@@ -778,6 +910,18 @@ def init_db():
         "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS tax_number VARCHAR(50) DEFAULT ''",
         "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS normal_balance VARCHAR(20) DEFAULT 'مدين'",
         "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS statement_type VARCHAR(50) DEFAULT 'الميزانية العمومية'",
+        "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS barcode VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS qr_code VARCHAR(255) DEFAULT ''",
+        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS category_id INTEGER',
+        "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS item_type VARCHAR(30) DEFAULT 'مخزني'",
+        "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS valuation_method VARCHAR(30) DEFAULT 'متوسط متحرك'",
+        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS min_level NUMERIC(18,3) DEFAULT 0',
+        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS max_level NUMERIC(18,3) DEFAULT 0',
+        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS track_batch INTEGER DEFAULT 0',
+        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS track_serial INTEGER DEFAULT 0',
+        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS track_expiry INTEGER DEFAULT 0',
+        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS active INTEGER DEFAULT 1',
         'ALTER TABLE settings ADD COLUMN IF NOT EXISTS customer_account_id INTEGER',
         'ALTER TABLE settings ADD COLUMN IF NOT EXISTS supplier_account_id INTEGER',
         'ALTER TABLE settings ADD COLUMN IF NOT EXISTS sales_account_id INTEGER',
@@ -870,6 +1014,12 @@ def init_db():
         VALUES('CC-001','الإدارة العامة',1)
         ON CONFLICT (code) DO NOTHING
     """))
+    db.session.execute(text("""
+        INSERT INTO warehouses(code,name,active)
+        VALUES('WH-001','المستودع الرئيسي',1)
+        ON CONFLICT (code) DO NOTHING
+    """))
+
     for min_amount,max_amount,role in [
         (0,5000,"مدير القسم"),
         (5000.01,20000,"المدير المالي"),
@@ -1309,16 +1459,189 @@ def expenses():
 @app.route("/inventory", methods=["GET","POST"])
 @login_required
 def inventory():
-    if request.method == "POST":
-        execute("""INSERT INTO inventory(sku,name,quantity,unit,cost,sale_price,reorder_level)
-                   VALUES(:sku,:n,:q,:u,:c,:sp,:rl)""",
-                {"sku": request.form["sku"] or None, "n": request.form["name"],
-                 "q": float(request.form["quantity"] or 0), "u": request.form["unit"],
-                 "c": float(request.form["cost"] or 0), "sp": float(request.form["sale_price"] or 0),
-                 "rl": float(request.form["reorder_level"] or 0)})
-        audit("CREATE", "INVENTORY", f"إضافة صنف: {request.form['name']}")
-        flash("تمت إضافة الصنف", "success")
-    return render_template("inventory.html", rows=rows("SELECT * FROM inventory ORDER BY id DESC"))
+    if request.method=="POST":
+        sku=request.form.get("sku","").strip() or None
+        name=request.form["name"].strip()
+        execute("""INSERT INTO inventory(
+          sku,name,name_en,barcode,category_id,item_type,unit,cost,sale_price,reorder_level,
+          min_level,max_level,valuation_method,track_batch,track_serial,track_expiry,active,quantity)
+          VALUES(:sku,:name,:name_en,:barcode,:category,:type,:unit,:cost,:sale,:reorder,
+          :min,:max,:valuation,:batch,:serial,:expiry,1,0)""",
+          {"sku":sku,"name":name,"name_en":request.form.get("name_en",""),
+           "barcode":request.form.get("barcode",""),"category":request.form.get("category_id") or None,
+           "type":request.form.get("item_type","مخزني"),"unit":request.form.get("unit","وحدة"),
+           "cost":float(request.form.get("cost") or 0),"sale":float(request.form.get("sale_price") or 0),
+           "reorder":float(request.form.get("reorder_level") or 0),
+           "min":float(request.form.get("min_level") or 0),"max":float(request.form.get("max_level") or 0),
+           "valuation":request.form.get("valuation_method","متوسط متحرك"),
+           "batch":1 if request.form.get("track_batch") else 0,
+           "serial":1 if request.form.get("track_serial") else 0,
+           "expiry":1 if request.form.get("track_expiry") else 0})
+        item_id=row("SELECT id FROM inventory WHERE sku IS NOT DISTINCT FROM :sku AND name=:name ORDER BY id DESC LIMIT 1",
+                    {"sku":sku,"name":name})["id"]
+        opening=float(request.form.get("opening_quantity") or 0)
+        if opening>0:
+            warehouse_id=request.form.get("warehouse_id",type=int)
+            if not warehouse_id:
+                flash("اختر المستودع للرصيد الافتتاحي","danger")
+                return redirect(url_for("inventory"))
+            record_inventory_movement(
+                request.form.get("opening_date") or datetime.now().date().isoformat(),
+                "رصيد افتتاحي",item_id,warehouse_id,opening,
+                float(request.form.get("cost") or 0),notes="رصيد افتتاحي"
+            )
+        audit("CREATE","INVENTORY",f"إضافة صنف: {name}")
+        flash("تم إنشاء بطاقة الصنف","success")
+        return redirect(url_for("inventory_item_view",item_id=item_id))
+    item_rows=rows("""SELECT i.*,c.name category_name,
+      COALESCE((SELECT SUM(CASE
+        WHEN m.movement_type IN ('رصيد افتتاحي','استلام','تسوية زيادة','تحويل وارد','مرتجع مبيعات') THEN m.quantity
+        WHEN m.movement_type IN ('صرف','تسوية نقص','تحويل صادر','بيع','مرتجع مشتريات') THEN -m.quantity ELSE 0 END)
+        FROM inventory_movements m WHERE m.item_id=i.id),0) stock_qty
+      FROM inventory i LEFT JOIN inventory_categories c ON c.id=i.category_id
+      ORDER BY i.id DESC""")
+    return render_template("inventory.html",rows=item_rows,
+      warehouses=rows("SELECT * FROM warehouses WHERE active=1 ORDER BY code"),
+      categories=rows("SELECT * FROM inventory_categories WHERE active=1 ORDER BY name"))
+
+@app.route("/inventory/items/<int:item_id>")
+@login_required
+def inventory_item_view(item_id):
+    item=row("""SELECT i.*,c.name category_name FROM inventory i
+                LEFT JOIN inventory_categories c ON c.id=i.category_id WHERE i.id=:id""",{"id":item_id})
+    if not item:return "الصنف غير موجود",404
+    balances=rows("""SELECT w.id,w.code,w.name,
+      COALESCE(SUM(CASE
+        WHEN m.movement_type IN ('رصيد افتتاحي','استلام','تسوية زيادة','تحويل وارد','مرتجع مبيعات') THEN m.quantity
+        WHEN m.movement_type IN ('صرف','تسوية نقص','تحويل صادر','بيع','مرتجع مشتريات') THEN -m.quantity ELSE 0 END),0) quantity
+      FROM warehouses w LEFT JOIN inventory_movements m ON m.warehouse_id=w.id AND m.item_id=:item
+      GROUP BY w.id,w.code,w.name ORDER BY w.code""",{"item":item_id})
+    movements=rows("""SELECT m.*,w.code warehouse_code,w.name warehouse_name,
+                      d.code destination_code,d.name destination_name
+      FROM inventory_movements m JOIN warehouses w ON w.id=m.warehouse_id
+      LEFT JOIN warehouses d ON d.id=m.destination_warehouse_id
+      WHERE m.item_id=:item ORDER BY m.movement_date DESC,m.id DESC""",{"item":item_id})
+    return render_template("inventory_item_view.html",item=item,balances=balances,movements=movements)
+
+@app.route("/inventory/movements",methods=["GET","POST"])
+@login_required
+def inventory_movements():
+    if request.method=="POST":
+        try:
+            record_inventory_movement(
+              request.form["movement_date"],request.form["movement_type"],
+              int(request.form["item_id"]),int(request.form["warehouse_id"]),
+              request.form["quantity"],request.form.get("unit_cost") or 0,
+              reference_no=request.form.get("reference_no",""),
+              batch_no=request.form.get("batch_no",""),serial_no=request.form.get("serial_no",""),
+              production_date=request.form.get("production_date") or None,
+              expiry_date=request.form.get("expiry_date") or None,
+              notes=request.form.get("notes",""))
+            flash("تم تسجيل حركة المخزون","success")
+        except Exception as exc:
+            flash(str(exc),"danger")
+        return redirect(url_for("inventory_movements"))
+    data=rows("""SELECT m.*,i.sku,i.name item_name,w.code warehouse_code,w.name warehouse_name
+                 FROM inventory_movements m JOIN inventory i ON i.id=m.item_id
+                 JOIN warehouses w ON w.id=m.warehouse_id
+                 ORDER BY m.movement_date DESC,m.id DESC LIMIT 500""")
+    return render_template("inventory_movements.html",movements=data,
+      items=rows("SELECT id,sku,name,unit,cost FROM inventory WHERE active=1 ORDER BY name"),
+      warehouses=rows("SELECT id,code,name FROM warehouses WHERE active=1 ORDER BY code"))
+
+@app.route("/inventory/transfers",methods=["GET","POST"])
+@login_required
+def inventory_transfers():
+    if request.method=="POST":
+        item_id=int(request.form["item_id"]); source=int(request.form["source_warehouse_id"])
+        destination=int(request.form["destination_warehouse_id"])
+        if source==destination:
+            flash("يجب اختيار مستودعين مختلفين","danger")
+            return redirect(url_for("inventory_transfers"))
+        qty=float(request.form["quantity"]); dt=request.form["transfer_date"]
+        item=row("SELECT cost FROM inventory WHERE id=:id",{"id":item_id})
+        try:
+            ref=f"TR-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            record_inventory_movement(dt,"تحويل صادر",item_id,source,qty,item["cost"],
+                                      destination_warehouse_id=destination,reference_type="TRANSFER",
+                                      reference_no=ref,notes=request.form.get("notes",""))
+            record_inventory_movement(dt,"تحويل وارد",item_id,destination,qty,item["cost"],
+                                      destination_warehouse_id=source,reference_type="TRANSFER",
+                                      reference_no=ref,notes=request.form.get("notes",""))
+            flash("تم تحويل المخزون بين المستودعات","success")
+        except Exception as exc:
+            flash(str(exc),"danger")
+        return redirect(url_for("inventory_transfers"))
+    return render_template("inventory_transfers.html",
+      items=rows("SELECT id,sku,name,unit FROM inventory WHERE active=1 ORDER BY name"),
+      warehouses=rows("SELECT id,code,name FROM warehouses WHERE active=1 ORDER BY code"),
+      transfers=rows("""SELECT m.*,i.name item_name,w.name source_name,d.name destination_name
+        FROM inventory_movements m JOIN inventory i ON i.id=m.item_id
+        JOIN warehouses w ON w.id=m.warehouse_id
+        LEFT JOIN warehouses d ON d.id=m.destination_warehouse_id
+        WHERE m.movement_type='تحويل صادر' ORDER BY m.id DESC LIMIT 200"""))
+
+@app.route("/inventory/counts",methods=["GET","POST"])
+@login_required
+def inventory_counts():
+    if request.method=="POST":
+        count_date=request.form["count_date"]; warehouse_id=int(request.form["warehouse_id"])
+        no=next_inventory_count_number(count_date)
+        execute("""INSERT INTO inventory_counts(count_no,count_date,warehouse_id,status,notes,created_by,created_at)
+          VALUES(:no,:dt,:warehouse,'معتمد',:notes,:uid,:created)""",
+          {"no":no,"dt":count_date,"warehouse":warehouse_id,"notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        count_id=row("SELECT id FROM inventory_counts WHERE count_no=:no",{"no":no})["id"]
+        item_ids=request.form.getlist("item_id[]"); counted=request.form.getlist("counted_qty[]")
+        for idx,item_id in enumerate(item_ids):
+            item=row("SELECT cost FROM inventory WHERE id=:id",{"id":item_id})
+            system=warehouse_stock(int(item_id),warehouse_id)
+            actual=float(counted[idx] or 0); variance=round(actual-system,3)
+            execute("""INSERT INTO inventory_count_items(count_id,item_id,system_qty,counted_qty,variance_qty,unit_cost)
+                       VALUES(:count,:item,:system,:actual,:variance,:cost)""",
+                    {"count":count_id,"item":item_id,"system":system,"actual":actual,
+                     "variance":variance,"cost":item["cost"]})
+            if variance>0:
+                record_inventory_movement(count_date,"تسوية زيادة",int(item_id),warehouse_id,variance,item["cost"],
+                                          reference_type="STOCK_COUNT",reference_id=count_id,reference_no=no)
+            elif variance<0:
+                record_inventory_movement(count_date,"تسوية نقص",int(item_id),warehouse_id,abs(variance),item["cost"],
+                                          reference_type="STOCK_COUNT",reference_id=count_id,reference_no=no)
+        flash(f"تم اعتماد الجرد {no} وترحيل الفروقات","success")
+        return redirect(url_for("inventory_counts"))
+    items=rows("SELECT id,sku,name,unit,cost FROM inventory WHERE active=1 ORDER BY name")
+    return render_template("inventory_counts.html",
+      items=items,warehouses=rows("SELECT id,code,name FROM warehouses WHERE active=1 ORDER BY code"),
+      counts=rows("""SELECT c.*,w.code warehouse_code,w.name warehouse_name
+                     FROM inventory_counts c JOIN warehouses w ON w.id=c.warehouse_id
+                     ORDER BY c.count_date DESC,c.id DESC"""))
+
+@app.route("/inventory/warehouses",methods=["GET","POST"])
+@login_required
+def warehouses():
+    if request.method=="POST":
+        execute("""INSERT INTO warehouses(code,name,branch_id,active)
+                   VALUES(:code,:name,:branch,1) ON CONFLICT(code) DO NOTHING""",
+                {"code":request.form["code"],"name":request.form["name"],
+                 "branch":request.form.get("branch_id") or None})
+        flash("تم حفظ المستودع","success")
+        return redirect(url_for("warehouses"))
+    return render_template("warehouses.html",
+      warehouses=rows("""SELECT w.*,b.name branch_name FROM warehouses w
+                         LEFT JOIN branches b ON b.id=w.branch_id ORDER BY w.code"""),
+      branches=rows("SELECT id,name FROM branches WHERE active=1 ORDER BY name"))
+
+@app.route("/inventory/export.xlsx")
+@login_required
+def inventory_export():
+    data=rows("""SELECT sku,name,name_en,barcode,unit,quantity,cost,sale_price,reorder_level,
+                 min_level,max_level,valuation_method,active FROM inventory ORDER BY sku,name""")
+    headers=["الكود","اسم الصنف","English Name","الباركود","الوحدة","الرصيد","متوسط التكلفة",
+             "سعر البيع","إعادة الطلب","الحد الأدنى","الحد الأعلى","طريقة التقييم","الحالة"]
+    keys=["sku","name","name_en","barcode","unit","quantity","cost","sale_price","reorder_level",
+          "min_level","max_level","valuation_method","active"]
+    return xlsx_response("inventory.xlsx","المخزون",headers,[[r.get(k) for k in keys] for r in data])
+
 
 @app.route("/employees", methods=["GET","POST"])
 @login_required
@@ -2802,6 +3125,26 @@ def goods_receipts():
               {"grn":grn_id,"item":item_id,"r":rq,"a":aq,"rej":rej,"notes":note})
             execute("""UPDATE purchase_order_items SET received_qty=received_qty+:q
                        WHERE id=:id""",{"q":rq,"id":item_id})
+            if aq>0:
+                inv_item=row("""SELECT id,cost FROM inventory
+                                WHERE (NULLIF(:sku,'') IS NOT NULL AND sku=:sku)
+                                   OR LOWER(name)=LOWER(:name)
+                                ORDER BY CASE WHEN sku=:sku THEN 0 ELSE 1 END LIMIT 1""",
+                             {"sku":item["item_code"] or "","name":item["item_name"]})
+                if not inv_item:
+                    execute("""INSERT INTO inventory(sku,name,quantity,unit,cost,sale_price,reorder_level,active)
+                               VALUES(:sku,:name,0,:unit,:cost,0,0,1)""",
+                            {"sku":item["item_code"] or None,"name":item["item_name"],
+                             "unit":item["unit"],"cost":item["unit_price"]})
+                    inv_item=row("SELECT id,cost FROM inventory WHERE name=:name ORDER BY id DESC LIMIT 1",
+                                 {"name":item["item_name"]})
+                warehouse=row("SELECT id FROM warehouses WHERE active=1 ORDER BY id LIMIT 1")
+                if warehouse:
+                    record_inventory_movement(
+                      request.form["grn_date"],"استلام",inv_item["id"],warehouse["id"],aq,
+                      item["unit_price"],reference_type="GRN",reference_id=grn_id,
+                      reference_no=no,notes=f"استلام أمر الشراء {po['po_no']}")
+
         remaining=row("""SELECT COUNT(*) count FROM purchase_order_items
                          WHERE po_id=:po AND received_qty<quantity""",{"po":po_id})["count"]
         execute("UPDATE purchase_orders SET status=:s WHERE id=:id",

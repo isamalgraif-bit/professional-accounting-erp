@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>تحويل بين المستودعات</h3><small>Warehouse Transfers</small></div></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="transfer_date" id="transferDate" required></div>
+<div class="col-md-3"><label>الصنف</label><select class="form-select" name="item_id" required>{% for i in items %}<option value="{{i.id}}">{{i.sku or ''}} - {{i.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>من مستودع</label><select class="form-select" name="source_warehouse_id" required>{% for w in warehouses %}<option value="{{w.id}}">{{w.code}} - {{w.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>إلى مستودع</label><select class="form-select" name="destination_warehouse_id" required>{% for w in warehouses %}<option value="{{w.id}}">{{w.code}} - {{w.name}}</option>{% endfor %}</select></div>
+<div class="col-md-1"><label>الكمية</label><input class="form-control" type="number" step=".001" name="quantity" required></div>
+<div class="col-md-10"><label>ملاحظات</label><input class="form-control" name="notes"></div><div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">تنفيذ التحويل</button></div>
+</div></form></div>
+<div class="form-card"><table class="table table-striped"><thead><tr><th>التاريخ</th><th>المرجع</th><th>الصنف</th><th>من</th><th>إلى</th><th>الكمية</th></tr></thead><tbody>{% for t in transfers %}<tr><td>{{t.movement_date}}</td><td>{{t.reference_no}}</td><td>{{t.item_name}}</td><td>{{t.source_name}}</td><td>{{t.destination_name}}</td><td>{{t.quantity}}</td></tr>{% endfor %}</tbody></table></div>
+<script>transferDate.value=new Date().toISOString().slice(0,10)</script>{% endblock %}

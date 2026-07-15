@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>{{item.sku or ''}} — {{item.name}}</h3><small>{{item.name_en or ''}}</small></div><button class="btn btn-dark" onclick="window.print()">🖨️ طباعة/PDF</button></div>
+<div class="row g-3 mb-4">
+<div class="col-md-3"><div class="erp-kpi"><small>إجمالي الرصيد</small><h4>{{"%.3f"|format(item.quantity)}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>متوسط التكلفة</small><h4>{{"%.4f"|format(item.cost)}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>قيمة المخزون</small><h4>{{"%.2f"|format(item.quantity*item.cost)}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>سعر البيع</small><h4>{{"%.2f"|format(item.sale_price)}}</h4></div></div>
+</div>
+<div class="form-card mb-4"><h5>الأرصدة حسب المستودع</h5><table class="table table-bordered"><thead><tr><th>الكود</th><th>المستودع</th><th>الكمية</th><th>القيمة</th></tr></thead><tbody>{% for b in balances %}<tr><td>{{b.code}}</td><td>{{b.name}}</td><td>{{"%.3f"|format(b.quantity)}}</td><td>{{"%.2f"|format(b.quantity*item.cost)}}</td></tr>{% endfor %}</tbody></table></div>
+<div class="form-card"><h5>بطاقة حركة الصنف</h5><div class="table-responsive"><table class="table table-striped"><thead><tr><th>التاريخ</th><th>رقم الحركة</th><th>النوع</th><th>المستودع</th><th>الكمية</th><th>التكلفة</th><th>المرجع</th><th>التشغيلة</th><th>السيريال</th><th>الصلاحية</th></tr></thead><tbody>{% for m in movements %}<tr><td>{{m.movement_date}}</td><td>{{m.movement_no}}</td><td>{{m.movement_type}}</td><td>{{m.warehouse_code}} - {{m.warehouse_name}}</td><td>{{m.quantity}}</td><td>{{m.unit_cost}}</td><td>{{m.reference_no or '-'}}</td><td>{{m.batch_no or '-'}}</td><td>{{m.serial_no or '-'}}</td><td>{{m.expiry_date or '-'}}</td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}
