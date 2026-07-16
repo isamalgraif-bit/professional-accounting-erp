@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "8.0.0"
+APP_VERSION = "9.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -887,6 +887,99 @@ def post_depreciation_run(run_id):
     return jid
 
 
+
+def next_payroll_run_number(period_end):
+    year = period_end.year if hasattr(period_end,"year") else datetime.strptime(period_end,"%Y-%m-%d").year
+    count = db.session.execute(text("""SELECT COUNT(*) FROM payroll_runs
+        WHERE EXTRACT(YEAR FROM period_end)=:y"""),{"y":year}).scalar() or 0
+    return f"PAY-{year}-{count+1:05d}"
+
+def payroll_configuration():
+    config=row("SELECT * FROM payroll_settings WHERE id=1")
+    if not config:
+        execute("""INSERT INTO payroll_settings(id,working_days_per_month,
+                   working_hours_per_day,overtime_multiplier)
+                   VALUES(1,30,8,1.5)""")
+        config=row("SELECT * FROM payroll_settings WHERE id=1")
+    return config
+
+def calculate_employee_payroll(employee, period_start, period_end):
+    cfg=payroll_configuration()
+    working_days=float(cfg["working_days_per_month"] or 30)
+    hours_per_day=float(cfg["working_hours_per_day"] or 8)
+    overtime_multiplier=float(cfg["overtime_multiplier"] or 1.5)
+
+    attendance=row("""SELECT
+      COALESCE(SUM(overtime_hours),0) overtime_hours,
+      COALESCE(SUM(CASE WHEN status='غائب' THEN 1 ELSE 0 END),0) absence_days,
+      COALESCE(SUM(absence_hours),0) absence_hours
+      FROM attendance_records
+      WHERE employee_id=:employee AND attendance_date BETWEEN :start AND :end""",
+      {"employee":employee["id"],"start":period_start,"end":period_end})
+
+    basic=float(employee["basic_salary"] or 0)
+    allowances=(float(employee.get("allowances") or 0)
+                +float(employee.get("housing_allowance") or 0)
+                +float(employee.get("transport_allowance") or 0)
+                +float(employee.get("other_allowance") or 0))
+    hourly_rate=basic/working_days/hours_per_day if working_days and hours_per_day else 0
+    overtime_hours=float(attendance["overtime_hours"] or 0)
+    overtime_amount=round(overtime_hours*hourly_rate*overtime_multiplier,2)
+    absence_days=float(attendance["absence_days"] or 0)
+    absence_hours=float(attendance["absence_hours"] or 0)
+    absence_deduction=round((absence_days*basic/working_days)+(absence_hours*hourly_rate),2)
+
+    adjustments=rows("""SELECT adjustment_type,amount FROM employee_salary_adjustments
+      WHERE employee_id=:employee AND active=1 AND adjustment_date<=:end
+      AND (recurring=1 OR adjustment_date BETWEEN :start AND :end)""",
+      {"employee":employee["id"],"start":period_start,"end":period_end})
+    extra_earnings=sum(float(x["amount"]) for x in adjustments if x["adjustment_type"]=="استحقاق")
+    other_deductions=sum(float(x["amount"]) for x in adjustments if x["adjustment_type"]=="استقطاع")
+
+    gross=round(basic+allowances+overtime_amount+extra_earnings,2)
+    deductions=round(absence_deduction+other_deductions,2)
+    net=round(max(gross-deductions,0),2)
+    return {
+        "basic_salary":basic,"allowances":round(allowances+extra_earnings,2),
+        "overtime_hours":overtime_hours,"overtime_amount":overtime_amount,
+        "absence_days":absence_days,"absence_deduction":absence_deduction,
+        "other_deductions":round(other_deductions,2),"gross_salary":gross,
+        "total_deductions":deductions,"net_salary":net
+    }
+
+def post_payroll_run(run_id):
+    run=row("SELECT * FROM payroll_runs WHERE id=:id",{"id":run_id})
+    if not run:
+        raise ValueError("مسير الرواتب غير موجود.")
+    if run.get("journal_id"):
+        return run["journal_id"]
+    cfg=payroll_configuration()
+    required=["salary_expense_account_id","payroll_payable_account_id","deduction_account_id"]
+    missing=[x for x in required if not cfg.get(x)]
+    if missing:
+        raise ValueError("أكمل ربط حسابات الرواتب من إعدادات الرواتب.")
+
+    lines=[]
+    for x in rows("""SELECT pl.*,e.name FROM payroll_lines pl
+                     JOIN employees e ON e.id=pl.employee_id
+                     WHERE pl.run_id=:id""",{"id":run_id}):
+        common={"cost_center_id":x["cost_center_id"],
+                "line_description":f"راتب الموظف {x['name']}"}
+        lines.append({"account_id":cfg["salary_expense_account_id"],
+                      "debit":x["gross_salary"],**common})
+        lines.append({"account_id":cfg["payroll_payable_account_id"],
+                      "credit":x["net_salary"],**common})
+        if float(x["total_deductions"] or 0)>0:
+            lines.append({"account_id":cfg["deduction_account_id"],
+                          "credit":x["total_deductions"],**common})
+    jid=create_system_journal(run["payment_date"] or run["period_end"],
+                              f"مسير الرواتب {run['run_no']}",run["run_no"],
+                              "PAYROLL",run_id,lines)
+    execute("""UPDATE payroll_runs SET journal_id=:jid,status='مرحّل'
+               WHERE id=:id""",{"jid":jid,"id":run_id})
+    return jid
+
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -1419,6 +1512,81 @@ def init_db():
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
+        """CREATE TABLE IF NOT EXISTS departments(
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(50) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            manager_employee_id INTEGER,
+            active INTEGER DEFAULT 1
+        )""",
+        """CREATE TABLE IF NOT EXISTS payroll_settings(
+            id INTEGER PRIMARY KEY,
+            salary_expense_account_id INTEGER REFERENCES chart_of_accounts(id),
+            payroll_payable_account_id INTEGER REFERENCES chart_of_accounts(id),
+            deduction_account_id INTEGER REFERENCES chart_of_accounts(id),
+            working_days_per_month NUMERIC(8,2) DEFAULT 30,
+            working_hours_per_day NUMERIC(8,2) DEFAULT 8,
+            overtime_multiplier NUMERIC(8,2) DEFAULT 1.5
+        )""",
+        """CREATE TABLE IF NOT EXISTS attendance_records(
+            id SERIAL PRIMARY KEY,
+            employee_id INTEGER NOT NULL REFERENCES employees(id),
+            attendance_date DATE NOT NULL,
+            status VARCHAR(30) DEFAULT 'حاضر',
+            check_in TIME,
+            check_out TIME,
+            overtime_hours NUMERIC(8,2) DEFAULT 0,
+            absence_hours NUMERIC(8,2) DEFAULT 0,
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(employee_id,attendance_date)
+        )""",
+        """CREATE TABLE IF NOT EXISTS payroll_runs(
+            id SERIAL PRIMARY KEY,
+            run_no VARCHAR(100) UNIQUE NOT NULL,
+            period_start DATE NOT NULL,
+            period_end DATE NOT NULL,
+            payment_date DATE,
+            status VARCHAR(40) DEFAULT 'مسودة',
+            total_gross NUMERIC(18,2) DEFAULT 0,
+            total_deductions NUMERIC(18,2) DEFAULT 0,
+            total_net NUMERIC(18,2) DEFAULT 0,
+            journal_id INTEGER,
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS payroll_lines(
+            id SERIAL PRIMARY KEY,
+            run_id INTEGER NOT NULL REFERENCES payroll_runs(id) ON DELETE CASCADE,
+            employee_id INTEGER NOT NULL REFERENCES employees(id),
+            basic_salary NUMERIC(18,2) DEFAULT 0,
+            allowances NUMERIC(18,2) DEFAULT 0,
+            overtime_hours NUMERIC(8,2) DEFAULT 0,
+            overtime_amount NUMERIC(18,2) DEFAULT 0,
+            absence_days NUMERIC(8,2) DEFAULT 0,
+            absence_deduction NUMERIC(18,2) DEFAULT 0,
+            other_deductions NUMERIC(18,2) DEFAULT 0,
+            gross_salary NUMERIC(18,2) DEFAULT 0,
+            total_deductions NUMERIC(18,2) DEFAULT 0,
+            net_salary NUMERIC(18,2) DEFAULT 0,
+            cost_center_id INTEGER REFERENCES cost_centers(id),
+            notes TEXT DEFAULT '',
+            UNIQUE(run_id,employee_id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS employee_salary_adjustments(
+            id SERIAL PRIMARY KEY,
+            employee_id INTEGER NOT NULL REFERENCES employees(id),
+            adjustment_date DATE NOT NULL,
+            adjustment_type VARCHAR(30) NOT NULL,
+            amount NUMERIC(18,2) NOT NULL,
+            recurring INTEGER DEFAULT 0,
+            description TEXT DEFAULT '',
+            active INTEGER DEFAULT 1,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
@@ -1485,6 +1653,16 @@ def init_db():
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS warehouse_id INTEGER',
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS department_id INTEGER',
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS hire_date DATE',
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS contract_end_date DATE',
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS iqama_no VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_iban VARCHAR(100) DEFAULT ''",
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS housing_allowance NUMERIC(18,2) DEFAULT 0',
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS transport_allowance NUMERIC(18,2) DEFAULT 0',
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS other_allowance NUMERIC(18,2) DEFAULT 0',
         'ALTER TABLE sales_returns ADD COLUMN IF NOT EXISTS cost_total NUMERIC(18,2) DEFAULT 0',
         'ALTER TABLE sales_returns ADD COLUMN IF NOT EXISTS journal_id INTEGER',
         "ALTER TABLE sales_returns ADD COLUMN IF NOT EXISTS status VARCHAR(40) DEFAULT 'معتمد'",
@@ -4686,6 +4864,216 @@ def system_health():
     ]
     return render_template("system_health.html",checks=checks)
 
+
+
+
+@app.route("/hr-payroll")
+@login_required
+def hr_payroll_center():
+    stats={
+      "employees":row("SELECT COUNT(*) c FROM employees WHERE active=1")["c"],
+      "departments":row("SELECT COUNT(*) c FROM departments WHERE active=1")["c"],
+      "runs":row("SELECT COUNT(*) c FROM payroll_runs")["c"],
+      "net":row("SELECT COALESCE(SUM(total_net),0) v FROM payroll_runs WHERE status='مرحّل'")["v"],
+    }
+    return render_template("hr_payroll_center.html",stats=stats)
+
+@app.route("/departments",methods=["GET","POST"])
+@login_required
+def departments():
+    if request.method=="POST":
+        execute("""INSERT INTO departments(code,name,active)
+                   VALUES(:code,:name,1)
+                   ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name""",
+                {"code":request.form["code"],"name":request.form["name"]})
+        flash("تم حفظ القسم","success")
+        return redirect(url_for("departments"))
+    return render_template("departments.html",
+      rows=rows("SELECT * FROM departments ORDER BY code"))
+
+@app.route("/payroll/settings",methods=["GET","POST"])
+@login_required
+def payroll_settings():
+    cfg=payroll_configuration()
+    if request.method=="POST":
+        execute("""UPDATE payroll_settings SET
+          salary_expense_account_id=:expense,payroll_payable_account_id=:payable,
+          deduction_account_id=:deduction,working_days_per_month=:days,
+          working_hours_per_day=:hours,overtime_multiplier=:multiplier WHERE id=1""",
+          {"expense":request.form.get("salary_expense_account_id") or None,
+           "payable":request.form.get("payroll_payable_account_id") or None,
+           "deduction":request.form.get("deduction_account_id") or None,
+           "days":float(request.form.get("working_days_per_month") or 30),
+           "hours":float(request.form.get("working_hours_per_day") or 8),
+           "multiplier":float(request.form.get("overtime_multiplier") or 1.5)})
+        flash("تم حفظ إعدادات الرواتب","success")
+        return redirect(url_for("payroll_settings"))
+    return render_template("payroll_settings.html",config=cfg,
+      accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+                       WHERE active=1 AND accepts_entries=1 ORDER BY account_code"""))
+
+@app.route("/attendance",methods=["GET","POST"])
+@login_required
+def attendance():
+    if request.method=="POST":
+        execute("""INSERT INTO attendance_records(employee_id,attendance_date,status,
+          check_in,check_out,overtime_hours,absence_hours,notes,created_by,created_at)
+          VALUES(:employee,:dt,:status,:check_in,:check_out,:ot,:absence,:notes,:uid,:created)
+          ON CONFLICT(employee_id,attendance_date) DO UPDATE SET
+          status=EXCLUDED.status,check_in=EXCLUDED.check_in,check_out=EXCLUDED.check_out,
+          overtime_hours=EXCLUDED.overtime_hours,absence_hours=EXCLUDED.absence_hours,
+          notes=EXCLUDED.notes""",
+          {"employee":request.form["employee_id"],"dt":request.form["attendance_date"],
+           "status":request.form.get("status","حاضر"),
+           "check_in":request.form.get("check_in") or None,
+           "check_out":request.form.get("check_out") or None,
+           "ot":float(request.form.get("overtime_hours") or 0),
+           "absence":float(request.form.get("absence_hours") or 0),
+           "notes":request.form.get("notes",""),"uid":session.get("user_id"),
+           "created":datetime.now()})
+        flash("تم حفظ سجل الحضور","success")
+        return redirect(url_for("attendance"))
+    date_from=request.args.get("date_from","")
+    date_to=request.args.get("date_to","")
+    conditions=[];params={}
+    if date_from:
+        conditions.append("a.attendance_date>=:date_from");params["date_from"]=date_from
+    if date_to:
+        conditions.append("a.attendance_date<=:date_to");params["date_to"]=date_to
+    where=" WHERE "+" AND ".join(conditions) if conditions else ""
+    return render_template("attendance.html",date_from=date_from,date_to=date_to,
+      records=rows(f"""SELECT a.*,e.employee_no,e.name FROM attendance_records a
+                       JOIN employees e ON e.id=a.employee_id
+                       {where} ORDER BY a.attendance_date DESC,e.name""",params),
+      employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"))
+
+@app.route("/salary-adjustments",methods=["GET","POST"])
+@login_required
+def salary_adjustments():
+    if request.method=="POST":
+        execute("""INSERT INTO employee_salary_adjustments(employee_id,adjustment_date,
+          adjustment_type,amount,recurring,description,active,created_by,created_at)
+          VALUES(:employee,:dt,:type,:amount,:recurring,:description,1,:uid,:created)""",
+          {"employee":request.form["employee_id"],"dt":request.form["adjustment_date"],
+           "type":request.form["adjustment_type"],
+           "amount":float(request.form["amount"] or 0),
+           "recurring":1 if request.form.get("recurring") else 0,
+           "description":request.form.get("description",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash("تم حفظ الاستحقاق/الاستقطاع","success")
+        return redirect(url_for("salary_adjustments"))
+    return render_template("salary_adjustments.html",
+      rows=rows("""SELECT a.*,e.name employee_name FROM employee_salary_adjustments a
+                   JOIN employees e ON e.id=a.employee_id ORDER BY a.adjustment_date DESC,a.id DESC"""),
+      employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"))
+
+@app.route("/payroll/runs",methods=["GET","POST"])
+@login_required
+def payroll_runs():
+    if request.method=="POST":
+        start=request.form["period_start"];end=request.form["period_end"]
+        no=next_payroll_run_number(end)
+        execute("""INSERT INTO payroll_runs(run_no,period_start,period_end,payment_date,
+          status,notes,created_by,created_at)
+          VALUES(:no,:start,:end,:payment,'مسودة',:notes,:uid,:created)""",
+          {"no":no,"start":start,"end":end,
+           "payment":request.form.get("payment_date") or end,
+           "notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        run_id=row("SELECT id FROM payroll_runs WHERE run_no=:no",{"no":no})["id"]
+        total_gross=total_deductions=total_net=0
+        employees_data=rows("""SELECT e.*,COALESCE(e.cost_center_id,cc.id) resolved_cc
+          FROM employees e LEFT JOIN cost_centers cc ON cc.id=e.cost_center_id
+          WHERE e.active=1 ORDER BY e.id""")
+        for employee in employees_data:
+            calc=calculate_employee_payroll(employee,start,end)
+            execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,
+              overtime_hours,overtime_amount,absence_days,absence_deduction,other_deductions,
+              gross_salary,total_deductions,net_salary,cost_center_id)
+              VALUES(:run,:employee,:basic,:allowances,:ot_hours,:ot_amount,:absence_days,
+              :absence_deduction,:other_deductions,:gross,:deductions,:net,:cc)""",
+              {"run":run_id,"employee":employee["id"],"basic":calc["basic_salary"],
+               "allowances":calc["allowances"],"ot_hours":calc["overtime_hours"],
+               "ot_amount":calc["overtime_amount"],"absence_days":calc["absence_days"],
+               "absence_deduction":calc["absence_deduction"],
+               "other_deductions":calc["other_deductions"],"gross":calc["gross_salary"],
+               "deductions":calc["total_deductions"],"net":calc["net_salary"],
+               "cc":employee.get("cost_center_id")})
+            total_gross+=calc["gross_salary"]
+            total_deductions+=calc["total_deductions"]
+            total_net+=calc["net_salary"]
+        execute("""UPDATE payroll_runs SET total_gross=:gross,total_deductions=:deductions,
+                   total_net=:net WHERE id=:id""",
+                {"gross":round(total_gross,2),"deductions":round(total_deductions,2),
+                 "net":round(total_net,2),"id":run_id})
+        flash(f"تم إنشاء مسير الرواتب {no}","success")
+        return redirect(url_for("payroll_run_view",run_id=run_id))
+    return render_template("payroll_runs.html",
+      runs=rows("""SELECT r.*,j.journal_no FROM payroll_runs r
+                   LEFT JOIN journal_entries j ON j.id=r.journal_id
+                   ORDER BY r.period_end DESC,r.id DESC"""))
+
+@app.route("/payroll/runs/<int:run_id>")
+@login_required
+def payroll_run_view(run_id):
+    run=row("""SELECT r.*,j.journal_no FROM payroll_runs r
+               LEFT JOIN journal_entries j ON j.id=r.journal_id WHERE r.id=:id""",{"id":run_id})
+    if not run:
+        return "مسير الرواتب غير موجود",404
+    lines=rows("""SELECT pl.*,e.employee_no,e.name,e.job_title,b.name branch_name
+      FROM payroll_lines pl JOIN employees e ON e.id=pl.employee_id
+      LEFT JOIN branches b ON b.id=e.branch_id WHERE pl.run_id=:id ORDER BY e.name""",{"id":run_id})
+    return render_template("payroll_run_view.html",run=run,lines=lines)
+
+@app.route("/payroll/runs/<int:run_id>/post",methods=["POST"])
+@login_required
+def payroll_run_post(run_id):
+    try:
+        jid=post_payroll_run(run_id)
+        flash("تم اعتماد وترحيل مسير الرواتب","success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(str(exc),"danger")
+    return redirect(url_for("payroll_run_view",run_id=run_id))
+
+@app.route("/payroll/payslip/<int:line_id>")
+@login_required
+def payroll_payslip(line_id):
+    line=row("""SELECT pl.*,pr.run_no,pr.period_start,pr.period_end,pr.payment_date,
+      e.employee_no,e.name,e.name_en,e.job_title,e.bank_iban,b.name branch_name
+      FROM payroll_lines pl JOIN payroll_runs pr ON pr.id=pl.run_id
+      JOIN employees e ON e.id=pl.employee_id
+      LEFT JOIN branches b ON b.id=e.branch_id WHERE pl.id=:id""",{"id":line_id})
+    if not line:
+        return "كشف الراتب غير موجود",404
+    return render_template("payroll_payslip.html",line=line)
+
+@app.route("/payroll/report")
+@login_required
+def payroll_report():
+    data=rows("""SELECT pr.run_no,pr.period_start,pr.period_end,e.employee_no,e.name,
+      pl.basic_salary,pl.allowances,pl.overtime_amount,pl.gross_salary,
+      pl.total_deductions,pl.net_salary
+      FROM payroll_lines pl JOIN payroll_runs pr ON pr.id=pl.run_id
+      JOIN employees e ON e.id=pl.employee_id
+      ORDER BY pr.period_end DESC,e.name""")
+    return render_template("payroll_report.html",rows=data)
+
+@app.route("/payroll/report.xlsx")
+@login_required
+def payroll_report_export():
+    data=rows("""SELECT pr.run_no,pr.period_start,pr.period_end,e.employee_no,e.name,
+      pl.basic_salary,pl.allowances,pl.overtime_amount,pl.gross_salary,
+      pl.total_deductions,pl.net_salary
+      FROM payroll_lines pl JOIN payroll_runs pr ON pr.id=pl.run_id
+      JOIN employees e ON e.id=pl.employee_id
+      ORDER BY pr.period_end DESC,e.name""")
+    return xlsx_response("payroll_report.xlsx","الرواتب",
+      ["المسير","من","إلى","رقم الموظف","الموظف","الأساسي","البدلات",
+       "الإضافي","الإجمالي","الاستقطاعات","الصافي"],
+      [[r["run_no"],r["period_start"],r["period_end"],r["employee_no"],r["name"],
+        r["basic_salary"],r["allowances"],r["overtime_amount"],r["gross_salary"],
+        r["total_deductions"],r["net_salary"]] for r in data])
 
 
 @app.route("/fixed-assets")

@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>إعدادات الرواتب</h3><small>Payroll Configuration</small></div></div>
+<div class="form-card"><form method="post"><div class="row g-3">
+{% for label,name,value in [('حساب مصروف الرواتب','salary_expense_account_id',config.salary_expense_account_id),('حساب الرواتب المستحقة','payroll_payable_account_id',config.payroll_payable_account_id),('حساب الاستقطاعات','deduction_account_id',config.deduction_account_id)] %}
+<div class="col-md-4"><label>{{label}}</label><select class="form-select" name="{{name}}"><option value="">اختر</option>{% for a in accounts %}<option value="{{a.id}}" {% if value==a.id %}selected{% endif %}>{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>{% endfor %}
+<div class="col-md-4"><label>أيام العمل الشهرية</label><input class="form-control" type="number" step=".01" name="working_days_per_month" value="{{config.working_days_per_month}}"></div>
+<div class="col-md-4"><label>ساعات العمل اليومية</label><input class="form-control" type="number" step=".01" name="working_hours_per_day" value="{{config.working_hours_per_day}}"></div>
+<div class="col-md-4"><label>معامل العمل الإضافي</label><input class="form-control" type="number" step=".01" name="overtime_multiplier" value="{{config.overtime_multiplier}}"></div>
+<div class="col-12 text-end"><button class="btn btn-primary">حفظ الإعدادات</button></div>
+</div></form></div>{% endblock %}

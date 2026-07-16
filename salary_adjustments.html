@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>الاستحقاقات والاستقطاعات</h3><small>Salary Adjustments</small></div></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-3"><label>الموظف</label><select class="form-select" name="employee_id">{% for e in employees %}<option value="{{e.id}}">{{e.employee_no or ''}} - {{e.name}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="adjustment_date" required></div>
+<div class="col-md-2"><label>النوع</label><select class="form-select" name="adjustment_type"><option>استحقاق</option><option>استقطاع</option></select></div>
+<div class="col-md-2"><label>المبلغ</label><input class="form-control" type="number" step=".01" name="amount" required></div>
+<div class="col-md-2"><label>الوصف</label><input class="form-control" name="description"></div>
+<div class="col-md-1 d-flex align-items-end"><label><input type="checkbox" name="recurring"> متكرر</label></div>
+<div class="col-12 text-end"><button class="btn btn-primary">حفظ</button></div></div></form></div>
+<div class="form-card"><table class="table table-striped"><thead><tr><th>الموظف</th><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>متكرر</th><th>الوصف</th></tr></thead><tbody>{% for r in rows %}<tr><td>{{r.employee_name}}</td><td>{{r.adjustment_date}}</td><td>{{r.adjustment_type}}</td><td>{{r.amount}}</td><td>{{'نعم' if r.recurring else 'لا'}}</td><td>{{r.description}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

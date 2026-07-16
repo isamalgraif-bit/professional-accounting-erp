@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>الموارد البشرية والرواتب</h3><small>HR & Payroll Management</small></div></div>
+<div class="row g-3 mb-4">
+<div class="col-md-3"><div class="erp-kpi"><small>الموظفون النشطون</small><h4>{{stats.employees}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>الأقسام</small><h4>{{stats.departments}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>مسيرات الرواتب</small><h4>{{stats.runs}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>صافي الرواتب المرحلة</small><h4>{{stats.net}}</h4></div></div>
+</div>
+<div class="row g-3">{% for t,d,u in [
+('الأقسام','الهيكل التنظيمي',url_for('departments')),
+('الحضور والانصراف','الحضور والغياب والعمل الإضافي',url_for('attendance')),
+('الاستحقاقات والاستقطاعات','إضافات وخصومات الموظفين',url_for('salary_adjustments')),
+('مسيرات الرواتب','الاحتساب والاعتماد والترحيل',url_for('payroll_runs')),
+('إعدادات الرواتب','ربط الحسابات وقواعد الاحتساب',url_for('payroll_settings')),
+('تقرير الرواتب','الطباعة وExcel',url_for('payroll_report'))] %}
+<div class="col-md-4"><a class="form-card d-block text-decoration-none text-dark h-100" href="{{u}}"><h5>{{t}}</h5><p class="text-muted">{{d}}</p></a></div>{% endfor %}</div>{% endblock %}

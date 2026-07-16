@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>الأقسام</h3><small>Departments</small></div></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3"><div class="col-md-3"><label>الكود</label><input class="form-control" name="code" required></div><div class="col-md-7"><label>اسم القسم</label><input class="form-control" name="name" required></div><div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">حفظ</button></div></div></form></div>
+<div class="form-card"><table class="table table-striped"><thead><tr><th>الكود</th><th>القسم</th><th>الحالة</th></tr></thead><tbody>{% for r in rows %}<tr><td>{{r.code}}</td><td>{{r.name}}</td><td>{{'نشط' if r.active else 'موقوف'}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

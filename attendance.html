@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>الحضور والانصراف</h3><small>Attendance</small></div></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-3"><label>الموظف</label><select class="form-select" name="employee_id" required>{% for e in employees %}<option value="{{e.id}}">{{e.employee_no or ''}} - {{e.name}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="attendance_date" required></div>
+<div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>حاضر</option><option>غائب</option><option>إجازة</option><option>مأمورية</option></select></div>
+<div class="col-md-2"><label>دخول</label><input class="form-control" type="time" name="check_in"></div>
+<div class="col-md-2"><label>خروج</label><input class="form-control" type="time" name="check_out"></div>
+<div class="col-md-1"><label>إضافي</label><input class="form-control" type="number" step=".01" name="overtime_hours" value="0"></div>
+<div class="col-md-2"><label>ساعات غياب</label><input class="form-control" type="number" step=".01" name="absence_hours" value="0"></div>
+<div class="col-md-8"><label>ملاحظات</label><input class="form-control" name="notes"></div>
+<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">حفظ</button></div></div></form></div>
+<div class="form-card"><form method="get" class="row g-2 mb-3"><div class="col-md-3"><input class="form-control" type="date" name="date_from" value="{{date_from}}"></div><div class="col-md-3"><input class="form-control" type="date" name="date_to" value="{{date_to}}"></div><div class="col-md-2"><button class="btn btn-outline-primary w-100">تصفية</button></div></form>
+<table class="table table-striped"><thead><tr><th>التاريخ</th><th>الموظف</th><th>الحالة</th><th>دخول</th><th>خروج</th><th>إضافي</th><th>غياب</th></tr></thead><tbody>{% for r in records %}<tr><td>{{r.attendance_date}}</td><td>{{r.name}}</td><td>{{r.status}}</td><td>{{r.check_in or '-'}}</td><td>{{r.check_out or '-'}}</td><td>{{r.overtime_hours}}</td><td>{{r.absence_hours}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}
