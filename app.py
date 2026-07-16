@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "10.0.0"
+APP_VERSION = "11.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1012,6 +1012,24 @@ def project_financial_summary(project_id):
     }
 
 
+
+def next_crm_number(table_name, prefix):
+    allowed={"crm_leads":"lead_no","crm_opportunities":"opportunity_no"}
+    if table_name not in allowed:
+        raise ValueError("Invalid CRM sequence")
+    count=db.session.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar() or 0
+    return f"{prefix}-{count+1:06d}"
+
+def crm_pipeline_summary():
+    return rows("""SELECT stage,COUNT(*) count,
+      COALESCE(SUM(estimated_value),0) value,
+      COALESCE(SUM(weighted_value),0) weighted
+      FROM crm_opportunities WHERE status='مفتوحة'
+      GROUP BY stage ORDER BY
+      CASE stage WHEN 'تأهيل' THEN 1 WHEN 'عرض سعر' THEN 2
+      WHEN 'تفاوض' THEN 3 WHEN 'فوز' THEN 4 WHEN 'خسارة' THEN 5 ELSE 9 END""")
+
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -1711,6 +1729,62 @@ def init_db():
             supplier_id INTEGER REFERENCES suppliers(id),
             employee_id INTEGER REFERENCES employees(id),
             journal_id INTEGER REFERENCES journal_entries(id),
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS crm_leads(
+            id SERIAL PRIMARY KEY,
+            lead_no VARCHAR(100) UNIQUE NOT NULL,
+            company_name VARCHAR(255) NOT NULL,
+            contact_name VARCHAR(255) DEFAULT '',
+            phone VARCHAR(100) DEFAULT '',
+            email VARCHAR(255) DEFAULT '',
+            source VARCHAR(100) DEFAULT '',
+            industry VARCHAR(100) DEFAULT '',
+            city VARCHAR(100) DEFAULT '',
+            assigned_to VARCHAR(255) DEFAULT '',
+            status VARCHAR(50) DEFAULT 'جديد',
+            priority VARCHAR(30) DEFAULT 'متوسطة',
+            estimated_value NUMERIC(18,2) DEFAULT 0,
+            probability NUMERIC(8,2) DEFAULT 0,
+            expected_close_date DATE,
+            notes TEXT DEFAULT '',
+            converted_customer_id INTEGER REFERENCES customers(id),
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS crm_opportunities(
+            id SERIAL PRIMARY KEY,
+            opportunity_no VARCHAR(100) UNIQUE NOT NULL,
+            lead_id INTEGER REFERENCES crm_leads(id),
+            customer_id INTEGER REFERENCES customers(id),
+            title VARCHAR(255) NOT NULL,
+            stage VARCHAR(50) DEFAULT 'تأهيل',
+            estimated_value NUMERIC(18,2) DEFAULT 0,
+            probability NUMERIC(8,2) DEFAULT 0,
+            weighted_value NUMERIC(18,2) DEFAULT 0,
+            expected_close_date DATE,
+            sales_person VARCHAR(255) DEFAULT '',
+            status VARCHAR(40) DEFAULT 'مفتوحة',
+            lost_reason TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            quotation_id INTEGER REFERENCES sales_quotations(id),
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS crm_activities(
+            id SERIAL PRIMARY KEY,
+            lead_id INTEGER REFERENCES crm_leads(id),
+            opportunity_id INTEGER REFERENCES crm_opportunities(id),
+            customer_id INTEGER REFERENCES customers(id),
+            activity_type VARCHAR(50) NOT NULL,
+            subject VARCHAR(255) NOT NULL,
+            activity_date TIMESTAMP NOT NULL,
+            due_date TIMESTAMP,
+            assigned_to VARCHAR(255) DEFAULT '',
+            status VARCHAR(40) DEFAULT 'مفتوحة',
+            outcome TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
@@ -4993,6 +5067,225 @@ def system_health():
 
 
 
+
+
+
+@app.route("/crm")
+@login_required
+def crm_center():
+    stats={
+      "leads":row("SELECT COUNT(*) c FROM crm_leads")["c"],
+      "open_opportunities":row("SELECT COUNT(*) c FROM crm_opportunities WHERE status='مفتوحة'")["c"],
+      "pipeline":row("SELECT COALESCE(SUM(weighted_value),0) v FROM crm_opportunities WHERE status='مفتوحة'")["v"],
+      "due_activities":row("""SELECT COUNT(*) c FROM crm_activities
+                              WHERE status='مفتوحة' AND due_date<=CURRENT_TIMESTAMP""")["c"],
+    }
+    return render_template("crm_center.html",stats=stats,pipeline=crm_pipeline_summary(),
+      recent=rows("""SELECT o.*,c.name customer_name,l.company_name lead_company
+                     FROM crm_opportunities o
+                     LEFT JOIN customers c ON c.id=o.customer_id
+                     LEFT JOIN crm_leads l ON l.id=o.lead_id
+                     ORDER BY o.id DESC LIMIT 10"""))
+
+@app.route("/crm/leads",methods=["GET","POST"])
+@login_required
+def crm_leads():
+    if request.method=="POST":
+        no=next_crm_number("crm_leads","LEAD")
+        value=float(request.form.get("estimated_value") or 0)
+        probability=float(request.form.get("probability") or 0)
+        execute("""INSERT INTO crm_leads(lead_no,company_name,contact_name,phone,email,
+          source,industry,city,assigned_to,status,priority,estimated_value,probability,
+          expected_close_date,notes,created_by,created_at)
+          VALUES(:no,:company,:contact,:phone,:email,:source,:industry,:city,:assigned,
+          :status,:priority,:value,:probability,:close,:notes,:uid,:created)""",
+          {"no":no,"company":request.form["company_name"],
+           "contact":request.form.get("contact_name",""),
+           "phone":request.form.get("phone",""),"email":request.form.get("email",""),
+           "source":request.form.get("source",""),"industry":request.form.get("industry",""),
+           "city":request.form.get("city",""),"assigned":request.form.get("assigned_to",""),
+           "status":request.form.get("status","جديد"),
+           "priority":request.form.get("priority","متوسطة"),
+           "value":value,"probability":probability,
+           "close":request.form.get("expected_close_date") or None,
+           "notes":request.form.get("notes",""),"uid":session.get("user_id"),
+           "created":datetime.now()})
+        flash(f"تم إنشاء العميل المحتمل {no}","success")
+        return redirect(url_for("crm_leads"))
+    q=request.args.get("q","").strip()
+    params={};where=""
+    if q:
+        where="""WHERE company_name ILIKE :q OR contact_name ILIKE :q
+                 OR phone ILIKE :q OR email ILIKE :q OR lead_no ILIKE :q"""
+        params["q"]=f"%{q}%"
+    return render_template("crm_leads.html",q=q,
+      leads=rows(f"""SELECT * FROM crm_leads {where} ORDER BY id DESC""",params))
+
+@app.route("/crm/leads/<int:lead_id>")
+@login_required
+def crm_lead_view(lead_id):
+    lead=row("SELECT * FROM crm_leads WHERE id=:id",{"id":lead_id})
+    if not lead: return "العميل المحتمل غير موجود",404
+    return render_template("crm_lead_view.html",lead=lead,
+      activities=rows("""SELECT * FROM crm_activities WHERE lead_id=:id
+                         ORDER BY activity_date DESC,id DESC""",{"id":lead_id}),
+      opportunities=rows("""SELECT * FROM crm_opportunities WHERE lead_id=:id
+                            ORDER BY id DESC""",{"id":lead_id}))
+
+@app.route("/crm/leads/<int:lead_id>/convert",methods=["POST"])
+@login_required
+def crm_lead_convert(lead_id):
+    lead=row("SELECT * FROM crm_leads WHERE id=:id",{"id":lead_id})
+    if not lead: return "العميل المحتمل غير موجود",404
+    if lead.get("converted_customer_id"):
+        return redirect(url_for("customers"))
+    execute("""INSERT INTO customers(name,name_en,phone,email,city,active,created_at)
+               VALUES(:name,'',:phone,:email,:city,1,:created)""",
+            {"name":lead["company_name"],"phone":lead["phone"],
+             "email":lead["email"],"city":lead["city"],"created":datetime.now()})
+    customer_id=row("SELECT id FROM customers ORDER BY id DESC LIMIT 1")["id"]
+    execute("""UPDATE crm_leads SET converted_customer_id=:customer,status='محوّل'
+               WHERE id=:id""",{"customer":customer_id,"id":lead_id})
+    audit("CONVERT","CRM_LEAD",f"تحويل {lead['lead_no']} إلى عميل")
+    flash("تم تحويل العميل المحتمل إلى عميل فعلي","success")
+    return redirect(url_for("customers"))
+
+@app.route("/crm/opportunities",methods=["GET","POST"])
+@login_required
+def crm_opportunities():
+    if request.method=="POST":
+        no=next_crm_number("crm_opportunities","OPP")
+        value=float(request.form.get("estimated_value") or 0)
+        probability=float(request.form.get("probability") or 0)
+        execute("""INSERT INTO crm_opportunities(opportunity_no,lead_id,customer_id,title,
+          stage,estimated_value,probability,weighted_value,expected_close_date,
+          sales_person,status,notes,created_by,created_at)
+          VALUES(:no,:lead,:customer,:title,:stage,:value,:probability,:weighted,:close,
+          :sales_person,:status,:notes,:uid,:created)""",
+          {"no":no,"lead":request.form.get("lead_id") or None,
+           "customer":request.form.get("customer_id") or None,
+           "title":request.form["title"],"stage":request.form.get("stage","تأهيل"),
+           "value":value,"probability":probability,
+           "weighted":round(value*probability/100,2),
+           "close":request.form.get("expected_close_date") or None,
+           "sales_person":request.form.get("sales_person",""),
+           "status":request.form.get("status","مفتوحة"),
+           "notes":request.form.get("notes",""),"uid":session.get("user_id"),
+           "created":datetime.now()})
+        flash(f"تم إنشاء فرصة البيع {no}","success")
+        return redirect(url_for("crm_opportunities"))
+    return render_template("crm_opportunities.html",
+      opportunities=rows("""SELECT o.*,l.company_name,c.name customer_name
+                             FROM crm_opportunities o
+                             LEFT JOIN crm_leads l ON l.id=o.lead_id
+                             LEFT JOIN customers c ON c.id=o.customer_id
+                             ORDER BY o.id DESC"""),
+      leads=rows("""SELECT id,lead_no,company_name FROM crm_leads
+                    WHERE status<>'محوّل' ORDER BY company_name"""),
+      customers=rows("SELECT id,name FROM customers ORDER BY name"))
+
+@app.route("/crm/opportunities/<int:opportunity_id>",methods=["GET","POST"])
+@login_required
+def crm_opportunity_view(opportunity_id):
+    if request.method=="POST":
+        value=float(request.form.get("estimated_value") or 0)
+        probability=float(request.form.get("probability") or 0)
+        execute("""UPDATE crm_opportunities SET stage=:stage,estimated_value=:value,
+          probability=:probability,weighted_value=:weighted,expected_close_date=:close,
+          sales_person=:sales_person,status=:status,lost_reason=:lost_reason,notes=:notes
+          WHERE id=:id""",
+          {"stage":request.form.get("stage","تأهيل"),"value":value,
+           "probability":probability,"weighted":round(value*probability/100,2),
+           "close":request.form.get("expected_close_date") or None,
+           "sales_person":request.form.get("sales_person",""),
+           "status":request.form.get("status","مفتوحة"),
+           "lost_reason":request.form.get("lost_reason",""),
+           "notes":request.form.get("notes",""),"id":opportunity_id})
+        flash("تم تحديث فرصة البيع","success")
+        return redirect(url_for("crm_opportunity_view",opportunity_id=opportunity_id))
+    opp=row("""SELECT o.*,l.company_name,c.name customer_name
+               FROM crm_opportunities o
+               LEFT JOIN crm_leads l ON l.id=o.lead_id
+               LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=:id""",{"id":opportunity_id})
+    if not opp: return "فرصة البيع غير موجودة",404
+    return render_template("crm_opportunity_view.html",opportunity=opp,
+      activities=rows("""SELECT * FROM crm_activities WHERE opportunity_id=:id
+                         ORDER BY activity_date DESC,id DESC""",{"id":opportunity_id}))
+
+@app.route("/crm/activities",methods=["GET","POST"])
+@login_required
+def crm_activities():
+    if request.method=="POST":
+        execute("""INSERT INTO crm_activities(lead_id,opportunity_id,customer_id,
+          activity_type,subject,activity_date,due_date,assigned_to,status,outcome,
+          notes,created_by,created_at)
+          VALUES(:lead,:opportunity,:customer,:type,:subject,:activity_date,:due,
+          :assigned,:status,:outcome,:notes,:uid,:created)""",
+          {"lead":request.form.get("lead_id") or None,
+           "opportunity":request.form.get("opportunity_id") or None,
+           "customer":request.form.get("customer_id") or None,
+           "type":request.form["activity_type"],"subject":request.form["subject"],
+           "activity_date":request.form["activity_date"],
+           "due":request.form.get("due_date") or None,
+           "assigned":request.form.get("assigned_to",""),
+           "status":request.form.get("status","مفتوحة"),
+           "outcome":request.form.get("outcome",""),
+           "notes":request.form.get("notes",""),"uid":session.get("user_id"),
+           "created":datetime.now()})
+        flash("تم حفظ نشاط المتابعة","success")
+        return redirect(url_for("crm_activities"))
+    return render_template("crm_activities.html",
+      activities=rows("""SELECT a.*,l.company_name,o.title opportunity_title,
+        c.name customer_name
+        FROM crm_activities a
+        LEFT JOIN crm_leads l ON l.id=a.lead_id
+        LEFT JOIN crm_opportunities o ON o.id=a.opportunity_id
+        LEFT JOIN customers c ON c.id=a.customer_id
+        ORDER BY a.activity_date DESC,a.id DESC"""),
+      leads=rows("SELECT id,lead_no,company_name FROM crm_leads ORDER BY company_name"),
+      opportunities=rows("SELECT id,opportunity_no,title FROM crm_opportunities ORDER BY id DESC"),
+      customers=rows("SELECT id,name FROM customers ORDER BY name"))
+
+@app.route("/crm/pipeline")
+@login_required
+def crm_pipeline():
+    stages=["تأهيل","عرض سعر","تفاوض","فوز","خسارة"]
+    data={stage:rows("""SELECT o.*,l.company_name,c.name customer_name
+                       FROM crm_opportunities o
+                       LEFT JOIN crm_leads l ON l.id=o.lead_id
+                       LEFT JOIN customers c ON c.id=o.customer_id
+                       WHERE o.stage=:stage ORDER BY o.expected_close_date,o.id""",
+                       {"stage":stage}) for stage in stages}
+    return render_template("crm_pipeline.html",stages=stages,data=data)
+
+@app.route("/crm/report")
+@login_required
+def crm_report():
+    data=rows("""SELECT o.opportunity_no,o.title,o.stage,o.status,o.estimated_value,
+      o.probability,o.weighted_value,o.expected_close_date,o.sales_person,
+      COALESCE(c.name,l.company_name) party_name
+      FROM crm_opportunities o
+      LEFT JOIN customers c ON c.id=o.customer_id
+      LEFT JOIN crm_leads l ON l.id=o.lead_id
+      ORDER BY o.id DESC""")
+    return render_template("crm_report.html",rows=data)
+
+@app.route("/crm/report.xlsx")
+@login_required
+def crm_report_export():
+    data=rows("""SELECT o.opportunity_no,o.title,o.stage,o.status,o.estimated_value,
+      o.probability,o.weighted_value,o.expected_close_date,o.sales_person,
+      COALESCE(c.name,l.company_name) party_name
+      FROM crm_opportunities o
+      LEFT JOIN customers c ON c.id=o.customer_id
+      LEFT JOIN crm_leads l ON l.id=o.lead_id
+      ORDER BY o.id DESC""")
+    return xlsx_response("crm_pipeline.xlsx","فرص البيع",
+      ["رقم الفرصة","العنوان","العميل","المرحلة","الحالة","القيمة","الاحتمال",
+       "القيمة المرجحة","الإغلاق المتوقع","مندوب المبيعات"],
+      [[r["opportunity_no"],r["title"],r["party_name"],r["stage"],r["status"],
+        r["estimated_value"],r["probability"],r["weighted_value"],
+        r["expected_close_date"],r["sales_person"]] for r in data])
 
 
 @app.route("/projects")

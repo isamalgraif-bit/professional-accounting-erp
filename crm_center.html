@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>إدارة علاقات العملاء</h3><small>CRM & Sales Pipeline</small></div></div>
+<div class="row g-3 mb-4">
+<div class="col-md-3"><div class="erp-kpi"><small>العملاء المحتملون</small><h4>{{stats.leads}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>الفرص المفتوحة</small><h4>{{stats.open_opportunities}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>القيمة المرجحة</small><h4>{{stats.pipeline}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>أنشطة مستحقة</small><h4>{{stats.due_activities}}</h4></div></div>
+</div>
+<div class="row g-3 mb-4">{% for t,d,u in [('العملاء المحتملون','التسجيل والتأهيل والتحويل',url_for('crm_leads')),('فرص البيع','القيمة والاحتمال والمرحلة',url_for('crm_opportunities')),('خط المبيعات','Kanban للمراحل',url_for('crm_pipeline')),('الأنشطة والمتابعة','مكالمات واجتماعات ومهام',url_for('crm_activities')),('تقرير الفرص','الطباعة وExcel',url_for('crm_report'))] %}<div class="col-md"><a class="form-card d-block text-decoration-none text-dark h-100" href="{{u}}"><h5>{{t}}</h5><p>{{d}}</p></a></div>{% endfor %}</div>
+<div class="form-card"><h5>ملخص خط المبيعات</h5><table class="table table-striped"><tr><th>المرحلة</th><th>العدد</th><th>القيمة</th><th>القيمة المرجحة</th></tr>{% for p in pipeline %}<tr><td>{{p.stage}}</td><td>{{p.count}}</td><td>{{p.value}}</td><td>{{p.weighted}}</td></tr>{% endfor %}</table></div>{% endblock %}
