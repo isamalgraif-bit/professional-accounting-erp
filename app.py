@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "17.0.0"
+APP_VERSION = "18.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1055,6 +1055,7 @@ ENDPOINT_MODULE_MAP = {
     "inventory":"inventory","inventory_item_view":"inventory","inventory_movements":"inventory",
     "inventory_transfers":"inventory","inventory_counts":"inventory",
     "treasury":"treasury","treasury_view":"treasury","receivables":"treasury",
+    "bi_dashboard":"reports","bi_finance":"reports","bi_projects":"reports","bi_hr":"reports","bi_export":"reports",
     "reports":"reports","reports_center":"reports","financial_statements_center":"reports",
     "income_statement":"reports","balance_sheet":"reports","cash_flow_statement":"reports",
     "fixed_assets_center":"assets","fixed_assets":"assets","asset_categories":"assets",
@@ -1485,6 +1486,199 @@ def ensure_hr_and_sales_schema():
             db.session.commit()
         except Exception:
             db.session.rollback()
+
+
+
+def bi_safe_row(sql_text, params=None, defaults=None):
+    """Return a row for BI widgets without allowing one widget to stop the dashboard."""
+    try:
+        result = row(sql_text, params or {})
+        return result or (defaults or {})
+    except Exception:
+        db.session.rollback()
+        return defaults or {}
+
+
+def bi_safe_rows(sql_text, params=None):
+    """Return rows for BI widgets and isolate database errors."""
+    try:
+        return rows(sql_text, params or {})
+    except Exception:
+        db.session.rollback()
+        return []
+
+
+def executive_dashboard_data():
+    """Collect executive KPIs from all ERP modules."""
+    warnings = []
+
+    sales = bi_safe_row("""
+        SELECT
+          COALESCE(SUM(total),0) total_sales,
+          COALESCE(SUM(vat),0) sales_vat,
+          COUNT(*) invoice_count
+        FROM invoices
+        WHERE status='معتمدة'
+          AND invoice_date >= DATE_TRUNC('year',CURRENT_DATE)
+    """, defaults={"total_sales":0,"sales_vat":0,"invoice_count":0})
+
+    purchases = bi_safe_row("""
+        SELECT
+          COALESCE(SUM(total),0) total_purchases,
+          COALESCE(SUM(vat),0) purchase_vat,
+          COUNT(*) invoice_count
+        FROM supplier_invoices
+        WHERE status IN ('معتمدة','مرحلة','مفوتر')
+          AND invoice_date >= DATE_TRUNC('year',CURRENT_DATE)
+    """, defaults={"total_purchases":0,"purchase_vat":0,"invoice_count":0})
+
+    receivables = bi_safe_row("""
+        SELECT COALESCE(SUM(
+          i.total-COALESCE((SELECT SUM(a.allocated_amount)
+          FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0)
+        ),0) outstanding
+        FROM invoices i WHERE i.status='معتمدة'
+    """, defaults={"outstanding":0})
+
+    payables = bi_safe_row("""
+        SELECT COALESCE(SUM(
+          si.total-COALESCE((SELECT SUM(a.allocated_amount)
+          FROM supplier_payment_allocations a WHERE a.supplier_invoice_id=si.id),0)
+        ),0) outstanding
+        FROM supplier_invoices si
+        WHERE si.status IN ('معتمدة','مرحلة','مفوتر')
+    """, defaults={"outstanding":0})
+
+    cash = bi_safe_row("""
+        SELECT COALESCE(SUM(
+          CASE WHEN transaction_type IN ('قبض','إيداع') THEN amount ELSE -amount END
+        ),0) cash_balance
+        FROM treasury_transactions
+        WHERE status IN ('معتمد','مرحّل')
+    """, defaults={"cash_balance":0})
+
+    projects = bi_safe_row("""
+        SELECT
+          COUNT(*) FILTER (WHERE status='نشط') active_projects,
+          COALESCE(SUM(contract_value),0) contract_value
+        FROM projects
+    """, defaults={"active_projects":0,"contract_value":0})
+
+    hr = bi_safe_row("""
+        SELECT
+          COUNT(*) FILTER (WHERE active=1) active_employees,
+          COALESCE(SUM(basic_salary),0) monthly_basic_payroll
+        FROM employees
+    """, defaults={"active_employees":0,"monthly_basic_payroll":0})
+
+    inventory = bi_safe_row("""
+        SELECT
+          COUNT(*) item_count,
+          COUNT(*) FILTER (WHERE active=1 AND quantity<=reorder_level) low_stock_count,
+          COALESCE(SUM(quantity*COALESCE(unit_cost,0)),0) inventory_value
+        FROM inventory
+    """, defaults={"item_count":0,"low_stock_count":0,"inventory_value":0})
+
+    gross_profit = round(
+        float(sales.get("total_sales") or 0) - float(purchases.get("total_purchases") or 0), 2
+    )
+
+    monthly_sales = bi_safe_rows("""
+        SELECT TO_CHAR(month_start,'YYYY-MM') month,
+          COALESCE(SUM(i.total),0) sales
+        FROM GENERATE_SERIES(
+          DATE_TRUNC('month',CURRENT_DATE)-INTERVAL '11 months',
+          DATE_TRUNC('month',CURRENT_DATE),
+          INTERVAL '1 month'
+        ) month_start
+        LEFT JOIN invoices i
+          ON DATE_TRUNC('month',i.invoice_date)=month_start
+         AND i.status='معتمدة'
+        GROUP BY month_start ORDER BY month_start
+    """)
+
+    monthly_purchases = bi_safe_rows("""
+        SELECT TO_CHAR(month_start,'YYYY-MM') month,
+          COALESCE(SUM(si.total),0) purchases
+        FROM GENERATE_SERIES(
+          DATE_TRUNC('month',CURRENT_DATE)-INTERVAL '11 months',
+          DATE_TRUNC('month',CURRENT_DATE),
+          INTERVAL '1 month'
+        ) month_start
+        LEFT JOIN supplier_invoices si
+          ON DATE_TRUNC('month',si.invoice_date)=month_start
+         AND si.status IN ('معتمدة','مرحلة','مفوتر')
+        GROUP BY month_start ORDER BY month_start
+    """)
+
+    project_profitability = bi_safe_rows("""
+        SELECT p.id,p.project_no,p.name,
+          COALESCE((SELECT SUM(pc.total) FROM progress_certificates pc
+                    WHERE pc.project_id=p.id AND pc.status IN ('معتمد','مفوتر')),0) revenue,
+          COALESCE((SELECT SUM(pe.amount) FROM project_cost_entries pe
+                    WHERE pe.project_id=p.id),0) cost
+        FROM projects p
+        ORDER BY revenue DESC LIMIT 8
+    """)
+
+    sales_by_customer = bi_safe_rows("""
+        SELECT c.name,COALESCE(SUM(i.total),0) value
+        FROM invoices i JOIN customers c ON c.id=i.customer_id
+        WHERE i.status='معتمدة'
+        GROUP BY c.id,c.name ORDER BY value DESC LIMIT 8
+    """)
+
+    overdue = bi_safe_row("""
+        SELECT COUNT(*) overdue_count,
+          COALESCE(SUM(i.total-COALESCE((SELECT SUM(a.allocated_amount)
+            FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0)),0) overdue_value
+        FROM invoices i
+        WHERE i.status='معتمدة'
+          AND COALESCE(i.due_date,i.invoice_date)<CURRENT_DATE
+          AND i.total-COALESCE((SELECT SUM(a.allocated_amount)
+            FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0)>0.005
+    """, defaults={"overdue_count":0,"overdue_value":0})
+
+    pending_approvals = bi_safe_row("""
+        SELECT COUNT(*) count FROM approval_requests
+        WHERE status IN ('قيد الاعتماد','معاد للتعديل')
+    """, defaults={"count":0})
+
+    expiring_hr = bi_safe_row("""
+        SELECT COUNT(*) count FROM employees
+        WHERE active=1 AND (
+          iqama_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE+INTERVAL '60 days'
+          OR passport_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE+INTERVAL '60 days'
+          OR medical_insurance_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE+INTERVAL '60 days'
+          OR contract_end_date BETWEEN CURRENT_DATE AND CURRENT_DATE+INTERVAL '60 days'
+        )
+    """, defaults={"count":0})
+
+    expiring_documents = bi_safe_row("""
+        SELECT COUNT(*) count FROM documents_archive
+        WHERE expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE+INTERVAL '60 days'
+    """, defaults={"count":0})
+
+    return {
+        "sales": sales,
+        "purchases": purchases,
+        "receivables": receivables,
+        "payables": payables,
+        "cash": cash,
+        "projects": projects,
+        "hr": hr,
+        "inventory": inventory,
+        "gross_profit": gross_profit,
+        "monthly_sales": monthly_sales,
+        "monthly_purchases": monthly_purchases,
+        "project_profitability": project_profitability,
+        "sales_by_customer": sales_by_customer,
+        "overdue": overdue,
+        "pending_approvals": pending_approvals,
+        "expiring_hr": expiring_hr,
+        "expiring_documents": expiring_documents,
+        "warnings": warnings,
+    }
 
 
 def init_db():
@@ -6083,6 +6277,99 @@ def system_health():
 
 
 
+
+
+
+@app.route("/bi")
+@login_required
+def bi_dashboard():
+    return render_template("bi_dashboard.html",data=executive_dashboard_data())
+
+@app.route("/bi/finance")
+@login_required
+def bi_finance():
+    from_date=request.args.get("from_date","")
+    to_date=request.args.get("to_date","")
+    conditions=["j.status='مرحّل'"]
+    params={}
+    if from_date:
+        conditions.append("j.journal_date>=:from_date")
+        params["from_date"]=from_date
+    if to_date:
+        conditions.append("j.journal_date<=:to_date")
+        params["to_date"]=to_date
+    financial=bi_safe_rows(f"""
+      SELECT a.account_type,
+        COALESCE(SUM(l.debit),0) debit,
+        COALESCE(SUM(l.credit),0) credit,
+        COALESCE(SUM(l.debit-l.credit),0) balance
+      FROM journal_entry_lines l
+      JOIN journal_entries j ON j.id=l.journal_id
+      JOIN chart_of_accounts a ON a.id=l.account_id
+      WHERE {' AND '.join(conditions)}
+      GROUP BY a.account_type ORDER BY a.account_type
+    """,params)
+    return render_template("bi_finance.html",rows=financial,
+                           from_date=from_date,to_date=to_date)
+
+@app.route("/bi/projects")
+@login_required
+def bi_projects():
+    data=bi_safe_rows("""
+      SELECT p.id,p.project_no,p.name,p.status,p.contract_value,
+        COALESCE((SELECT SUM(pc.gross_work_value) FROM progress_certificates pc
+          WHERE pc.project_id=p.id AND pc.status IN ('معتمد','مفوتر')),0) certified,
+        COALESCE((SELECT SUM(pc.total) FROM progress_certificates pc
+          WHERE pc.project_id=p.id AND pc.status IN ('معتمد','مفوتر')),0) revenue,
+        COALESCE((SELECT SUM(pe.amount) FROM project_cost_entries pe
+          WHERE pe.project_id=p.id),0) cost
+      FROM projects p ORDER BY p.project_no
+    """)
+    return render_template("bi_projects.html",rows=data)
+
+@app.route("/bi/hr")
+@login_required
+def bi_hr():
+    departments_data=bi_safe_rows("""
+      SELECT COALESCE(d.name,'بدون قسم') department_name,
+        COUNT(e.id) employee_count,
+        COALESCE(SUM(e.basic_salary),0) basic_payroll
+      FROM employees e
+      LEFT JOIN departments d ON d.id=e.department_id
+      WHERE e.active=1
+      GROUP BY d.id,d.name ORDER BY employee_count DESC
+    """)
+    alerts=bi_safe_rows("""
+      SELECT e.id,e.employee_no,e.name,
+        LEAST(
+          COALESCE(e.iqama_expiry,DATE '9999-12-31'),
+          COALESCE(e.passport_expiry,DATE '9999-12-31'),
+          COALESCE(e.medical_insurance_expiry,DATE '9999-12-31'),
+          COALESCE(e.contract_end_date,DATE '9999-12-31')
+        ) nearest_expiry
+      FROM employees e WHERE e.active=1
+      ORDER BY nearest_expiry LIMIT 20
+    """)
+    return render_template("bi_hr.html",departments=departments_data,alerts=alerts)
+
+@app.route("/bi/export.xlsx")
+@login_required
+def bi_export():
+    data=executive_dashboard_data()
+    output=[
+      ["إجمالي المبيعات",data["sales"].get("total_sales",0)],
+      ["إجمالي المشتريات",data["purchases"].get("total_purchases",0)],
+      ["الفرق الإجمالي",data["gross_profit"]],
+      ["الذمم المدينة",data["receivables"].get("outstanding",0)],
+      ["الذمم الدائنة",data["payables"].get("outstanding",0)],
+      ["رصيد الخزينة",data["cash"].get("cash_balance",0)],
+      ["قيمة المخزون",data["inventory"].get("inventory_value",0)],
+      ["المشاريع النشطة",data["projects"].get("active_projects",0)],
+      ["الموظفون النشطون",data["hr"].get("active_employees",0)],
+      ["طلبات الاعتماد المعلقة",data["pending_approvals"].get("count",0)],
+    ]
+    return xlsx_response("executive_dashboard.xlsx","المؤشرات التنفيذية",
+                         ["المؤشر","القيمة"],output)
 
 
 @app.route("/documents")

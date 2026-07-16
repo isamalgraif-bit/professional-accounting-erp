@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>تحليل الموارد البشرية</h3><small>HR Analytics</small></div><button class="btn btn-dark" onclick="window.print()">طباعة/PDF</button></div>
+<div class="row g-3"><div class="col-md-6"><div class="form-card h-100"><h5>التوزيع حسب القسم</h5><table class="table table-striped"><tr><th>القسم</th><th>الموظفون</th><th>الرواتب الأساسية</th></tr>{% for d in departments %}<tr><td>{{d.department_name}}</td><td>{{d.employee_count}}</td><td>{{d.basic_payroll}}</td></tr>{% endfor %}</table></div></div>
+<div class="col-md-6"><div class="form-card h-100"><h5>أقرب تواريخ انتهاء</h5><table class="table table-striped"><tr><th>الموظف</th><th>أقرب انتهاء</th></tr>{% for a in alerts %}<tr><td><a href="{{url_for('hr_employee_profile',employee_id=a.id)}}">{{a.employee_no or ''}} - {{a.name}}</a></td><td>{{a.nearest_expiry}}</td></tr>{% endfor %}</table></div></div></div>{% endblock %}

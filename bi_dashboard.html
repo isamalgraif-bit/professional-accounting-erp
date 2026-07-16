@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>لوحة ذكاء الأعمال</h3><small>Executive Business Intelligence</small></div><div><a class="btn btn-outline-primary" href="{{url_for('bi_finance')}}">التحليل المالي</a><a class="btn btn-outline-primary" href="{{url_for('bi_projects')}}">المشاريع</a><a class="btn btn-outline-primary" href="{{url_for('bi_hr')}}">الموارد البشرية</a><a class="btn btn-success" href="{{url_for('bi_export')}}">Excel</a></div></div>
+<div class="row g-3 mb-4">
+{% for title,value in [
+('مبيعات السنة',data.sales.total_sales or 0),
+('مشتريات السنة',data.purchases.total_purchases or 0),
+('الفرق الإجمالي',data.gross_profit),
+('الذمم المدينة',data.receivables.outstanding or 0),
+('الذمم الدائنة',data.payables.outstanding or 0),
+('رصيد الخزينة',data.cash.cash_balance or 0),
+('قيمة المخزون',data.inventory.inventory_value or 0),
+('قيمة عقود المشاريع',data.projects.contract_value or 0)] %}
+<div class="col-md-3"><div class="erp-kpi h-100"><small>{{title}}</small><h4>{{value}}</h4></div></div>{% endfor %}
+</div>
+<div class="row g-3 mb-4">
+<div class="col-md-6"><div class="form-card h-100"><h5>المبيعات والمشتريات الشهرية</h5><canvas id="monthlyChart" height="120"></canvas></div></div>
+<div class="col-md-6"><div class="form-card h-100"><h5>أفضل العملاء</h5><canvas id="customerChart" height="120"></canvas></div></div>
+</div>
+<div class="row g-3 mb-4">
+<div class="col-md-8"><div class="form-card"><h5>ربحية المشاريع</h5><table class="table table-striped"><thead><tr><th>المشروع</th><th>الإيراد</th><th>التكلفة</th><th>الربح</th></tr></thead><tbody>{% for p in data.project_profitability %}<tr><td><a href="{{url_for('project_view',project_id=p.id)}}">{{p.project_no}} - {{p.name}}</a></td><td>{{p.revenue}}</td><td>{{p.cost}}</td><th>{{p.revenue-p.cost}}</th></tr>{% endfor %}</tbody></table></div></div>
+<div class="col-md-4"><div class="form-card h-100"><h5>مؤشرات المتابعة</h5><table class="table"><tr><th>فواتير متأخرة</th><td>{{data.overdue.overdue_count or 0}}</td></tr><tr><th>قيمة المتأخرات</th><td>{{data.overdue.overdue_value or 0}}</td></tr><tr><th>مخزون منخفض</th><td>{{data.inventory.low_stock_count or 0}}</td></tr><tr><th>اعتمادات معلقة</th><td>{{data.pending_approvals.count or 0}}</td></tr><tr><th>تنبيهات الموظفين</th><td>{{data.expiring_hr.count or 0}}</td></tr><tr><th>مستندات تنتهي قريبًا</th><td>{{data.expiring_documents.count or 0}}</td></tr><tr><th>الموظفون النشطون</th><td>{{data.hr.active_employees or 0}}</td></tr><tr><th>المشاريع النشطة</th><td>{{data.projects.active_projects or 0}}</td></tr></table></div></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const sales={{ data.monthly_sales|map(attribute='sales')|list|tojson }};
+const purchases={{ data.monthly_purchases|map(attribute='purchases')|list|tojson }};
+const labels={{ data.monthly_sales|map(attribute='month')|list|tojson }};
+new Chart(document.getElementById('monthlyChart'),{type:'line',data:{labels:labels,datasets:[{label:'المبيعات',data:sales},{label:'المشتريات',data:purchases}]},options:{responsive:true}});
+new Chart(document.getElementById('customerChart'),{type:'bar',data:{labels:{{ data.sales_by_customer|map(attribute='name')|list|tojson }},datasets:[{label:'المبيعات',data:{{ data.sales_by_customer|map(attribute='value')|list|tojson }}}]},options:{responsive:true,indexAxis:'y'}});
+</script>{% endblock %}
