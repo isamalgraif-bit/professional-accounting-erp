@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "9.0.0"
+APP_VERSION = "10.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -980,6 +980,38 @@ def post_payroll_run(run_id):
     return jid
 
 
+
+def next_project_number():
+    count=db.session.execute(text("SELECT COUNT(*) FROM projects")).scalar() or 0
+    return f"PRJ-{count+1:05d}"
+
+def next_certificate_number(cert_date):
+    year=cert_date.year if hasattr(cert_date,"year") else datetime.strptime(cert_date,"%Y-%m-%d").year
+    count=db.session.execute(text("""SELECT COUNT(*) FROM progress_certificates
+        WHERE EXTRACT(YEAR FROM certificate_date)=:y"""),{"y":year}).scalar() or 0
+    return f"IPC-{year}-{count+1:05d}"
+
+def project_financial_summary(project_id):
+    project=row("SELECT * FROM projects WHERE id=:id",{"id":project_id})
+    revenue=row("""SELECT COALESCE(SUM(total),0) value
+                   FROM progress_certificates
+                   WHERE project_id=:id AND status IN ('معتمد','مفوتر')""",{"id":project_id})["value"]
+    cost=row("""SELECT COALESCE(SUM(amount),0) value
+                FROM project_cost_entries WHERE project_id=:id""",{"id":project_id})["value"]
+    certified=row("""SELECT COALESCE(SUM(gross_work_value),0) value
+                     FROM progress_certificates
+                     WHERE project_id=:id AND status IN ('معتمد','مفوتر')""",{"id":project_id})["value"]
+    contract=float(project["contract_value"] or 0) if project else 0
+    completion=round(float(certified or 0)/contract*100,2) if contract else 0
+    return {
+        "revenue":round(float(revenue or 0),2),
+        "cost":round(float(cost or 0),2),
+        "profit":round(float(revenue or 0)-float(cost or 0),2),
+        "certified":round(float(certified or 0),2),
+        "completion":min(completion,100)
+    }
+
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -1584,6 +1616,101 @@ def init_db():
             recurring INTEGER DEFAULT 0,
             description TEXT DEFAULT '',
             active INTEGER DEFAULT 1,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS projects(
+            id SERIAL PRIMARY KEY,
+            project_no VARCHAR(100) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            name_en VARCHAR(255) DEFAULT '',
+            customer_id INTEGER REFERENCES customers(id),
+            branch_id INTEGER REFERENCES branches(id),
+            cost_center_id INTEGER REFERENCES cost_centers(id),
+            project_manager VARCHAR(255) DEFAULT '',
+            start_date DATE,
+            end_date DATE,
+            contract_value NUMERIC(18,2) DEFAULT 0,
+            retention_rate NUMERIC(8,2) DEFAULT 0,
+            advance_rate NUMERIC(8,2) DEFAULT 0,
+            status VARCHAR(50) DEFAULT 'نشط',
+            location VARCHAR(255) DEFAULT '',
+            description TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS project_contracts(
+            id SERIAL PRIMARY KEY,
+            contract_no VARCHAR(100) UNIQUE NOT NULL,
+            project_id INTEGER NOT NULL REFERENCES projects(id),
+            contract_date DATE NOT NULL,
+            contract_type VARCHAR(50) DEFAULT 'مقطوعية',
+            contract_value NUMERIC(18,2) DEFAULT 0,
+            retention_rate NUMERIC(8,2) DEFAULT 0,
+            advance_amount NUMERIC(18,2) DEFAULT 0,
+            tax_rate NUMERIC(8,2) DEFAULT 15,
+            status VARCHAR(50) DEFAULT 'ساري',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS project_boq_items(
+            id SERIAL PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            item_code VARCHAR(100) NOT NULL,
+            description VARCHAR(500) NOT NULL,
+            unit VARCHAR(50) DEFAULT 'وحدة',
+            quantity NUMERIC(18,3) DEFAULT 0,
+            unit_rate NUMERIC(18,2) DEFAULT 0,
+            total_value NUMERIC(18,2) DEFAULT 0,
+            previous_qty NUMERIC(18,3) DEFAULT 0,
+            current_qty NUMERIC(18,3) DEFAULT 0,
+            cumulative_qty NUMERIC(18,3) DEFAULT 0,
+            completion_percent NUMERIC(8,2) DEFAULT 0
+        )""",
+        """CREATE TABLE IF NOT EXISTS progress_certificates(
+            id SERIAL PRIMARY KEY,
+            certificate_no VARCHAR(100) UNIQUE NOT NULL,
+            project_id INTEGER NOT NULL REFERENCES projects(id),
+            contract_id INTEGER REFERENCES project_contracts(id),
+            certificate_date DATE NOT NULL,
+            period_from DATE,
+            period_to DATE,
+            gross_work_value NUMERIC(18,2) DEFAULT 0,
+            retention_amount NUMERIC(18,2) DEFAULT 0,
+            advance_recovery NUMERIC(18,2) DEFAULT 0,
+            other_deductions NUMERIC(18,2) DEFAULT 0,
+            subtotal NUMERIC(18,2) DEFAULT 0,
+            vat NUMERIC(18,2) DEFAULT 0,
+            total NUMERIC(18,2) DEFAULT 0,
+            status VARCHAR(50) DEFAULT 'مسودة',
+            invoice_id INTEGER,
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS progress_certificate_items(
+            id SERIAL PRIMARY KEY,
+            certificate_id INTEGER NOT NULL REFERENCES progress_certificates(id) ON DELETE CASCADE,
+            boq_item_id INTEGER NOT NULL REFERENCES project_boq_items(id),
+            previous_qty NUMERIC(18,3) DEFAULT 0,
+            current_qty NUMERIC(18,3) DEFAULT 0,
+            cumulative_qty NUMERIC(18,3) DEFAULT 0,
+            unit_rate NUMERIC(18,2) DEFAULT 0,
+            current_value NUMERIC(18,2) DEFAULT 0,
+            cumulative_value NUMERIC(18,2) DEFAULT 0
+        )""",
+        """CREATE TABLE IF NOT EXISTS project_cost_entries(
+            id SERIAL PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES projects(id),
+            cost_date DATE NOT NULL,
+            cost_type VARCHAR(50) NOT NULL,
+            reference VARCHAR(100) DEFAULT '',
+            description TEXT NOT NULL,
+            amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+            supplier_id INTEGER REFERENCES suppliers(id),
+            employee_id INTEGER REFERENCES employees(id),
+            journal_id INTEGER REFERENCES journal_entries(id),
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
@@ -4865,6 +4992,236 @@ def system_health():
     return render_template("system_health.html",checks=checks)
 
 
+
+
+
+@app.route("/projects")
+@login_required
+def projects_center():
+    data=rows("""SELECT p.*,c.name customer_name,cc.name cost_center_name,
+      COALESCE((SELECT SUM(pc.total) FROM progress_certificates pc
+                WHERE pc.project_id=p.id AND pc.status IN ('معتمد','مفوتر')),0) revenue,
+      COALESCE((SELECT SUM(pe.amount) FROM project_cost_entries pe
+                WHERE pe.project_id=p.id),0) cost
+      FROM projects p LEFT JOIN customers c ON c.id=p.customer_id
+      LEFT JOIN cost_centers cc ON cc.id=p.cost_center_id
+      ORDER BY p.id DESC""")
+    return render_template("projects_center.html",projects=data)
+
+@app.route("/projects/new",methods=["GET","POST"])
+@login_required
+def project_new():
+    if request.method=="POST":
+        no=next_project_number()
+        execute("""INSERT INTO projects(project_no,name,name_en,customer_id,branch_id,cost_center_id,
+          project_manager,start_date,end_date,contract_value,retention_rate,advance_rate,
+          status,location,description,created_by,created_at)
+          VALUES(:no,:name,:name_en,:customer,:branch,:cc,:manager,:start,:end,:value,
+          :retention,:advance,:status,:location,:description,:uid,:created)""",
+          {"no":no,"name":request.form["name"],"name_en":request.form.get("name_en",""),
+           "customer":request.form.get("customer_id") or None,
+           "branch":request.form.get("branch_id") or None,
+           "cc":request.form.get("cost_center_id") or None,
+           "manager":request.form.get("project_manager",""),
+           "start":request.form.get("start_date") or None,
+           "end":request.form.get("end_date") or None,
+           "value":float(request.form.get("contract_value") or 0),
+           "retention":float(request.form.get("retention_rate") or 0),
+           "advance":float(request.form.get("advance_rate") or 0),
+           "status":request.form.get("status","نشط"),
+           "location":request.form.get("location",""),
+           "description":request.form.get("description",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash(f"تم إنشاء المشروع {no}","success")
+        return redirect(url_for("projects_center"))
+    return render_template("project_form.html",
+      customers=rows("SELECT id,name FROM customers ORDER BY name"),
+      branches=rows("SELECT id,name FROM branches WHERE active=1 ORDER BY name"),
+      centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"))
+
+@app.route("/projects/<int:project_id>")
+@login_required
+def project_view(project_id):
+    project=row("""SELECT p.*,c.name customer_name,b.name branch_name,cc.name cost_center_name
+                   FROM projects p LEFT JOIN customers c ON c.id=p.customer_id
+                   LEFT JOIN branches b ON b.id=p.branch_id
+                   LEFT JOIN cost_centers cc ON cc.id=p.cost_center_id
+                   WHERE p.id=:id""",{"id":project_id})
+    if not project:
+        return "المشروع غير موجود",404
+    return render_template("project_view.html",project=project,
+      summary=project_financial_summary(project_id),
+      contracts=rows("SELECT * FROM project_contracts WHERE project_id=:id ORDER BY id DESC",{"id":project_id}),
+      boq=rows("SELECT * FROM project_boq_items WHERE project_id=:id ORDER BY id",{"id":project_id}),
+      certificates=rows("""SELECT pc.*,i.invoice_no FROM progress_certificates pc
+                           LEFT JOIN invoices i ON i.id=pc.invoice_id
+                           WHERE pc.project_id=:id ORDER BY pc.id DESC""",{"id":project_id}),
+      costs=rows("""SELECT pe.*,s.name supplier_name,e.name employee_name
+                    FROM project_cost_entries pe
+                    LEFT JOIN suppliers s ON s.id=pe.supplier_id
+                    LEFT JOIN employees e ON e.id=pe.employee_id
+                    WHERE pe.project_id=:id ORDER BY pe.cost_date DESC,pe.id DESC""",{"id":project_id}))
+
+@app.route("/projects/<int:project_id>/contract",methods=["POST"])
+@login_required
+def project_contract_add(project_id):
+    execute("""INSERT INTO project_contracts(contract_no,project_id,contract_date,contract_type,
+      contract_value,retention_rate,advance_amount,tax_rate,status,notes,created_by,created_at)
+      VALUES(:no,:project,:dt,:type,:value,:retention,:advance,:tax,:status,:notes,:uid,:created)""",
+      {"no":request.form["contract_no"],"project":project_id,
+       "dt":request.form["contract_date"],"type":request.form.get("contract_type","مقطوعية"),
+       "value":float(request.form.get("contract_value") or 0),
+       "retention":float(request.form.get("retention_rate") or 0),
+       "advance":float(request.form.get("advance_amount") or 0),
+       "tax":float(request.form.get("tax_rate") or 15),
+       "status":request.form.get("status","ساري"),
+       "notes":request.form.get("notes",""),"uid":session.get("user_id"),
+       "created":datetime.now()})
+    flash("تم حفظ العقد","success")
+    return redirect(url_for("project_view",project_id=project_id))
+
+@app.route("/projects/<int:project_id>/boq",methods=["POST"])
+@login_required
+def project_boq_add(project_id):
+    qty=float(request.form.get("quantity") or 0)
+    rate=float(request.form.get("unit_rate") or 0)
+    execute("""INSERT INTO project_boq_items(project_id,item_code,description,unit,
+      quantity,unit_rate,total_value)
+      VALUES(:project,:code,:description,:unit,:qty,:rate,:total)""",
+      {"project":project_id,"code":request.form["item_code"],
+       "description":request.form["description"],
+       "unit":request.form.get("unit","وحدة"),"qty":qty,"rate":rate,
+       "total":round(qty*rate,2)})
+    flash("تمت إضافة بند الكميات","success")
+    return redirect(url_for("project_view",project_id=project_id))
+
+@app.route("/projects/<int:project_id>/cost",methods=["POST"])
+@login_required
+def project_cost_add(project_id):
+    execute("""INSERT INTO project_cost_entries(project_id,cost_date,cost_type,reference,
+      description,amount,supplier_id,employee_id,journal_id,created_by,created_at)
+      VALUES(:project,:dt,:type,:reference,:description,:amount,:supplier,:employee,
+      :journal,:uid,:created)""",
+      {"project":project_id,"dt":request.form["cost_date"],
+       "type":request.form["cost_type"],"reference":request.form.get("reference",""),
+       "description":request.form["description"],
+       "amount":float(request.form.get("amount") or 0),
+       "supplier":request.form.get("supplier_id") or None,
+       "employee":request.form.get("employee_id") or None,
+       "journal":request.form.get("journal_id") or None,
+       "uid":session.get("user_id"),"created":datetime.now()})
+    flash("تم تسجيل تكلفة المشروع","success")
+    return redirect(url_for("project_view",project_id=project_id))
+
+@app.route("/projects/<int:project_id>/certificate",methods=["GET","POST"])
+@login_required
+def project_certificate_new(project_id):
+    project=row("SELECT * FROM projects WHERE id=:id",{"id":project_id})
+    if request.method=="POST":
+        no=next_certificate_number(request.form["certificate_date"])
+        item_ids=request.form.getlist("boq_item_id[]")
+        current_qtys=request.form.getlist("current_qty[]")
+        prepared=[];gross=0
+        for idx,item_id in enumerate(item_ids):
+            boq=row("SELECT * FROM project_boq_items WHERE id=:id AND project_id=:p",
+                    {"id":item_id,"p":project_id})
+            if not boq: continue
+            current=float(current_qtys[idx] or 0)
+            previous=float(boq["cumulative_qty"] or 0)
+            cumulative=previous+current
+            if cumulative>float(boq["quantity"] or 0)+0.0001:
+                flash(f"الكمية التراكمية لبند {boq['item_code']} تجاوزت كمية العقد","danger")
+                return redirect(url_for("project_certificate_new",project_id=project_id))
+            current_value=round(current*float(boq["unit_rate"] or 0),2)
+            cumulative_value=round(cumulative*float(boq["unit_rate"] or 0),2)
+            prepared.append((boq,current,previous,cumulative,current_value,cumulative_value))
+            gross+=current_value
+        retention_rate=float(request.form.get("retention_rate") or project["retention_rate"] or 0)
+        retention=round(gross*retention_rate/100,2)
+        advance_recovery=float(request.form.get("advance_recovery") or 0)
+        other_deductions=float(request.form.get("other_deductions") or 0)
+        subtotal=round(gross-retention-advance_recovery-other_deductions,2)
+        tax_rate=float(request.form.get("tax_rate") or 15)
+        vat=round(subtotal*tax_rate/100,2)
+        total=round(subtotal+vat,2)
+        execute("""INSERT INTO progress_certificates(certificate_no,project_id,contract_id,
+          certificate_date,period_from,period_to,gross_work_value,retention_amount,
+          advance_recovery,other_deductions,subtotal,vat,total,status,notes,created_by,created_at)
+          VALUES(:no,:project,:contract,:dt,:from,:to,:gross,:retention,:advance,:other,
+          :subtotal,:vat,:total,'مسودة',:notes,:uid,:created)""",
+          {"no":no,"project":project_id,"contract":request.form.get("contract_id") or None,
+           "dt":request.form["certificate_date"],"from":request.form.get("period_from") or None,
+           "to":request.form.get("period_to") or None,"gross":round(gross,2),
+           "retention":retention,"advance":advance_recovery,"other":other_deductions,
+           "subtotal":subtotal,"vat":vat,"total":total,
+           "notes":request.form.get("notes",""),"uid":session.get("user_id"),
+           "created":datetime.now()})
+        cert_id=row("SELECT id FROM progress_certificates WHERE certificate_no=:no",{"no":no})["id"]
+        for boq,current,previous,cumulative,current_value,cumulative_value in prepared:
+            execute("""INSERT INTO progress_certificate_items(certificate_id,boq_item_id,
+              previous_qty,current_qty,cumulative_qty,unit_rate,current_value,cumulative_value)
+              VALUES(:cert,:boq,:previous,:current,:cumulative,:rate,:current_value,:cumulative_value)""",
+              {"cert":cert_id,"boq":boq["id"],"previous":previous,"current":current,
+               "cumulative":cumulative,"rate":boq["unit_rate"],
+               "current_value":current_value,"cumulative_value":cumulative_value})
+            execute("""UPDATE project_boq_items SET previous_qty=:previous,current_qty=:current,
+              cumulative_qty=:cumulative,completion_percent=:pct WHERE id=:id""",
+              {"previous":previous,"current":current,"cumulative":cumulative,
+               "pct":round(cumulative/float(boq["quantity"] or 1)*100,2),"id":boq["id"]})
+        flash(f"تم إنشاء المستخلص {no}","success")
+        return redirect(url_for("project_certificate_view",certificate_id=cert_id))
+    return render_template("project_certificate_form.html",project=project,
+      contracts=rows("SELECT id,contract_no FROM project_contracts WHERE project_id=:id ORDER BY id DESC",{"id":project_id}),
+      boq=rows("SELECT * FROM project_boq_items WHERE project_id=:id ORDER BY id",{"id":project_id}))
+
+@app.route("/projects/certificates/<int:certificate_id>")
+@login_required
+def project_certificate_view(certificate_id):
+    cert=row("""SELECT pc.*,p.project_no,p.name project_name,c.name customer_name,
+      ct.contract_no,i.invoice_no
+      FROM progress_certificates pc JOIN projects p ON p.id=pc.project_id
+      LEFT JOIN customers c ON c.id=p.customer_id
+      LEFT JOIN project_contracts ct ON ct.id=pc.contract_id
+      LEFT JOIN invoices i ON i.id=pc.invoice_id
+      WHERE pc.id=:id""",{"id":certificate_id})
+    if not cert: return "المستخلص غير موجود",404
+    items=rows("""SELECT pci.*,b.item_code,b.description,b.unit,b.quantity contract_qty
+                  FROM progress_certificate_items pci
+                  JOIN project_boq_items b ON b.id=pci.boq_item_id
+                  WHERE pci.certificate_id=:id ORDER BY pci.id""",{"id":certificate_id})
+    return render_template("project_certificate_view.html",cert=cert,items=items)
+
+@app.route("/projects/certificates/<int:certificate_id>/approve",methods=["POST"])
+@login_required
+def project_certificate_approve(certificate_id):
+    execute("UPDATE progress_certificates SET status='معتمد' WHERE id=:id",{"id":certificate_id})
+    flash("تم اعتماد المستخلص","success")
+    return redirect(url_for("project_certificate_view",certificate_id=certificate_id))
+
+@app.route("/projects/report")
+@login_required
+def projects_report():
+    data=rows("""SELECT p.id,p.project_no,p.name,c.name customer_name,p.contract_value,p.status,
+      COALESCE((SELECT SUM(pc.total) FROM progress_certificates pc
+                WHERE pc.project_id=p.id AND pc.status IN ('معتمد','مفوتر')),0) revenue,
+      COALESCE((SELECT SUM(pe.amount) FROM project_cost_entries pe
+                WHERE pe.project_id=p.id),0) cost
+      FROM projects p LEFT JOIN customers c ON c.id=p.customer_id ORDER BY p.project_no""")
+    return render_template("projects_report.html",rows=data)
+
+@app.route("/projects/report.xlsx")
+@login_required
+def projects_report_export():
+    data=rows("""SELECT p.project_no,p.name,c.name customer_name,p.contract_value,p.status,
+      COALESCE((SELECT SUM(pc.total) FROM progress_certificates pc
+                WHERE pc.project_id=p.id AND pc.status IN ('معتمد','مفوتر')),0) revenue,
+      COALESCE((SELECT SUM(pe.amount) FROM project_cost_entries pe
+                WHERE pe.project_id=p.id),0) cost
+      FROM projects p LEFT JOIN customers c ON c.id=p.customer_id ORDER BY p.project_no""")
+    return xlsx_response("projects_report.xlsx","المشاريع",
+      ["رقم المشروع","المشروع","العميل","قيمة العقد","الحالة","الإيراد","التكلفة","الربح"],
+      [[r["project_no"],r["name"],r["customer_name"],r["contract_value"],r["status"],
+        r["revenue"],r["cost"],float(r["revenue"])-float(r["cost"])] for r in data])
 
 
 @app.route("/hr-payroll")
