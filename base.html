@@ -180,6 +180,11 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 <div class="text-center mt-4" style="font-size:11px;opacity:.65">الإصدار {{ app_version }}</div>
 </aside>
 <main class="content">
+<form id="global-search-form" method="get" action="{{url_for('global_search')}}" class="d-flex gap-2 align-items-center my-2">
+  <input class="form-control" name="q" placeholder="بحث شامل: عميل، مورد، فاتورة، مشروع، موظف..." value="{{request.args.get('q','') if request.endpoint=='global_search' else ''}}">
+  <button class="btn btn-outline-primary">بحث</button>
+</form>
+
 {% else %}
 <main class="content full-width">
 {% endif %}
@@ -218,6 +223,65 @@ document.addEventListener('DOMContentLoaded', () => {
       window.location.href = target;
     });
   });
+});
+</script>
+
+
+<div class="modal fade" id="quickCreateModal" tabindex="-1">
+ <div class="modal-dialog modal-lg"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title" id="quickCreateTitle">إضافة سريعة</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+  <div class="modal-body">
+   <form id="quickCreateForm"><input type="hidden" id="quickEntity">
+    <div class="row g-3">
+     <div class="col-md-3"><label>الكود</label><input class="form-control" name="code"></div>
+     <div class="col-md-5"><label>الاسم</label><input class="form-control" name="name" required></div>
+     <div class="col-md-4 quick-party"><label>الاسم الإنجليزي</label><input class="form-control" name="name_en"></div>
+     <div class="col-md-3 quick-party"><label>الرقم الضريبي</label><input class="form-control" name="vat_number" maxlength="15"></div>
+     <div class="col-md-3 quick-party"><label>الهاتف</label><input class="form-control" name="phone"></div>
+     <div class="col-md-3 quick-party"><label>البريد</label><input class="form-control" name="email"></div>
+     <div class="col-md-3 quick-item"><label>الوحدة</label><input class="form-control" name="unit" value="وحدة"></div>
+     <div class="col-md-3 quick-item"><label>التكلفة</label><input class="form-control" type="number" step=".01" name="unit_cost"></div>
+     <div class="col-md-3 quick-item"><label>الرصيد الافتتاحي</label><input class="form-control" type="number" step=".001" name="quantity"></div>
+     <div class="col-md-6"><label>الوصف/العنوان</label><input class="form-control" name="description"></div>
+    </div>
+   </form>
+   <div class="alert alert-danger mt-3 d-none" id="quickCreateError"></div>
+  </div>
+  <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button><button class="btn btn-primary" id="quickCreateSave">حفظ واختيار</button></div>
+ </div></div>
+</div>
+<script>
+let quickTarget=null;
+function openQuickCreate(entity,target){
+ quickTarget=target||null;
+ document.getElementById('quickEntity').value=entity;
+ document.getElementById('quickCreateTitle').textContent=entity==='customer'?'إضافة عميل جديد':entity==='supplier'?'إضافة مورد جديد':'إضافة مادة جديدة';
+ document.getElementById('quickCreateForm').reset();
+ document.querySelectorAll('.quick-party').forEach(x=>x.style.display=entity==='item'?'none':'');
+ document.querySelectorAll('.quick-item').forEach(x=>x.style.display=entity==='item'?'':'none');
+ document.getElementById('quickCreateError').classList.add('d-none');
+ bootstrap.Modal.getOrCreateInstance(document.getElementById('quickCreateModal')).show();
+}
+document.addEventListener('click',e=>{
+ const b=e.target.closest('[data-quick-create]');
+ if(b){e.preventDefault();openQuickCreate(b.dataset.quickCreate,b.dataset.target?document.querySelector(b.dataset.target):null)}
+});
+document.getElementById('quickCreateSave')?.addEventListener('click',async()=>{
+ const entity=document.getElementById('quickEntity').value;
+ const form=document.getElementById('quickCreateForm');
+ const payload=Object.fromEntries(new FormData(form).entries());
+ const response=await fetch('/api/quick-create/'+entity,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+ const data=await response.json();
+ if(!data.ok){const el=document.getElementById('quickCreateError');el.textContent=data.error;el.classList.remove('d-none');return}
+ document.dispatchEvent(new CustomEvent('quick-entity-created',{detail:data}));
+ if(quickTarget){
+   if(quickTarget.tagName==='SELECT'){
+     const o=new Option((data.result.code?data.result.code+' - ':'')+data.result.name,data.result.id,true,true);
+     o.dataset.vat=data.result.tax_number||'';o.dataset.account=data.result.account_id||'';
+     quickTarget.add(o);quickTarget.dispatchEvent(new Event('change',{bubbles:true}));
+   }else{quickTarget.value=data.result.name;quickTarget.dispatchEvent(new Event('input',{bubbles:true}))}
+ }
+ bootstrap.Modal.getInstance(document.getElementById('quickCreateModal')).hide();
 });
 </script>
 
