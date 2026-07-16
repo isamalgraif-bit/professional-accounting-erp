@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "18.0.0"
+APP_VERSION = "18.1.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1047,6 +1047,7 @@ ENDPOINT_MODULE_MAP = {
     "dashboard":"dashboard",
     "journal_entries":"accounting","journal_view":"accounting","multi_journal":"accounting",
     "chart_of_accounts":"accounting","accounting_report":"accounting",
+    "invoice_edit":"sales","invoice_submit_approval":"sales","invoice_return_to_draft":"sales","invoice_approve":"sales","invoice_copy":"sales","invoice_delete":"sales",
     "sales_center":"sales","sales_dashboard":"sales","sales_quotations":"sales",
     "sales_orders":"sales","sales_deliveries":"sales","invoices":"sales",
     "sales_returns":"sales","sales_tracking":"sales",
@@ -1679,6 +1680,77 @@ def executive_dashboard_data():
         "expiring_documents": expiring_documents,
         "warnings": warnings,
     }
+
+
+
+def prepare_invoice_items_from_form(form):
+    item_names=form.getlist("item_name[]")
+    descriptions=form.getlist("description[]")
+    quantities=form.getlist("quantity[]")
+    units=form.getlist("unit[]")
+    unit_prices=form.getlist("unit_price[]")
+    discounts=form.getlist("discount_rate[]")
+    vat_rates=form.getlist("vat_rate[]")
+
+    settings_row=row("SELECT vat_rate FROM settings WHERE id=1") or {}
+    default_vat=float(settings_row.get("vat_rate") or 15)
+
+    prepared=[]
+    gross_subtotal=discount_total=vat_total=invoice_total=0.0
+    for index,item_name in enumerate(item_names):
+        item_name=(item_name or "").strip()
+        if not item_name:
+            continue
+        quantity=float(quantities[index] or 0) if index<len(quantities) else 0
+        unit_price=float(unit_prices[index] or 0) if index<len(unit_prices) else 0
+        discount_rate=float(discounts[index] or 0) if index<len(discounts) else 0
+        vat_rate=float(vat_rates[index] or default_vat) if index<len(vat_rates) else default_vat
+        if quantity<=0:
+            raise ValueError(f"الكمية في البند رقم {index+1} يجب أن تكون أكبر من صفر.")
+        if unit_price<0 or discount_rate<0 or discount_rate>100 or vat_rate<0:
+            raise ValueError(f"تحقق من السعر والخصم والضريبة في البند رقم {index+1}.")
+        line_subtotal=round(quantity*unit_price,2)
+        line_discount=round(line_subtotal*discount_rate/100,2)
+        taxable=round(line_subtotal-line_discount,2)
+        line_vat=round(taxable*vat_rate/100,2)
+        line_total=round(taxable+line_vat,2)
+        prepared.append({
+            "item_name":item_name,
+            "description":(descriptions[index] if index<len(descriptions) else "").strip(),
+            "quantity":quantity,
+            "unit":(units[index] if index<len(units) else "وحدة").strip() or "وحدة",
+            "unit_price":unit_price,
+            "discount_rate":discount_rate,
+            "vat_rate":vat_rate,
+            "line_subtotal":line_subtotal,
+            "line_discount":line_discount,
+            "line_vat":line_vat,
+            "line_total":line_total,
+        })
+        gross_subtotal+=line_subtotal
+        discount_total+=line_discount
+        vat_total+=line_vat
+        invoice_total+=line_total
+    if not prepared:
+        raise ValueError("يجب إضافة بند صحيح واحد على الأقل.")
+    net_subtotal=round(gross_subtotal-discount_total,2)
+    return prepared,round(gross_subtotal,2),round(discount_total,2),round(net_subtotal,2),round(vat_total,2),round(invoice_total,2)
+
+
+def replace_invoice_items(invoice_id, prepared_items):
+    execute("DELETE FROM invoice_items WHERE invoice_id=:id",{"id":invoice_id})
+    for item in prepared_items:
+        execute("""INSERT INTO invoice_items(
+          invoice_id,item_name,description,quantity,unit,unit_price,
+          discount_rate,vat_rate,line_subtotal,line_discount,line_vat,line_total)
+          VALUES(:invoice_id,:item_name,:description,:quantity,:unit,:unit_price,
+          :discount_rate,:vat_rate,:line_subtotal,:line_discount,:line_vat,:line_total)""",
+          {"invoice_id":invoice_id,**item})
+
+
+def invoice_is_editable(invoice):
+    return bool(invoice and invoice.get("status") in ("مسودة","معاد للتعديل")
+                and not invoice.get("journal_id"))
 
 
 def init_db():
@@ -2886,6 +2958,13 @@ def init_db():
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS warehouse_id INTEGER',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS project_id INTEGER',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_by INTEGER',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS copied_from_id INTEGER',
+        'ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS discount_rate NUMERIC(5,2) DEFAULT 0',
+        'ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS line_discount NUMERIC(18,2) DEFAULT 0',
         "ALTER TABLE employees ADD COLUMN IF NOT EXISTS nationality VARCHAR(100) DEFAULT ''",
         "ALTER TABLE employees ADD COLUMN IF NOT EXISTS passport_no VARCHAR(100) DEFAULT ''",
         'ALTER TABLE employees ADD COLUMN IF NOT EXISTS passport_expiry DATE',
@@ -3340,118 +3419,71 @@ def suppliers():
 @app.route("/invoices", methods=["GET","POST"])
 @login_required
 def invoices():
-    if request.method == "POST":
-        item_names = request.form.getlist("item_name[]")
-        descriptions = request.form.getlist("description[]")
-        quantities = request.form.getlist("quantity[]")
-        units = request.form.getlist("unit[]")
-        unit_prices = request.form.getlist("unit_price[]")
+    if request.method=="POST":
+        try:
+            prepared_items,gross_subtotal,discount_total,net_subtotal,invoice_vat,invoice_total = prepare_invoice_items_from_form(request.form)
+            invoice_date=request.form["invoice_date"]
+            invoice_no=next_invoice_number(invoice_date)
+            invoice_uuid=str(uuid.uuid4())
+            requested_status=request.form.get("status","مسودة")
+            initial_status="مسودة" if requested_status not in ("مسودة","معتمدة") else requested_status
 
-        company_settings = row("SELECT vat_rate FROM settings WHERE id=1")
-        vat_rate = float(company_settings["vat_rate"] or 15)
+            execute("""INSERT INTO invoices(
+              invoice_no,invoice_uuid,customer_id,invoice_date,due_date,
+              subtotal,discount,vat,total,status,branch_id,cost_center_id,project_id,
+              payment_terms,payment_method,sales_person,customer_reference,
+              notes,created_at,updated_at)
+              VALUES(:no,:uuid,:customer,:invoice_date,:due_date,:subtotal,:discount,
+              :vat,:total,:status,:branch,:cost_center,:project,:payment_terms,
+              :payment_method,:sales_person,:customer_reference,:notes,:created,:updated)""",
+              {"no":invoice_no,"uuid":invoice_uuid,
+               "customer":request.form["customer_id"],"invoice_date":invoice_date,
+               "due_date":request.form.get("due_date") or None,
+               "subtotal":net_subtotal,"discount":discount_total,
+               "vat":invoice_vat,"total":invoice_total,"status":initial_status,
+               "branch":request.form.get("branch_id") or None,
+               "cost_center":request.form.get("cost_center_id") or None,
+               "project":request.form.get("project_id") or None,
+               "payment_terms":request.form.get("payment_terms",""),
+               "payment_method":request.form.get("payment_method",""),
+               "sales_person":request.form.get("sales_person",""),
+               "customer_reference":request.form.get("customer_reference",""),
+               "notes":request.form.get("notes",""),
+               "created":datetime.now(),"updated":datetime.now()})
+            invoice_id=row("SELECT id FROM invoices WHERE invoice_no=:no",{"no":invoice_no})["id"]
+            replace_invoice_items(invoice_id,prepared_items)
+            audit("CREATE","INVOICE",f"إنشاء فاتورة {invoice_no}")
 
-        prepared_items = []
-        invoice_subtotal = invoice_vat = invoice_total = 0.0
-
-        for index, item_name in enumerate(item_names):
-            item_name = (item_name or "").strip()
-            if not item_name:
-                continue
-
-            description = descriptions[index].strip() if index < len(descriptions) else ""
-            quantity = float(quantities[index] or 0)
-            unit = units[index].strip() if index < len(units) else "وحدة"
-            unit_price = float(unit_prices[index] or 0)
-
-            if quantity <= 0:
-                flash(f"الكمية في البند رقم {index + 1} يجب أن تكون أكبر من صفر", "danger")
-                return redirect(url_for("invoices"))
-
-            line_subtotal = round(quantity * unit_price, 2)
-            line_vat = round(line_subtotal * vat_rate / 100, 2)
-            line_total = round(line_subtotal + line_vat, 2)
-
-            prepared_items.append({
-                "item_name": item_name,
-                "description": description,
-                "quantity": quantity,
-                "unit": unit or "وحدة",
-                "unit_price": unit_price,
-                "vat_rate": vat_rate,
-                "line_subtotal": line_subtotal,
-                "line_vat": line_vat,
-                "line_total": line_total,
-            })
-
-            invoice_subtotal += line_subtotal
-            invoice_vat += line_vat
-            invoice_total += line_total
-
-        if not prepared_items:
-            flash("يجب إضافة بند صحيح واحد على الأقل", "danger")
+            if requested_status=="معتمدة":
+                try:
+                    post_invoice_to_ledger(invoice_id)
+                    execute("""UPDATE invoices SET status='معتمدة',approved_by=:user,
+                      approved_at=:dt WHERE id=:id""",
+                      {"user":session.get("user_id"),"dt":datetime.now(),"id":invoice_id})
+                    flash("تم إنشاء الفاتورة واعتمادها وترحيلها محاسبيًا.","success")
+                except Exception as exc:
+                    db.session.rollback()
+                    execute("""UPDATE invoices SET status='مسودة',posting_status='خطأ'
+                               WHERE id=:id""",{"id":invoice_id})
+                    flash(f"حُفظت الفاتورة كمسودة ولم تُرحّل: {exc}","danger")
+            else:
+                flash("تم إنشاء الفاتورة كمسودة قابلة للتعديل.","success")
+            return redirect(url_for("invoice_view",invoice_id=invoice_id,
+                                    print=1 if request.form.get("print_after_save")=="1" else None))
+        except Exception as exc:
+            db.session.rollback()
+            flash(str(exc),"danger")
             return redirect(url_for("invoices"))
 
-        invoice_no = next_invoice_number(request.form["invoice_date"])
-        invoice_uuid = str(uuid.uuid4())
-
-        execute("""INSERT INTO invoices(
-                      invoice_no,invoice_uuid,customer_id,invoice_date,
-                      subtotal,vat,total,status,branch_id,notes,created_at
-                   )
-                   VALUES(
-                      :no,:uuid,:cid,:dt,:sub,:vat,:tot,:st,:bid,:notes,:created
-                   )""",
-                {"no": invoice_no, "uuid": invoice_uuid,
-                 "cid": request.form["customer_id"],
-                 "dt": request.form["invoice_date"],
-                 "sub": round(invoice_subtotal, 2),
-                 "vat": round(invoice_vat, 2),
-                 "tot": round(invoice_total, 2),
-                 "st": request.form["status"],
-                 "bid": request.form.get("branch_id") or None,
-                 "notes": request.form.get("notes", ""),
-                 "created": datetime.now()})
-
-        invoice_id = row("SELECT id FROM invoices WHERE invoice_no=:no", {"no": invoice_no})["id"]
-
-        for item in prepared_items:
-            execute("""INSERT INTO invoice_items(
-                          invoice_id,item_name,description,quantity,unit,unit_price,
-                          vat_rate,line_subtotal,line_vat,line_total
-                       )
-                       VALUES(
-                          :invoice_id,:item_name,:description,:quantity,:unit,:unit_price,
-                          :vat_rate,:line_subtotal,:line_vat,:line_total
-                       )""", {"invoice_id": invoice_id, **item})
-
-        audit("CREATE","INVOICE",f"إنشاء فاتورة: {invoice_no}")
-        if request.form["status"]=="معتمدة":
-            try:
-                post_invoice_to_ledger(invoice_id)
-                flash("تم إنشاء الفاتورة وترحيلها محاسبيًا","success")
-            except Exception as exc:
-                db.session.rollback()
-                execute("UPDATE invoices SET status='مسودة',posting_status='خطأ' WHERE id=:id",{"id":invoice_id})
-                flash(f"تم حفظ الفاتورة كمسودة ولم تُرحّل: {exc}","danger")
-        else:
-            flash("تم إنشاء الفاتورة كمسودة","success")
-        if request.form.get("print_after_save") == "1":
-            return redirect(url_for("invoice_view", invoice_id=invoice_id, print=1))
-        return redirect(url_for("invoice_view", invoice_id=invoice_id))
-
-    invoice_rows = rows("""SELECT i.*, c.name customer_name, b.name branch_name
-                           FROM invoices i
-                           JOIN customers c ON c.id=i.customer_id
-                           LEFT JOIN branches b ON b.id=i.branch_id
-                           ORDER BY i.id DESC""")
-
-    return render_template(
-        "invoices.html",
-        rows=invoice_rows,
-        customers=rows("SELECT * FROM customers ORDER BY name"),
-        branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
-        inventory_items=rows("SELECT * FROM inventory ORDER BY name")
-    )
+    invoice_rows=rows("""SELECT i.*,c.name customer_name,b.name branch_name
+      FROM invoices i JOIN customers c ON c.id=i.customer_id
+      LEFT JOIN branches b ON b.id=i.branch_id ORDER BY i.id DESC""")
+    return render_template("invoices.html",rows=invoice_rows,
+      customers=rows("SELECT * FROM customers ORDER BY name"),
+      branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
+      inventory_items=rows("SELECT * FROM inventory ORDER BY name"),
+      centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"),
+      projects=rows("SELECT id,project_no,name FROM projects ORDER BY project_no"))
 
 @app.route("/expenses", methods=["GET","POST"])
 @login_required
@@ -4411,14 +4443,161 @@ def journal_export():
     ]] for r in data]
     return xlsx_response("journal_entries.xlsx", "قيود اليومية", headers, records)
 
+
+@app.route("/invoices/<int:invoice_id>/edit",methods=["GET","POST"])
+@login_required
+def invoice_edit(invoice_id):
+    invoice=row("""SELECT i.*,c.name customer_name FROM invoices i
+                   JOIN customers c ON c.id=i.customer_id WHERE i.id=:id""",{"id":invoice_id})
+    if not invoice:
+        return "الفاتورة غير موجودة",404
+    if not invoice_is_editable(invoice):
+        flash("لا يمكن تعديل الفاتورة بعد الاعتماد أو الترحيل. استخدم المرتجع أو الإشعار الدائن للتصحيح.","danger")
+        return redirect(url_for("invoice_view",invoice_id=invoice_id))
+
+    if request.method=="POST":
+        try:
+            prepared,gross,discount,net_subtotal,vat,total=prepare_invoice_items_from_form(request.form)
+            execute("""UPDATE invoices SET customer_id=:customer,invoice_date=:invoice_date,
+              due_date=:due_date,subtotal=:subtotal,discount=:discount,vat=:vat,total=:total,
+              branch_id=:branch,cost_center_id=:cost_center,project_id=:project,
+              payment_terms=:payment_terms,payment_method=:payment_method,
+              sales_person=:sales_person,customer_reference=:customer_reference,
+              notes=:notes,updated_at=:updated WHERE id=:id""",
+              {"customer":request.form["customer_id"],
+               "invoice_date":request.form["invoice_date"],
+               "due_date":request.form.get("due_date") or None,
+               "subtotal":net_subtotal,"discount":discount,"vat":vat,"total":total,
+               "branch":request.form.get("branch_id") or None,
+               "cost_center":request.form.get("cost_center_id") or None,
+               "project":request.form.get("project_id") or None,
+               "payment_terms":request.form.get("payment_terms",""),
+               "payment_method":request.form.get("payment_method",""),
+               "sales_person":request.form.get("sales_person",""),
+               "customer_reference":request.form.get("customer_reference",""),
+               "notes":request.form.get("notes",""),"updated":datetime.now(),"id":invoice_id})
+            replace_invoice_items(invoice_id,prepared)
+            audit("UPDATE","INVOICE",f"تعديل مسودة الفاتورة {invoice['invoice_no']}")
+            flash("تم حفظ تعديلات مسودة الفاتورة.","success")
+            return redirect(url_for("invoice_view",invoice_id=invoice_id))
+        except Exception as exc:
+            db.session.rollback()
+            flash(str(exc),"danger")
+
+    return render_template("invoice_edit.html",invoice=invoice,
+      items=rows("SELECT * FROM invoice_items WHERE invoice_id=:id ORDER BY id",{"id":invoice_id}),
+      customers=rows("SELECT * FROM customers ORDER BY name"),
+      branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
+      centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"),
+      projects=rows("SELECT id,project_no,name FROM projects ORDER BY project_no"),
+      inventory_items=rows("SELECT * FROM inventory ORDER BY name"))
+
+
+@app.route("/invoices/<int:invoice_id>/submit-approval",methods=["POST"])
+@login_required
+def invoice_submit_approval(invoice_id):
+    invoice=row("SELECT * FROM invoices WHERE id=:id",{"id":invoice_id})
+    if not invoice:
+        return "الفاتورة غير موجودة",404
+    if not invoice_is_editable(invoice):
+        flash("هذه الفاتورة ليست مسودة قابلة للإرسال.","danger")
+    else:
+        execute("""UPDATE invoices SET status='بانتظار الاعتماد',updated_at=:dt
+                   WHERE id=:id""",{"dt":datetime.now(),"id":invoice_id})
+        audit("SUBMIT_APPROVAL","INVOICE",f"إرسال الفاتورة {invoice['invoice_no']} للاعتماد")
+        flash("تم إرسال الفاتورة للاعتماد، وتم قفل تعديلها مؤقتًا.","success")
+    return redirect(url_for("invoice_view",invoice_id=invoice_id))
+
+
+@app.route("/invoices/<int:invoice_id>/return-to-draft",methods=["POST"])
+@login_required
+def invoice_return_to_draft(invoice_id):
+    invoice=row("SELECT * FROM invoices WHERE id=:id",{"id":invoice_id})
+    if not invoice:
+        return "الفاتورة غير موجودة",404
+    if invoice.get("journal_id") or invoice["status"]=="معتمدة":
+        flash("لا يمكن إعادة فاتورة مرحلة إلى المسودة.","danger")
+    else:
+        execute("""UPDATE invoices SET status='معاد للتعديل',updated_at=:dt
+                   WHERE id=:id""",{"dt":datetime.now(),"id":invoice_id})
+        audit("RETURN_DRAFT","INVOICE",f"إعادة الفاتورة {invoice['invoice_no']} للتعديل")
+        flash("تمت إعادة الفاتورة للتعديل.","success")
+    return redirect(url_for("invoice_view",invoice_id=invoice_id))
+
+
+@app.route("/invoices/<int:invoice_id>/approve",methods=["POST"])
+@login_required
+def invoice_approve(invoice_id):
+    invoice=row("SELECT * FROM invoices WHERE id=:id",{"id":invoice_id})
+    if not invoice:
+        return "الفاتورة غير موجودة",404
+    if invoice.get("journal_id") or invoice["status"]=="معتمدة":
+        flash("الفاتورة معتمدة ومرحلة بالفعل.","info")
+        return redirect(url_for("invoice_view",invoice_id=invoice_id))
+    if invoice["status"] not in ("مسودة","معاد للتعديل","بانتظار الاعتماد"):
+        flash("حالة الفاتورة لا تسمح بالاعتماد.","danger")
+        return redirect(url_for("invoice_view",invoice_id=invoice_id))
+    try:
+        post_invoice_to_ledger(invoice_id)
+        execute("""UPDATE invoices SET status='معتمدة',approved_by=:user,
+          approved_at=:dt,updated_at=:dt WHERE id=:id""",
+          {"user":session.get("user_id"),"dt":datetime.now(),"id":invoice_id})
+        audit("APPROVE","INVOICE",f"اعتماد وترحيل الفاتورة {invoice['invoice_no']}")
+        flash("تم اعتماد الفاتورة وترحيلها محاسبيًا. أصبحت مقفلة ضد التعديل والحذف.","success")
+    except Exception as exc:
+        db.session.rollback()
+        execute("""UPDATE invoices SET posting_status='خطأ' WHERE id=:id""",{"id":invoice_id})
+        flash(f"تعذر اعتماد وترحيل الفاتورة: {exc}","danger")
+    return redirect(url_for("invoice_view",invoice_id=invoice_id))
+
+
+@app.route("/invoices/<int:invoice_id>/copy",methods=["POST"])
+@login_required
+def invoice_copy(invoice_id):
+    source=row("SELECT * FROM invoices WHERE id=:id",{"id":invoice_id})
+    if not source:
+        return "الفاتورة غير موجودة",404
+    new_date=request.form.get("invoice_date") or datetime.now().date()
+    new_no=next_invoice_number(new_date)
+    execute("""INSERT INTO invoices(invoice_no,invoice_uuid,customer_id,invoice_date,
+      due_date,subtotal,discount,vat,total,status,branch_id,cost_center_id,project_id,
+      payment_terms,payment_method,sales_person,customer_reference,notes,created_at,
+      updated_at,copied_from_id)
+      VALUES(:no,:uuid,:customer,:invoice_date,:due_date,:subtotal,:discount,:vat,
+      :total,'مسودة',:branch,:cost_center,:project,:payment_terms,:payment_method,
+      :sales_person,:customer_reference,:notes,:created,:updated,:source)""",
+      {"no":new_no,"uuid":str(uuid.uuid4()),"customer":source["customer_id"],
+       "invoice_date":new_date,"due_date":source.get("due_date"),
+       "subtotal":source["subtotal"],"discount":source.get("discount") or 0,
+       "vat":source["vat"],"total":source["total"],"branch":source.get("branch_id"),
+       "cost_center":source.get("cost_center_id"),"project":source.get("project_id"),
+       "payment_terms":source.get("payment_terms") or "",
+       "payment_method":source.get("payment_method") or "",
+       "sales_person":source.get("sales_person") or "",
+       "customer_reference":source.get("customer_reference") or "",
+       "notes":f"نسخة من {source['invoice_no']} - {source.get('notes') or ''}",
+       "created":datetime.now(),"updated":datetime.now(),"source":invoice_id})
+    new_id=row("SELECT id FROM invoices WHERE invoice_no=:no",{"no":new_no})["id"]
+    execute("""INSERT INTO invoice_items(invoice_id,item_name,description,quantity,unit,
+      unit_price,discount_rate,vat_rate,line_subtotal,line_discount,line_vat,line_total)
+      SELECT :new_id,item_name,description,quantity,unit,unit_price,
+      COALESCE(discount_rate,0),vat_rate,line_subtotal,COALESCE(line_discount,0),
+      line_vat,line_total FROM invoice_items WHERE invoice_id=:source""",
+      {"new_id":new_id,"source":invoice_id})
+    audit("COPY","INVOICE",f"نسخ الفاتورة {source['invoice_no']} إلى {new_no}")
+    flash(f"تم إنشاء مسودة جديدة رقم {new_no} من الفاتورة الأصلية.","success")
+    return redirect(url_for("invoice_edit",invoice_id=new_id))
+
+
+
 @app.route("/invoices/<int:invoice_id>/delete", methods=["POST"])
 @login_required
 def invoice_delete(invoice_id):
     invoice = row("SELECT * FROM invoices WHERE id=:id", {"id": invoice_id})
     if not invoice:
         return "الفاتورة غير موجودة", 404
-    if invoice["status"] == "معتمدة":
-        flash("لا يمكن حذف فاتورة معتمدة. غيّر حالتها أو أنشئ إشعارًا دائنًا.", "danger")
+    if not invoice_is_editable(invoice):
+        flash("يمكن حذف المسودة فقط. الفواتير المعتمدة أو المرسلة للاعتماد لا تُحذف.", "danger")
     else:
         execute("DELETE FROM invoices WHERE id=:id", {"id": invoice_id})
         audit("DELETE", "INVOICE", f"حذف الفاتورة {invoice['invoice_no']}")

@@ -1,0 +1,47 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title">
+<div><h3>تعديل مسودة الفاتورة {{invoice.invoice_no}}</h3><small>Draft Invoice Editing</small></div>
+<div><a class="btn btn-outline-secondary" href="{{url_for('invoice_view',invoice_id=invoice.id)}}">إلغاء والعودة</a><button class="btn btn-primary" form="editInvoiceForm">حفظ التعديلات</button></div>
+</div>
+<div class="alert alert-info">يمكن تعديل هذه الفاتورة لأنها ما زالت <b>{{invoice.status}}</b>. بعد الاعتماد والترحيل سيتم قفلها.</div>
+<div class="form-card">
+<form method="post" id="editInvoiceForm">
+<div class="row g-3 mb-4">
+<div class="col-md-3"><label>العميل</label><select class="form-select" name="customer_id" required>{% for c in customers %}<option value="{{c.id}}" {% if c.id==invoice.customer_id %}selected{% endif %}>{{c.name}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>تاريخ الفاتورة</label><input class="form-control" type="date" name="invoice_date" value="{{invoice.invoice_date}}" required></div>
+<div class="col-md-2"><label>تاريخ الاستحقاق</label><input class="form-control" type="date" name="due_date" value="{{invoice.due_date or ''}}"></div>
+<div class="col-md-2"><label>الفرع</label><select class="form-select" name="branch_id"><option value="">بدون</option>{% for b in branches %}<option value="{{b.id}}" {% if b.id==invoice.branch_id %}selected{% endif %}>{{b.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>مركز التكلفة</label><select class="form-select" name="cost_center_id"><option value="">بدون</option>{% for c in centers %}<option value="{{c.id}}" {% if c.id==invoice.cost_center_id %}selected{% endif %}>{{c.code}} - {{c.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>المشروع</label><select class="form-select" name="project_id"><option value="">بدون</option>{% for p in projects %}<option value="{{p.id}}" {% if p.id==invoice.project_id %}selected{% endif %}>{{p.project_no}} - {{p.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>مندوب المبيعات</label><input class="form-control" name="sales_person" value="{{invoice.sales_person or ''}}"></div>
+<div class="col-md-3"><label>مرجع العميل</label><input class="form-control" name="customer_reference" value="{{invoice.customer_reference or ''}}"></div>
+<div class="col-md-3"><label>طريقة الدفع</label><input class="form-control" name="payment_method" value="{{invoice.payment_method or ''}}"></div>
+<div class="col-md-6"><label>شروط الدفع</label><input class="form-control" name="payment_terms" value="{{invoice.payment_terms or ''}}"></div>
+</div>
+<table class="table table-bordered align-middle"><thead><tr><th>م</th><th>المادة</th><th>الوصف</th><th>الكمية</th><th>الوحدة</th><th>السعر</th><th>خصم %</th><th>ضريبة %</th><th>الإجمالي</th><th></th></tr></thead>
+<tbody id="editItemsBody">
+{% for item in items %}
+<tr class="edit-item-row"><td class="row-no">{{loop.index}}</td>
+<td><input class="form-control" name="item_name[]" list="inventoryList" value="{{item.item_name}}" required></td>
+<td><input class="form-control" name="description[]" value="{{item.description or ''}}"></td>
+<td><input class="form-control qty" type="number" step=".001" min=".001" name="quantity[]" value="{{item.quantity}}" required></td>
+<td><input class="form-control" name="unit[]" value="{{item.unit}}"></td>
+<td><input class="form-control price" type="number" step=".01" min="0" name="unit_price[]" value="{{item.unit_price}}" required></td>
+<td><input class="form-control discount" type="number" step=".01" min="0" max="100" name="discount_rate[]" value="{{item.discount_rate or 0}}"></td>
+<td><input class="form-control vat-rate" type="number" step=".01" min="0" name="vat_rate[]" value="{{item.vat_rate or app_settings.vat_rate or 15}}"></td>
+<td class="line-total">0.00</td><td><button type="button" class="btn btn-sm btn-outline-danger remove">×</button></td></tr>
+{% endfor %}
+</tbody></table>
+<datalist id="inventoryList">{% for item in inventory_items %}<option value="{{item.name}}">{% endfor %}</datalist>
+<div class="d-flex justify-content-between flex-wrap gap-3"><button type="button" class="btn btn-outline-primary" id="addEditRow">+ إضافة بند</button>
+<div class="summary-box"><div><span>الإجمالي قبل الخصم</span><strong id="gross">0.00</strong></div><div><span>الخصم</span><strong id="discountTotal">0.00</strong></div><div><span>قبل الضريبة</span><strong id="netSubtotal">0.00</strong></div><div><span>الضريبة</span><strong id="vatTotal">0.00</strong></div><div class="grand"><span>الإجمالي</span><strong id="grandTotal">0.00</strong></div></div></div>
+<div class="mt-3"><label>ملاحظات</label><textarea class="form-control" name="notes">{{invoice.notes or ''}}</textarea></div>
+<div class="text-end mt-3"><button class="btn btn-primary btn-lg">حفظ التعديلات</button></div>
+</form></div>
+<style>.summary-box{min-width:360px;border:1px solid #ddd;border-radius:10px;padding:12px}.summary-box div{display:flex;justify-content:space-between;padding:5px}.summary-box .grand{border-top:2px solid #ddd;font-size:18px}</style>
+<script>
+function calcEdit(){let gross=0,disc=0,vat=0,total=0;document.querySelectorAll('.edit-item-row').forEach((r,i)=>{r.querySelector('.row-no').textContent=i+1;const q=Number(r.querySelector('.qty').value||0),p=Number(r.querySelector('.price').value||0),d=Number(r.querySelector('.discount').value||0),v=Number(r.querySelector('.vat-rate').value||0);const g=q*p,di=g*d/100,n=g-di,tx=n*v/100,t=n+tx;gross+=g;disc+=di;vat+=tx;total+=t;r.querySelector('.line-total').textContent=t.toFixed(2)});document.getElementById('gross').textContent=gross.toFixed(2);document.getElementById('discountTotal').textContent=disc.toFixed(2);document.getElementById('netSubtotal').textContent=(gross-disc).toFixed(2);document.getElementById('vatTotal').textContent=vat.toFixed(2);document.getElementById('grandTotal').textContent=total.toFixed(2)}
+function bindEdit(r){r.querySelectorAll('.qty,.price,.discount,.vat-rate').forEach(x=>x.addEventListener('input',calcEdit));r.querySelector('.remove').addEventListener('click',()=>{if(document.querySelectorAll('.edit-item-row').length>1)r.remove();calcEdit()})}
+document.querySelectorAll('.edit-item-row').forEach(bindEdit);
+document.getElementById('addEditRow').addEventListener('click',()=>{const source=document.querySelector('.edit-item-row');const r=source.cloneNode(true);r.querySelectorAll('input').forEach(x=>{if(x.classList.contains('qty'))x.value='1';else if(x.classList.contains('price')||x.classList.contains('discount'))x.value='0';else if(x.classList.contains('vat-rate'))x.value='{{app_settings.vat_rate or 15}}';else x.value=''});document.getElementById('editItemsBody').appendChild(r);bindEdit(r);calcEdit()});calcEdit();
+</script>{% endblock %}

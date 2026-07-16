@@ -28,6 +28,7 @@
   <th>الكمية</th>
   <th>الوحدة</th>
   <th>سعر الوحدة</th>
+  <th>خصم %</th>
   <th>ضريبة القيمة المضافة {{ app_settings.vat_rate or 15 }}%</th>
   <th>الإجمالي</th>
   <th></th>
@@ -47,6 +48,8 @@
     </select>
   </td>
   <td><input class="form-control unit-price" type="number" name="unit_price[]" min="0" step="0.01" value="0" required></td>
+  <td><input class="form-control discount-rate" type="number" name="discount_rate[]" min="0" max="100" step="0.01" value="0"></td>
+  <input type="hidden" name="vat_rate[]" value="{{app_settings.vat_rate or 15}}">
   <td><input class="form-control line-vat" value="0.00" readonly></td>
   <td><input class="form-control line-total" value="0.00" readonly></td>
   <td><button type="button" class="btn btn-sm btn-outline-danger remove-row">×</button></td>
@@ -93,9 +96,16 @@
 <td><span class="badge bg-secondary">{{r.status}}</span></td>
 <td>
 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_view', invoice_id=r.id) }}">عرض</a>
+{% if r.status in ['مسودة','معاد للتعديل'] %}
+<a class="btn btn-sm btn-outline-success" href="{{url_for('invoice_edit',invoice_id=r.id)}}">تعديل</a>
+<form class="d-inline" method="post" action="{{url_for('invoice_approve',invoice_id=r.id)}}" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn btn-sm btn-success">اعتماد</button></form>
+{% elif r.status=='بانتظار الاعتماد' %}
+<form class="d-inline" method="post" action="{{url_for('invoice_approve',invoice_id=r.id)}}" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn btn-sm btn-success">اعتماد</button></form>
+{% endif %}
+<form class="d-inline" method="post" action="{{url_for('invoice_copy',invoice_id=r.id)}}"><button class="btn btn-sm btn-outline-secondary">نسخ</button></form>
 <a class="btn btn-sm btn-outline-secondary" href="{{url_for('invoice_commercial_data',invoice_id=r.id)}}">بيانات تجارية</a>
 <a class="btn btn-sm btn-outline-info" href="{{url_for('sales_timeline',invoice_id=r.id)}}">تتبع</a>
-<a class="btn btn-sm btn-outline-dark" target="_blank" href="{{ url_for('invoice_view', invoice_id=r.id) }}?print=1">طباعة / PDF</a> <form class="d-inline" method="post" action="{{url_for('invoice_delete',invoice_id=r.id)}}" onsubmit="return confirm('تأكيد حذف الفاتورة المسودة؟')"><button class="btn btn-sm btn-outline-danger">حذف</button></form>
+<a class="btn btn-sm btn-outline-dark" target="_blank" href="{{ url_for('invoice_view', invoice_id=r.id) }}?print=1">طباعة / PDF</a> {% if r.status in ['مسودة','معاد للتعديل'] %}<form class="d-inline" method="post" action="{{url_for('invoice_delete',invoice_id=r.id)}}" onsubmit="return confirm('تأكيد حذف الفاتورة المسودة؟')"><button class="btn btn-sm btn-outline-danger">حذف</button></form>{% endif %}
 </td>
 </tr>
 {% endfor %}
@@ -142,7 +152,8 @@ function calculateInvoice(){
     row.querySelector('.row-number').textContent=index+1;
     const q=Number(row.querySelector('.quantity').value||0);
     const p=Number(row.querySelector('.unit-price').value||0);
-    const s=q*p, v=s*vatRate/100, t=s+v;
+    const d=Number(row.querySelector('.discount-rate').value||0);
+    const s=q*p, discount=s*d/100, taxable=s-discount, v=taxable*vatRate/100, t=taxable+v;
     row.querySelector('.line-vat').value=v.toFixed(2);
     row.querySelector('.line-total').value=t.toFixed(2);
     subtotal+=s; vatTotal+=v; grandTotal+=t;
@@ -152,7 +163,7 @@ function calculateInvoice(){
   document.getElementById('totalDisplay').textContent=grandTotal.toFixed(2);
 }
 function bindRow(row){
-  row.querySelectorAll('.quantity,.unit-price').forEach(i=>i.addEventListener('input',calculateInvoice));
+  row.querySelectorAll('.quantity,.unit-price,.discount-rate').forEach(i=>i.addEventListener('input',calculateInvoice));
   row.querySelector('.remove-row').addEventListener('click',()=>{
     const all=document.querySelectorAll('.item-row');
     if(all.length===1){
@@ -166,7 +177,7 @@ document.getElementById('addRow').addEventListener('click',()=>{
   const row=document.querySelector('.item-row').cloneNode(true);
   row.querySelectorAll('input').forEach(i=>{
     if(i.classList.contains('quantity'))i.value='1';
-    else if(i.classList.contains('unit-price'))i.value='0';
+    else if(i.classList.contains('unit-price')||i.classList.contains('discount-rate'))i.value='0';
     else if(i.classList.contains('line-vat')||i.classList.contains('line-total'))i.value='0.00';
     else i.value='';
   });

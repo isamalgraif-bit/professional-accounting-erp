@@ -35,6 +35,8 @@ th{background:#174ea6;color:white}
 .notes{margin-top:24px;border:1px dashed #cbd5e1;padding:13px;border-radius:8px}
 .footer{text-align:center;margin-top:34px;padding-top:15px;border-top:1px solid #e2e8f0;font-size:12px;color:#64748b}
 .uuid{font-size:11px;word-break:break-all;color:#64748b}
+.draft-watermark{position:fixed;z-index:1;top:42%;left:18%;font-size:90px;font-weight:bold;color:rgba(180,0,0,.10);transform:rotate(-28deg);pointer-events:none}
+.status-label{display:inline-block;padding:5px 10px;border-radius:12px;background:#eef2ff;font-weight:bold}
 @media print{
  body{background:#fff}
  .toolbar{display:none}
@@ -44,11 +46,21 @@ th{background:#174ea6;color:white}
 </style>
 </head>
 <body class="lang-{{print_lang}}">
+{% if invoice.status != 'معتمدة' %}<div class="draft-watermark">مسودة / DRAFT</div>{% endif %}
 <div class="toolbar">
 <a class="btn secondary" href="{{url_for('invoice_view',invoice_id=invoice.id,lang='ar')}}">العربية</a>
 <a class="btn secondary" href="{{url_for('invoice_view',invoice_id=invoice.id,lang='en')}}">English</a>
 <a class="btn secondary" href="{{url_for('invoice_view',invoice_id=invoice.id,lang='bi')}}">عربي / English</a>
 <button class="btn" onclick="window.print()">طباعة أو حفظ PDF</button>
+{% if invoice.status in ['مسودة','معاد للتعديل'] %}
+<a class="btn" href="{{url_for('invoice_edit',invoice_id=invoice.id)}}">تعديل المسودة</a>
+<form method="post" action="{{url_for('invoice_submit_approval',invoice_id=invoice.id)}}" style="display:inline"><button class="btn" type="submit">إرسال للاعتماد</button></form>
+<form method="post" action="{{url_for('invoice_approve',invoice_id=invoice.id)}}" style="display:inline" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn" type="submit">اعتماد وترحيل</button></form>
+{% elif invoice.status=='بانتظار الاعتماد' %}
+<form method="post" action="{{url_for('invoice_approve',invoice_id=invoice.id)}}" style="display:inline" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn" type="submit">اعتماد وترحيل</button></form>
+<form method="post" action="{{url_for('invoice_return_to_draft',invoice_id=invoice.id)}}" style="display:inline"><button class="btn secondary" type="submit">إعادة للتعديل</button></form>
+{% endif %}
+<form method="post" action="{{url_for('invoice_copy',invoice_id=invoice.id)}}" style="display:inline"><button class="btn secondary" type="submit">نسخ إلى مسودة جديدة</button></form>
 <a class="btn secondary" href="{{ url_for('invoices') }}">العودة للفواتير</a>
 </div>
 
@@ -71,6 +83,7 @@ th{background:#174ea6;color:white}
 <div><strong>TAX INVOICE</strong></div>
 <div class="line"><strong>{% if print_lang=="en" %}Invoice No.{% elif print_lang=="bi" %}رقم الفاتورة / Invoice No.{% else %}رقم الفاتورة{% endif %}:</strong> {{ invoice.invoice_no }}</div>
 <div class="line"><strong>التاريخ:</strong> {{ invoice.invoice_date }}</div>
+<div class="line"><strong>الحالة:</strong> <span class="status-label">{{invoice.status}}</span></div>
 </div>
 </div>
 
