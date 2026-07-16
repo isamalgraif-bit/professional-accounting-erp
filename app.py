@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "16.1.0"
+APP_VERSION = "17.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1076,6 +1076,7 @@ ENDPOINT_MODULE_MAP = {
     "projects_center":"projects","project_new":"projects","project_view":"projects",
     "crm_center":"crm","crm_leads":"crm","crm_opportunities":"crm",
     "crm_activities":"crm","crm_pipeline":"crm","crm_report":"crm",
+    "documents_center":"settings","document_categories":"settings","document_new":"settings","document_view":"settings","document_add_version":"settings","document_status_update":"settings","documents_report":"reports","documents_report_export":"reports",
     "settings":"settings","branches":"settings","cost_centers":"settings",
     "users_admin":"users","roles_admin":"users","security_audit":"users",
 }
@@ -2578,6 +2579,52 @@ def init_db():
             status VARCHAR(50) DEFAULT 'مسودة',
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS document_categories(
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(100) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            retention_years INTEGER DEFAULT 5,
+            requires_expiry INTEGER DEFAULT 0,
+            active INTEGER DEFAULT 1
+        )""",
+        """CREATE TABLE IF NOT EXISTS documents_archive(
+            id SERIAL PRIMARY KEY,
+            document_no VARCHAR(100) UNIQUE NOT NULL,
+            title VARCHAR(255) NOT NULL,
+            category_id INTEGER REFERENCES document_categories(id),
+            entity_type VARCHAR(100) DEFAULT '',
+            entity_id INTEGER,
+            entity_name VARCHAR(255) DEFAULT '',
+            issue_date DATE,
+            expiry_date DATE,
+            version_no VARCHAR(50) DEFAULT '1.0',
+            status VARCHAR(50) DEFAULT 'ساري',
+            confidentiality VARCHAR(50) DEFAULT 'داخلي',
+            file_name VARCHAR(255) DEFAULT '',
+            file_url TEXT DEFAULT '',
+            keywords TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            uploaded_by INTEGER REFERENCES users(id),
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS document_versions(
+            id SERIAL PRIMARY KEY,
+            document_id INTEGER NOT NULL REFERENCES documents_archive(id) ON DELETE CASCADE,
+            version_no VARCHAR(50) NOT NULL,
+            file_name VARCHAR(255) DEFAULT '',
+            file_url TEXT DEFAULT '',
+            change_notes TEXT DEFAULT '',
+            uploaded_by INTEGER REFERENCES users(id),
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS document_access_logs(
+            id SERIAL PRIMARY KEY,
+            document_id INTEGER REFERENCES documents_archive(id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES users(id),
+            action_type VARCHAR(50) NOT NULL,
+            ip_address VARCHAR(100) DEFAULT '',
+            action_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
@@ -6035,6 +6082,193 @@ def system_health():
 
 
 
+
+
+
+@app.route("/documents")
+@login_required
+def documents_center():
+    q=request.args.get("q","").strip()
+    category=request.args.get("category_id","").strip()
+    entity_type=request.args.get("entity_type","").strip()
+    status=request.args.get("status","").strip()
+    conditions=[];params={}
+    if q:
+        conditions.append("""(d.document_no ILIKE :q OR d.title ILIKE :q
+                           OR d.entity_name ILIKE :q OR d.keywords ILIKE :q)""")
+        params["q"]=f"%{q}%"
+    if category:
+        conditions.append("d.category_id=:category")
+        params["category"]=int(category)
+    if entity_type:
+        conditions.append("d.entity_type=:entity_type")
+        params["entity_type"]=entity_type
+    if status:
+        conditions.append("d.status=:status")
+        params["status"]=status
+    where=" WHERE "+" AND ".join(conditions) if conditions else ""
+    docs=rows(f"""SELECT d.*,c.name category_name,u.username uploaded_by_name
+                  FROM documents_archive d
+                  LEFT JOIN document_categories c ON c.id=d.category_id
+                  LEFT JOIN users u ON u.id=d.uploaded_by
+                  {where}
+                  ORDER BY d.uploaded_at DESC,d.id DESC""",params)
+    stats={
+      "documents":row("SELECT COUNT(*) c FROM documents_archive")["c"],
+      "expiring":row("""SELECT COUNT(*) c FROM documents_archive
+                        WHERE expiry_date BETWEEN CURRENT_DATE
+                        AND CURRENT_DATE+INTERVAL '60 days'""")["c"],
+      "expired":row("""SELECT COUNT(*) c FROM documents_archive
+                       WHERE expiry_date<CURRENT_DATE""")["c"],
+      "versions":row("SELECT COUNT(*) c FROM document_versions")["c"],
+    }
+    return render_template("documents_center.html",documents=docs,stats=stats,q=q,
+      selected_category=category,selected_entity_type=entity_type,
+      selected_status=status,
+      categories=rows("SELECT id,name FROM document_categories WHERE active=1 ORDER BY name"),
+      entity_types=DMS_ENTITY_TYPES)
+
+@app.route("/documents/categories",methods=["GET","POST"])
+@login_required
+def document_categories():
+    if request.method=="POST":
+        execute("""INSERT INTO document_categories(code,name,retention_years,
+          requires_expiry,active) VALUES(:code,:name,:years,:expiry,1)
+          ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,
+          retention_years=EXCLUDED.retention_years,
+          requires_expiry=EXCLUDED.requires_expiry""",
+          {"code":request.form["code"].upper().strip(),
+           "name":request.form["name"],
+           "years":int(request.form.get("retention_years") or 5),
+           "expiry":1 if request.form.get("requires_expiry") else 0})
+        flash("تم حفظ تصنيف المستند","success")
+        return redirect(url_for("document_categories"))
+    return render_template("document_categories.html",
+      rows=rows("SELECT * FROM document_categories ORDER BY code"))
+
+@app.route("/documents/new",methods=["GET","POST"])
+@login_required
+def document_new():
+    if request.method=="POST":
+        no=next_document_number()
+        execute("""INSERT INTO documents_archive(document_no,title,category_id,
+          entity_type,entity_id,entity_name,issue_date,expiry_date,version_no,
+          status,confidentiality,file_name,file_url,keywords,notes,uploaded_by,
+          uploaded_at)
+          VALUES(:no,:title,:category,:entity_type,:entity_id,:entity_name,
+          :issue,:expiry,:version,:status,:confidentiality,:file_name,:file_url,
+          :keywords,:notes,:user,:dt)""",
+          {"no":no,"title":request.form["title"],
+           "category":request.form.get("category_id") or None,
+           "entity_type":request.form.get("entity_type","عام"),
+           "entity_id":request.form.get("entity_id") or None,
+           "entity_name":request.form.get("entity_name",""),
+           "issue":request.form.get("issue_date") or None,
+           "expiry":request.form.get("expiry_date") or None,
+           "version":request.form.get("version_no","1.0"),
+           "status":request.form.get("status","ساري"),
+           "confidentiality":request.form.get("confidentiality","داخلي"),
+           "file_name":request.form.get("file_name",""),
+           "file_url":request.form.get("file_url",""),
+           "keywords":request.form.get("keywords",""),
+           "notes":request.form.get("notes",""),
+           "user":session.get("user_id"),"dt":datetime.now()})
+        document_id=row("SELECT id FROM documents_archive WHERE document_no=:no",{"no":no})["id"]
+        execute("""INSERT INTO document_versions(document_id,version_no,file_name,
+          file_url,change_notes,uploaded_by,uploaded_at)
+          VALUES(:document,:version,:file_name,:file_url,'الإصدار الأول',:user,:dt)""",
+          {"document":document_id,"version":request.form.get("version_no","1.0"),
+           "file_name":request.form.get("file_name",""),
+           "file_url":request.form.get("file_url",""),
+           "user":session.get("user_id"),"dt":datetime.now()})
+        audit("CREATE","DOCUMENT",f"إنشاء المستند {no}")
+        flash(f"تم أرشفة المستند {no}","success")
+        return redirect(url_for("document_view",document_id=document_id))
+    return render_template("document_form.html",
+      categories=rows("SELECT id,name FROM document_categories WHERE active=1 ORDER BY name"),
+      entity_types=DMS_ENTITY_TYPES)
+
+@app.route("/documents/<int:document_id>")
+@login_required
+def document_view(document_id):
+    doc=row("""SELECT d.*,c.name category_name,u.username uploaded_by_name
+               FROM documents_archive d
+               LEFT JOIN document_categories c ON c.id=d.category_id
+               LEFT JOIN users u ON u.id=d.uploaded_by
+               WHERE d.id=:id""",{"id":document_id})
+    if not doc:
+        return "المستند غير موجود",404
+    log_document_access(document_id,"عرض")
+    return render_template("document_view.html",document=doc,
+      versions=rows("""SELECT v.*,u.username uploaded_by_name
+                       FROM document_versions v
+                       LEFT JOIN users u ON u.id=v.uploaded_by
+                       WHERE v.document_id=:id
+                       ORDER BY v.uploaded_at DESC,v.id DESC""",{"id":document_id}),
+      access_logs=rows("""SELECT l.*,u.username
+                          FROM document_access_logs l
+                          LEFT JOIN users u ON u.id=l.user_id
+                          WHERE l.document_id=:id
+                          ORDER BY l.action_at DESC LIMIT 100""",{"id":document_id}))
+
+@app.route("/documents/<int:document_id>/version",methods=["POST"])
+@login_required
+def document_add_version(document_id):
+    doc=row("SELECT * FROM documents_archive WHERE id=:id",{"id":document_id})
+    if not doc:
+        return "المستند غير موجود",404
+    version=request.form["version_no"]
+    execute("""INSERT INTO document_versions(document_id,version_no,file_name,
+      file_url,change_notes,uploaded_by,uploaded_at)
+      VALUES(:document,:version,:file_name,:file_url,:notes,:user,:dt)""",
+      {"document":document_id,"version":version,
+       "file_name":request.form.get("file_name",""),
+       "file_url":request.form.get("file_url",""),
+       "notes":request.form.get("change_notes",""),
+       "user":session.get("user_id"),"dt":datetime.now()})
+    execute("""UPDATE documents_archive SET version_no=:version,
+      file_name=:file_name,file_url=:file_url WHERE id=:id""",
+      {"version":version,"file_name":request.form.get("file_name",""),
+       "file_url":request.form.get("file_url",""),"id":document_id})
+    log_document_access(document_id,"إضافة إصدار")
+    flash("تمت إضافة إصدار جديد","success")
+    return redirect(url_for("document_view",document_id=document_id))
+
+@app.route("/documents/<int:document_id>/status",methods=["POST"])
+@login_required
+def document_status_update(document_id):
+    execute("""UPDATE documents_archive SET status=:status WHERE id=:id""",
+            {"status":request.form["status"],"id":document_id})
+    log_document_access(document_id,"تحديث الحالة")
+    flash("تم تحديث حالة المستند","success")
+    return redirect(url_for("document_view",document_id=document_id))
+
+@app.route("/documents/report")
+@login_required
+def documents_report():
+    data=rows("""SELECT d.document_no,d.title,c.name category_name,d.entity_type,
+      d.entity_name,d.issue_date,d.expiry_date,d.version_no,d.status,
+      d.confidentiality,d.file_url
+      FROM documents_archive d
+      LEFT JOIN document_categories c ON c.id=d.category_id
+      ORDER BY d.document_no""")
+    return render_template("documents_report.html",rows=data)
+
+@app.route("/documents/report.xlsx")
+@login_required
+def documents_report_export():
+    data=rows("""SELECT d.document_no,d.title,c.name category_name,d.entity_type,
+      d.entity_name,d.issue_date,d.expiry_date,d.version_no,d.status,
+      d.confidentiality,d.file_url
+      FROM documents_archive d
+      LEFT JOIN document_categories c ON c.id=d.category_id
+      ORDER BY d.document_no""")
+    return xlsx_response("documents_archive.xlsx","أرشيف المستندات",
+      ["رقم المستند","العنوان","التصنيف","نوع الارتباط","الجهة",
+       "تاريخ الإصدار","تاريخ الانتهاء","الإصدار","الحالة","السرية","الرابط"],
+      [[r["document_no"],r["title"],r["category_name"],r["entity_type"],
+        r["entity_name"],r["issue_date"],r["expiry_date"],r["version_no"],
+        r["status"],r["confidentiality"],r["file_url"]] for r in data])
 
 
 @app.route("/contracts")
