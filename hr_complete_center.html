@@ -1,4 +1,14 @@
 {% extends "base.html" %}{% block content %}
+
+<div class="mb-3">
+  <a class="btn btn-primary" href="{{ url_for('manage_module', module_name='employees') }}">
+    قائمة الموظفين
+  </a>
+  <a class="btn btn-outline-primary" href="{{ url_for('hr_payroll_center') }}">
+    الحضور والرواتب
+  </a>
+</div>
+
 <div class="erp-page-title"><div><h3>الموارد البشرية</h3><small>Complete Human Resources Management</small></div><a class="btn btn-success" href="{{url_for('hr_report')}}">تقرير الموظفين</a></div>
 <div class="row g-3 mb-4">
 <div class="col-md-3"><div class="erp-kpi"><small>الموظفون النشطون</small><h4>{{stats.employees}}</h4></div></div>

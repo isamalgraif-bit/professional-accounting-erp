@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "15.0.0"
+APP_VERSION = "16.1.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1059,6 +1059,18 @@ ENDPOINT_MODULE_MAP = {
     "income_statement":"reports","balance_sheet":"reports","cash_flow_statement":"reports",
     "fixed_assets_center":"assets","fixed_assets":"assets","asset_categories":"assets",
     "asset_depreciation":"assets","fixed_assets_report":"assets",
+    "hr_complete_center":"payroll",
+    "hr_employee_profile":"payroll",
+    "hr_contracts":"payroll",
+    "hr_leave_types":"payroll",
+    "hr_leaves":"payroll",
+    "hr_leave_approve":"payroll",
+    "hr_documents":"payroll",
+    "hr_warnings":"payroll",
+    "hr_end_of_service":"payroll",
+    "hr_recruitment":"payroll",
+    "hr_report":"payroll",
+    "hr_report_export":"payroll",
     "hr_payroll_center":"payroll","departments":"payroll","attendance":"payroll",
     "salary_adjustments":"payroll","payroll_runs":"payroll","payroll_report":"payroll",
     "projects_center":"projects","project_new":"projects","project_view":"projects",
@@ -1160,6 +1172,7 @@ APPROVAL_DOCUMENT_TYPES = {
     "عرض سعر":"sales_quotation",
     "أمر بيع":"sales_order",
     "مستخلص مشروع":"progress_certificate",
+    "أمر تغيير":"variation_order",
 }
 
 def next_approval_request_no():
@@ -1368,6 +1381,109 @@ def calculate_end_of_service(employee_id, service_end_date, other_dues=0, deduct
         "deductions":round(float(deductions or 0),2),
         "net_settlement":round(net,2),
     }
+
+
+
+def next_contracting_number(table_name, prefix):
+    allowed={
+        "subcontractors":"code",
+        "subcontract_contracts":"contract_no",
+        "subcontract_certificates":"certificate_no",
+        "variation_orders":"variation_no",
+        "contract_extensions":"extension_no",
+    }
+    if table_name not in allowed:
+        raise ValueError("Invalid contracting sequence")
+    count=db.session.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar() or 0
+    return f"{prefix}-{count+1:06d}"
+
+def subcontract_contract_summary(contract_id):
+    contract=row("SELECT * FROM subcontract_contracts WHERE id=:id",{"id":contract_id})
+    certified=row("""SELECT COALESCE(SUM(total),0) value
+                     FROM subcontract_certificates
+                     WHERE contract_id=:id AND status IN ('معتمد','مفوتر')""",
+                  {"id":contract_id})["value"]
+    retention=row("""SELECT COALESCE(SUM(retention_amount),0) value
+                     FROM subcontract_certificates
+                     WHERE contract_id=:id AND status IN ('معتمد','مفوتر')""",
+                  {"id":contract_id})["value"]
+    contract_value=float(contract["contract_value"] or 0) if contract else 0
+    return {
+        "certified":round(float(certified or 0),2),
+        "retention":round(float(retention or 0),2),
+        "remaining":round(contract_value-float(certified or 0),2),
+        "completion":round(float(certified or 0)/contract_value*100,2) if contract_value else 0,
+    }
+
+
+
+def database_column_exists(table_name, column_name):
+    """Return True when a PostgreSQL column exists in the current schema."""
+    result = db.session.execute(text("""
+        SELECT EXISTS(
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = :table_name
+              AND column_name = :column_name
+        )
+    """), {
+        "table_name": table_name,
+        "column_name": column_name
+    }).scalar()
+    return bool(result)
+
+
+def database_table_exists(table_name):
+    """Return True when a PostgreSQL table exists in the current schema."""
+    result = db.session.execute(text("""
+        SELECT EXISTS(
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = current_schema()
+              AND table_name = :table_name
+        )
+    """), {"table_name": table_name}).scalar()
+    return bool(result)
+
+
+def safe_scalar(sql_text, params=None, default=0):
+    """Run a scalar query without allowing a dashboard widget to crash the page."""
+    try:
+        result = db.session.execute(text(sql_text), params or {}).scalar()
+        return default if result is None else result
+    except Exception:
+        db.session.rollback()
+        return default
+
+
+def ensure_hr_and_sales_schema():
+    """Apply critical compatibility migrations for HR and sales dashboards."""
+    statements = [
+        "ALTER TABLE sales_returns ADD COLUMN IF NOT EXISTS cost_total NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE sales_returns ADD COLUMN IF NOT EXISTS status VARCHAR(40) DEFAULT 'معتمد'",
+        "ALTER TABLE sales_return_items ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(18,4) DEFAULT 0",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS department_id INTEGER",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS cost_center_id INTEGER",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS hire_date DATE",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS contract_end_date DATE",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS iqama_no VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS iqama_expiry DATE",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS passport_no VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS passport_expiry DATE",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS medical_insurance_expiry DATE",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_iban VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS housing_allowance NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS transport_allowance NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS other_allowance NUMERIC(18,2) DEFAULT 0"
+    ]
+    for statement in statements:
+        try:
+            db.session.execute(text(statement))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
 
 def init_db():
@@ -2354,6 +2470,112 @@ def init_db():
             interview_date TIMESTAMP,
             interview_result TEXT DEFAULT '',
             notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS subcontractors(
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(100) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            name_en VARCHAR(255) DEFAULT '',
+            tax_no VARCHAR(100) DEFAULT '',
+            commercial_registration VARCHAR(100) DEFAULT '',
+            phone VARCHAR(100) DEFAULT '',
+            email VARCHAR(255) DEFAULT '',
+            address TEXT DEFAULT '',
+            specialty VARCHAR(255) DEFAULT '',
+            active INTEGER DEFAULT 1,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS subcontract_contracts(
+            id SERIAL PRIMARY KEY,
+            contract_no VARCHAR(100) UNIQUE NOT NULL,
+            project_id INTEGER NOT NULL REFERENCES projects(id),
+            subcontractor_id INTEGER NOT NULL REFERENCES subcontractors(id),
+            contract_date DATE NOT NULL,
+            start_date DATE,
+            end_date DATE,
+            contract_value NUMERIC(18,2) DEFAULT 0,
+            retention_rate NUMERIC(8,2) DEFAULT 0,
+            advance_amount NUMERIC(18,2) DEFAULT 0,
+            tax_rate NUMERIC(8,2) DEFAULT 15,
+            status VARCHAR(50) DEFAULT 'ساري',
+            scope_of_work TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS subcontract_boq_items(
+            id SERIAL PRIMARY KEY,
+            contract_id INTEGER NOT NULL REFERENCES subcontract_contracts(id) ON DELETE CASCADE,
+            item_code VARCHAR(100) NOT NULL,
+            description VARCHAR(500) NOT NULL,
+            unit VARCHAR(50) DEFAULT 'وحدة',
+            quantity NUMERIC(18,3) DEFAULT 0,
+            unit_rate NUMERIC(18,2) DEFAULT 0,
+            total_value NUMERIC(18,2) DEFAULT 0,
+            cumulative_qty NUMERIC(18,3) DEFAULT 0,
+            UNIQUE(contract_id,item_code)
+        )""",
+        """CREATE TABLE IF NOT EXISTS subcontract_certificates(
+            id SERIAL PRIMARY KEY,
+            certificate_no VARCHAR(100) UNIQUE NOT NULL,
+            contract_id INTEGER NOT NULL REFERENCES subcontract_contracts(id),
+            certificate_date DATE NOT NULL,
+            period_from DATE,
+            period_to DATE,
+            gross_value NUMERIC(18,2) DEFAULT 0,
+            retention_amount NUMERIC(18,2) DEFAULT 0,
+            advance_recovery NUMERIC(18,2) DEFAULT 0,
+            other_deductions NUMERIC(18,2) DEFAULT 0,
+            subtotal NUMERIC(18,2) DEFAULT 0,
+            vat NUMERIC(18,2) DEFAULT 0,
+            total NUMERIC(18,2) DEFAULT 0,
+            status VARCHAR(50) DEFAULT 'مسودة',
+            supplier_invoice_id INTEGER,
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS subcontract_certificate_items(
+            id SERIAL PRIMARY KEY,
+            certificate_id INTEGER NOT NULL REFERENCES subcontract_certificates(id) ON DELETE CASCADE,
+            boq_item_id INTEGER NOT NULL REFERENCES subcontract_boq_items(id),
+            previous_qty NUMERIC(18,3) DEFAULT 0,
+            current_qty NUMERIC(18,3) DEFAULT 0,
+            cumulative_qty NUMERIC(18,3) DEFAULT 0,
+            unit_rate NUMERIC(18,2) DEFAULT 0,
+            current_value NUMERIC(18,2) DEFAULT 0
+        )""",
+        """CREATE TABLE IF NOT EXISTS variation_orders(
+            id SERIAL PRIMARY KEY,
+            variation_no VARCHAR(100) UNIQUE NOT NULL,
+            project_id INTEGER NOT NULL REFERENCES projects(id),
+            contract_id INTEGER REFERENCES project_contracts(id),
+            variation_date DATE NOT NULL,
+            title VARCHAR(255) NOT NULL,
+            description TEXT DEFAULT '',
+            reason TEXT DEFAULT '',
+            value NUMERIC(18,2) DEFAULT 0,
+            time_extension_days INTEGER DEFAULT 0,
+            status VARCHAR(50) DEFAULT 'مسودة',
+            approval_request_id INTEGER REFERENCES approval_requests(id),
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS contract_extensions(
+            id SERIAL PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES projects(id),
+            contract_id INTEGER REFERENCES project_contracts(id),
+            extension_no VARCHAR(100) UNIQUE NOT NULL,
+            request_date DATE NOT NULL,
+            approved_date DATE,
+            old_end_date DATE,
+            new_end_date DATE NOT NULL,
+            extension_days INTEGER DEFAULT 0,
+            reason TEXT DEFAULT '',
+            status VARCHAR(50) DEFAULT 'مسودة',
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
@@ -4795,32 +5017,159 @@ def sales_return_view(return_id):
 @app.route("/sales/dashboard")
 @login_required
 def sales_dashboard():
-    summary=row("""SELECT
-      COALESCE(SUM(total),0) total_sales,
-      COALESCE(SUM(vat),0) total_vat,
-      COUNT(*) invoice_count
-      FROM invoices WHERE status='معتمدة'""")
-    return_summary=row("""SELECT COALESCE(SUM(total),0) total_returns,
-                                  COUNT(*) return_count FROM sales_returns""")
-    profit=row("""SELECT COALESCE(SUM(i.total),0)-COALESCE((SELECT SUM(r.total) FROM sales_returns r),0) net_sales,
-      COALESCE((SELECT SUM(di.quantity*di.unit_cost) FROM sales_delivery_items di),0)
-      -COALESCE((SELECT SUM(COALESCE(sri.quantity,0)*COALESCE(sri.unit_cost,0))
-                 FROM sales_return_items sri),0) net_cost""")
-    monthly=rows("""SELECT TO_CHAR(invoice_date,'YYYY-MM') month,
-                    SUM(total) sales,COUNT(*) invoice_count
-                    FROM invoices WHERE status='معتمدة'
-                    GROUP BY TO_CHAR(invoice_date,'YYYY-MM') ORDER BY month DESC LIMIT 12""")
-    customers=rows("""SELECT c.name,SUM(i.total) total
-                      FROM invoices i JOIN customers c ON c.id=i.customer_id
-                      WHERE i.status='معتمدة' GROUP BY c.id,c.name
-                      ORDER BY total DESC LIMIT 10""")
-    items=rows("""SELECT ii.item_name,SUM(ii.quantity) quantity,SUM(ii.line_total) sales
-                  FROM invoice_items ii JOIN invoices i ON i.id=ii.invoice_id
-                  WHERE i.status='معتمدة' GROUP BY ii.item_name
-                  ORDER BY sales DESC LIMIT 10""")
-    return render_template("sales_dashboard.html",summary=summary,
-      return_summary=return_summary,profit=profit,monthly=monthly,
-      top_customers=customers,top_items=items)
+    """Sales dashboard that remains available during schema upgrades."""
+    summary = {
+        "total_sales": 0,
+        "total_vat": 0,
+        "invoice_count": 0,
+    }
+    return_summary = {
+        "total_returns": 0,
+        "return_count": 0,
+    }
+    profit = {
+        "net_sales": 0,
+        "net_cost": 0,
+        "gross_profit": 0,
+    }
+    monthly = []
+    customers = []
+    items = []
+    dashboard_warnings = []
+
+    try:
+        summary_row = row("""
+            SELECT
+                COALESCE(SUM(total), 0) AS total_sales,
+                COALESCE(SUM(vat), 0) AS total_vat,
+                COUNT(*) AS invoice_count
+            FROM invoices
+            WHERE status = 'معتمدة'
+        """)
+        if summary_row:
+            summary = summary_row
+    except Exception as exc:
+        db.session.rollback()
+        dashboard_warnings.append(f"تعذر قراءة ملخص الفواتير: {exc}")
+
+    try:
+        if database_table_exists("sales_returns"):
+            return_row = row("""
+                SELECT
+                    COALESCE(SUM(total), 0) AS total_returns,
+                    COUNT(*) AS return_count
+                FROM sales_returns
+            """)
+            if return_row:
+                return_summary = return_row
+    except Exception as exc:
+        db.session.rollback()
+        dashboard_warnings.append(f"تعذر قراءة مرتجعات المبيعات: {exc}")
+
+    total_sales = float(summary.get("total_sales") or 0)
+    total_returns = float(return_summary.get("total_returns") or 0)
+    net_sales = round(total_sales - total_returns, 2)
+
+    sales_cost = 0.0
+    return_cost = 0.0
+
+    try:
+        if database_table_exists("sales_delivery_items"):
+            sales_cost = float(safe_scalar("""
+                SELECT COALESCE(SUM(
+                    COALESCE(quantity, 0) * COALESCE(unit_cost, 0)
+                ), 0)
+                FROM sales_delivery_items
+            """, default=0) or 0)
+    except Exception:
+        db.session.rollback()
+
+    try:
+        if (
+            database_table_exists("sales_returns")
+            and database_column_exists("sales_returns", "cost_total")
+        ):
+            return_cost = float(safe_scalar("""
+                SELECT COALESCE(SUM(cost_total), 0)
+                FROM sales_returns
+            """, default=0) or 0)
+        elif (
+            database_table_exists("sales_return_items")
+            and database_column_exists("sales_return_items", "unit_cost")
+        ):
+            return_cost = float(safe_scalar("""
+                SELECT COALESCE(SUM(
+                    COALESCE(quantity, 0) * COALESCE(unit_cost, 0)
+                ), 0)
+                FROM sales_return_items
+            """, default=0) or 0)
+    except Exception:
+        db.session.rollback()
+
+    net_cost = round(sales_cost - return_cost, 2)
+    profit = {
+        "net_sales": net_sales,
+        "net_cost": net_cost,
+        "gross_profit": round(net_sales - net_cost, 2),
+    }
+
+    try:
+        monthly = rows("""
+            SELECT
+                TO_CHAR(invoice_date, 'YYYY-MM') AS month,
+                COALESCE(SUM(total), 0) AS sales,
+                COUNT(*) AS invoice_count
+            FROM invoices
+            WHERE status = 'معتمدة'
+            GROUP BY TO_CHAR(invoice_date, 'YYYY-MM')
+            ORDER BY month DESC
+            LIMIT 12
+        """)
+    except Exception as exc:
+        db.session.rollback()
+        dashboard_warnings.append(f"تعذر قراءة المبيعات الشهرية: {exc}")
+
+    try:
+        customers = rows("""
+            SELECT c.name, COALESCE(SUM(i.total), 0) AS total
+            FROM invoices i
+            JOIN customers c ON c.id = i.customer_id
+            WHERE i.status = 'معتمدة'
+            GROUP BY c.id, c.name
+            ORDER BY total DESC
+            LIMIT 10
+        """)
+    except Exception as exc:
+        db.session.rollback()
+        dashboard_warnings.append(f"تعذر قراءة أفضل العملاء: {exc}")
+
+    try:
+        items = rows("""
+            SELECT
+                ii.item_name,
+                COALESCE(SUM(ii.quantity), 0) AS quantity,
+                COALESCE(SUM(ii.line_total), 0) AS sales
+            FROM invoice_items ii
+            JOIN invoices i ON i.id = ii.invoice_id
+            WHERE i.status = 'معتمدة'
+            GROUP BY ii.item_name
+            ORDER BY sales DESC
+            LIMIT 10
+        """)
+    except Exception as exc:
+        db.session.rollback()
+        dashboard_warnings.append(f"تعذر قراءة أفضل الأصناف: {exc}")
+
+    return render_template(
+        "sales_dashboard.html",
+        summary=summary,
+        return_summary=return_summary,
+        profit=profit,
+        monthly=monthly,
+        top_customers=customers,
+        top_items=items,
+        dashboard_warnings=dashboard_warnings,
+    )
 
 @app.route("/sales/reports")
 @login_required
@@ -5685,6 +6034,335 @@ def system_health():
 
 
 
+
+
+
+@app.route("/contracts")
+@login_required
+def contracts_center():
+    stats={
+      "subcontractors":row("SELECT COUNT(*) c FROM subcontractors WHERE active=1")["c"],
+      "contracts":row("SELECT COUNT(*) c FROM subcontract_contracts WHERE status='ساري'")["c"],
+      "variations":row("SELECT COUNT(*) c FROM variation_orders WHERE status IN ('مسودة','قيد الاعتماد')")["c"],
+      "extensions":row("SELECT COUNT(*) c FROM contract_extensions WHERE status IN ('مسودة','قيد الاعتماد')")["c"],
+    }
+    return render_template("contracts_center.html",stats=stats,
+      contracts=rows("""SELECT sc.*,p.project_no,p.name project_name,s.name subcontractor_name,
+        COALESCE((SELECT SUM(c.total) FROM subcontract_certificates c
+                  WHERE c.contract_id=sc.id AND c.status IN ('معتمد','مفوتر')),0) certified
+        FROM subcontract_contracts sc
+        JOIN projects p ON p.id=sc.project_id
+        JOIN subcontractors s ON s.id=sc.subcontractor_id
+        ORDER BY sc.id DESC LIMIT 20"""),
+      variations=rows("""SELECT v.*,p.project_no,p.name project_name
+                         FROM variation_orders v JOIN projects p ON p.id=v.project_id
+                         ORDER BY v.id DESC LIMIT 20"""))
+
+@app.route("/contracts/subcontractors",methods=["GET","POST"])
+@login_required
+def subcontractors():
+    if request.method=="POST":
+        code=request.form.get("code") or next_contracting_number("subcontractors","SUB")
+        execute("""INSERT INTO subcontractors(code,name,name_en,tax_no,
+          commercial_registration,phone,email,address,specialty,active,
+          created_by,created_at)
+          VALUES(:code,:name,:name_en,:tax,:cr,:phone,:email,:address,:specialty,
+          1,:uid,:created)
+          ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,
+          phone=EXCLUDED.phone,email=EXCLUDED.email,specialty=EXCLUDED.specialty""",
+          {"code":code,"name":request.form["name"],
+           "name_en":request.form.get("name_en",""),
+           "tax":request.form.get("tax_no",""),
+           "cr":request.form.get("commercial_registration",""),
+           "phone":request.form.get("phone",""),
+           "email":request.form.get("email",""),
+           "address":request.form.get("address",""),
+           "specialty":request.form.get("specialty",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash("تم حفظ المقاول الباطن","success")
+        return redirect(url_for("subcontractors"))
+    return render_template("subcontractors.html",
+      rows=rows("SELECT * FROM subcontractors ORDER BY name"))
+
+@app.route("/contracts/subcontracts",methods=["GET","POST"])
+@login_required
+def subcontract_contracts():
+    if request.method=="POST":
+        no=request.form.get("contract_no") or next_contracting_number("subcontract_contracts","SC")
+        execute("""INSERT INTO subcontract_contracts(contract_no,project_id,
+          subcontractor_id,contract_date,start_date,end_date,contract_value,
+          retention_rate,advance_amount,tax_rate,status,scope_of_work,notes,
+          created_by,created_at)
+          VALUES(:no,:project,:subcontractor,:contract_date,:start,:end,:value,
+          :retention,:advance,:tax,:status,:scope,:notes,:uid,:created)""",
+          {"no":no,"project":request.form["project_id"],
+           "subcontractor":request.form["subcontractor_id"],
+           "contract_date":request.form["contract_date"],
+           "start":request.form.get("start_date") or None,
+           "end":request.form.get("end_date") or None,
+           "value":float(request.form.get("contract_value") or 0),
+           "retention":float(request.form.get("retention_rate") or 0),
+           "advance":float(request.form.get("advance_amount") or 0),
+           "tax":float(request.form.get("tax_rate") or 15),
+           "status":request.form.get("status","ساري"),
+           "scope":request.form.get("scope_of_work",""),
+           "notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash("تم حفظ عقد المقاول الباطن","success")
+        return redirect(url_for("subcontract_contracts"))
+    return render_template("subcontract_contracts.html",
+      contracts=rows("""SELECT sc.*,p.project_no,p.name project_name,
+        s.name subcontractor_name FROM subcontract_contracts sc
+        JOIN projects p ON p.id=sc.project_id
+        JOIN subcontractors s ON s.id=sc.subcontractor_id
+        ORDER BY sc.id DESC"""),
+      projects=rows("SELECT id,project_no,name FROM projects ORDER BY project_no"),
+      subcontractors=rows("SELECT id,code,name FROM subcontractors WHERE active=1 ORDER BY name"))
+
+@app.route("/contracts/subcontracts/<int:contract_id>")
+@login_required
+def subcontract_contract_view(contract_id):
+    contract=row("""SELECT sc.*,p.project_no,p.name project_name,
+      s.name subcontractor_name,s.tax_no,s.phone
+      FROM subcontract_contracts sc
+      JOIN projects p ON p.id=sc.project_id
+      JOIN subcontractors s ON s.id=sc.subcontractor_id
+      WHERE sc.id=:id""",{"id":contract_id})
+    if not contract:
+        return "العقد غير موجود",404
+    return render_template("subcontract_contract_view.html",
+      contract=contract,summary=subcontract_contract_summary(contract_id),
+      boq=rows("""SELECT * FROM subcontract_boq_items
+                  WHERE contract_id=:id ORDER BY id""",{"id":contract_id}),
+      certificates=rows("""SELECT * FROM subcontract_certificates
+                           WHERE contract_id=:id ORDER BY id DESC""",{"id":contract_id}))
+
+@app.route("/contracts/subcontracts/<int:contract_id>/boq",methods=["POST"])
+@login_required
+def subcontract_boq_add(contract_id):
+    qty=float(request.form.get("quantity") or 0)
+    rate=float(request.form.get("unit_rate") or 0)
+    execute("""INSERT INTO subcontract_boq_items(contract_id,item_code,description,
+      unit,quantity,unit_rate,total_value)
+      VALUES(:contract,:code,:description,:unit,:qty,:rate,:total)
+      ON CONFLICT(contract_id,item_code) DO UPDATE SET
+      description=EXCLUDED.description,unit=EXCLUDED.unit,
+      quantity=EXCLUDED.quantity,unit_rate=EXCLUDED.unit_rate,
+      total_value=EXCLUDED.total_value""",
+      {"contract":contract_id,"code":request.form["item_code"],
+       "description":request.form["description"],
+       "unit":request.form.get("unit","وحدة"),"qty":qty,"rate":rate,
+       "total":round(qty*rate,2)})
+    flash("تم حفظ بند العقد","success")
+    return redirect(url_for("subcontract_contract_view",contract_id=contract_id))
+
+@app.route("/contracts/subcontracts/<int:contract_id>/certificate",methods=["GET","POST"])
+@login_required
+def subcontract_certificate_new(contract_id):
+    contract=row("""SELECT sc.*,p.project_no,p.name project_name,
+      s.name subcontractor_name FROM subcontract_contracts sc
+      JOIN projects p ON p.id=sc.project_id
+      JOIN subcontractors s ON s.id=sc.subcontractor_id
+      WHERE sc.id=:id""",{"id":contract_id})
+    if request.method=="POST":
+        no=next_contracting_number("subcontract_certificates","SPC")
+        item_ids=request.form.getlist("boq_item_id[]")
+        current_qtys=request.form.getlist("current_qty[]")
+        prepared=[];gross=0
+        for idx,item_id in enumerate(item_ids):
+            item=row("""SELECT * FROM subcontract_boq_items
+                        WHERE id=:id AND contract_id=:contract""",
+                     {"id":item_id,"contract":contract_id})
+            if not item:
+                continue
+            current=float(current_qtys[idx] or 0)
+            previous=float(item["cumulative_qty"] or 0)
+            cumulative=previous+current
+            if cumulative > float(item["quantity"] or 0)+0.0001:
+                flash(f"الكمية التراكمية للبند {item['item_code']} تجاوزت كمية العقد","danger")
+                return redirect(url_for("subcontract_certificate_new",contract_id=contract_id))
+            current_value=round(current*float(item["unit_rate"] or 0),2)
+            prepared.append((item,previous,current,cumulative,current_value))
+            gross+=current_value
+
+        retention_rate=float(contract["retention_rate"] or 0)
+        retention=round(gross*retention_rate/100,2)
+        advance_recovery=float(request.form.get("advance_recovery") or 0)
+        other=float(request.form.get("other_deductions") or 0)
+        subtotal=round(gross-retention-advance_recovery-other,2)
+        vat=round(subtotal*float(contract["tax_rate"] or 15)/100,2)
+        total=round(subtotal+vat,2)
+
+        execute("""INSERT INTO subcontract_certificates(certificate_no,contract_id,
+          certificate_date,period_from,period_to,gross_value,retention_amount,
+          advance_recovery,other_deductions,subtotal,vat,total,status,notes,
+          created_by,created_at)
+          VALUES(:no,:contract,:dt,:from,:to,:gross,:retention,:advance,:other,
+          :subtotal,:vat,:total,'مسودة',:notes,:uid,:created)""",
+          {"no":no,"contract":contract_id,"dt":request.form["certificate_date"],
+           "from":request.form.get("period_from") or None,
+           "to":request.form.get("period_to") or None,
+           "gross":round(gross,2),"retention":retention,
+           "advance":advance_recovery,"other":other,"subtotal":subtotal,
+           "vat":vat,"total":total,"notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        cert_id=row("SELECT id FROM subcontract_certificates WHERE certificate_no=:no",{"no":no})["id"]
+        for item,previous,current,cumulative,current_value in prepared:
+            execute("""INSERT INTO subcontract_certificate_items(certificate_id,
+              boq_item_id,previous_qty,current_qty,cumulative_qty,unit_rate,current_value)
+              VALUES(:cert,:item,:previous,:current,:cumulative,:rate,:value)""",
+              {"cert":cert_id,"item":item["id"],"previous":previous,
+               "current":current,"cumulative":cumulative,
+               "rate":item["unit_rate"],"value":current_value})
+            execute("""UPDATE subcontract_boq_items SET cumulative_qty=:qty
+                       WHERE id=:id""",{"qty":cumulative,"id":item["id"]})
+        flash(f"تم إنشاء مستخلص المقاول {no}","success")
+        return redirect(url_for("subcontract_certificate_view",certificate_id=cert_id))
+    return render_template("subcontract_certificate_form.html",
+      contract=contract,
+      boq=rows("""SELECT * FROM subcontract_boq_items
+                  WHERE contract_id=:id ORDER BY id""",{"id":contract_id}))
+
+@app.route("/contracts/subcontract-certificates/<int:certificate_id>")
+@login_required
+def subcontract_certificate_view(certificate_id):
+    cert=row("""SELECT c.*,sc.contract_no,p.project_no,p.name project_name,
+      s.name subcontractor_name
+      FROM subcontract_certificates c
+      JOIN subcontract_contracts sc ON sc.id=c.contract_id
+      JOIN projects p ON p.id=sc.project_id
+      JOIN subcontractors s ON s.id=sc.subcontractor_id
+      WHERE c.id=:id""",{"id":certificate_id})
+    if not cert:
+        return "المستخلص غير موجود",404
+    return render_template("subcontract_certificate_view.html",cert=cert,
+      items=rows("""SELECT i.*,b.item_code,b.description,b.unit,b.quantity contract_qty
+                    FROM subcontract_certificate_items i
+                    JOIN subcontract_boq_items b ON b.id=i.boq_item_id
+                    WHERE i.certificate_id=:id ORDER BY i.id""",{"id":certificate_id}))
+
+@app.route("/contracts/subcontract-certificates/<int:certificate_id>/approve",methods=["POST"])
+@login_required
+def subcontract_certificate_approve(certificate_id):
+    execute("""UPDATE subcontract_certificates SET status='معتمد'
+               WHERE id=:id""",{"id":certificate_id})
+    flash("تم اعتماد مستخلص المقاول","success")
+    return redirect(url_for("subcontract_certificate_view",certificate_id=certificate_id))
+
+@app.route("/contracts/variations",methods=["GET","POST"])
+@login_required
+def variation_orders():
+    if request.method=="POST":
+        no=request.form.get("variation_no") or next_contracting_number("variation_orders","VO")
+        execute("""INSERT INTO variation_orders(variation_no,project_id,contract_id,
+          variation_date,title,description,reason,value,time_extension_days,status,
+          created_by,created_at)
+          VALUES(:no,:project,:contract,:dt,:title,:description,:reason,:value,
+          :days,'مسودة',:uid,:created)""",
+          {"no":no,"project":request.form["project_id"],
+           "contract":request.form.get("contract_id") or None,
+           "dt":request.form["variation_date"],"title":request.form["title"],
+           "description":request.form.get("description",""),
+           "reason":request.form.get("reason",""),
+           "value":float(request.form.get("value") or 0),
+           "days":int(request.form.get("time_extension_days") or 0),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash(f"تم إنشاء أمر التغيير {no}","success")
+        return redirect(url_for("variation_orders"))
+    return render_template("variation_orders.html",
+      rows=rows("""SELECT v.*,p.project_no,p.name project_name,pc.contract_no
+                   FROM variation_orders v
+                   JOIN projects p ON p.id=v.project_id
+                   LEFT JOIN project_contracts pc ON pc.id=v.contract_id
+                   ORDER BY v.id DESC"""),
+      projects=rows("SELECT id,project_no,name FROM projects ORDER BY project_no"),
+      contracts=rows("SELECT id,contract_no,project_id FROM project_contracts ORDER BY contract_no"))
+
+@app.route("/contracts/variations/<int:variation_id>/submit",methods=["POST"])
+@login_required
+def variation_submit(variation_id):
+    variation=row("""SELECT * FROM variation_orders WHERE id=:id""",{"id":variation_id})
+    if not variation:
+        return "أمر التغيير غير موجود",404
+    try:
+        approval_id=submit_for_approval("أمر تغيير",variation["id"],
+                                        variation["variation_no"],variation["value"],
+                                        variation["title"])
+        execute("""UPDATE variation_orders SET status='قيد الاعتماد',
+                   approval_request_id=:approval WHERE id=:id""",
+                {"approval":approval_id,"id":variation_id})
+        flash("تم إرسال أمر التغيير للاعتماد","success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(str(exc),"danger")
+    return redirect(url_for("variation_orders"))
+
+@app.route("/contracts/extensions",methods=["GET","POST"])
+@login_required
+def contract_extensions():
+    if request.method=="POST":
+        no=request.form.get("extension_no") or next_contracting_number("contract_extensions","EXT")
+        old_end=request.form.get("old_end_date") or None
+        new_end=request.form["new_end_date"]
+        days=0
+        if old_end:
+            days=(datetime.strptime(new_end,"%Y-%m-%d").date()-
+                  datetime.strptime(old_end,"%Y-%m-%d").date()).days
+        execute("""INSERT INTO contract_extensions(project_id,contract_id,extension_no,
+          request_date,old_end_date,new_end_date,extension_days,reason,status,
+          created_by,created_at)
+          VALUES(:project,:contract,:no,:request_date,:old_end,:new_end,:days,
+          :reason,'مسودة',:uid,:created)""",
+          {"project":request.form["project_id"],
+           "contract":request.form.get("contract_id") or None,
+           "no":no,"request_date":request.form["request_date"],
+           "old_end":old_end,"new_end":new_end,"days":days,
+           "reason":request.form.get("reason",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash("تم حفظ طلب تمديد العقد","success")
+        return redirect(url_for("contract_extensions"))
+    return render_template("contract_extensions.html",
+      rows=rows("""SELECT e.*,p.project_no,p.name project_name,pc.contract_no
+                   FROM contract_extensions e
+                   JOIN projects p ON p.id=e.project_id
+                   LEFT JOIN project_contracts pc ON pc.id=e.contract_id
+                   ORDER BY e.id DESC"""),
+      projects=rows("SELECT id,project_no,name FROM projects ORDER BY project_no"),
+      contracts=rows("SELECT id,contract_no,project_id FROM project_contracts ORDER BY contract_no"))
+
+@app.route("/contracts/report")
+@login_required
+def contracts_report():
+    data=rows("""SELECT sc.contract_no,p.project_no,p.name project_name,
+      s.name subcontractor_name,sc.contract_value,sc.retention_rate,sc.advance_amount,
+      sc.start_date,sc.end_date,sc.status,
+      COALESCE((SELECT SUM(c.total) FROM subcontract_certificates c
+                WHERE c.contract_id=sc.id AND c.status IN ('معتمد','مفوتر')),0) certified
+      FROM subcontract_contracts sc
+      JOIN projects p ON p.id=sc.project_id
+      JOIN subcontractors s ON s.id=sc.subcontractor_id
+      ORDER BY sc.id DESC""")
+    return render_template("contracts_report.html",rows=data)
+
+@app.route("/contracts/report.xlsx")
+@login_required
+def contracts_report_export():
+    data=rows("""SELECT sc.contract_no,p.project_no,p.name project_name,
+      s.name subcontractor_name,sc.contract_value,sc.retention_rate,sc.advance_amount,
+      sc.start_date,sc.end_date,sc.status,
+      COALESCE((SELECT SUM(c.total) FROM subcontract_certificates c
+                WHERE c.contract_id=sc.id AND c.status IN ('معتمد','مفوتر')),0) certified
+      FROM subcontract_contracts sc
+      JOIN projects p ON p.id=sc.project_id
+      JOIN subcontractors s ON s.id=sc.subcontractor_id
+      ORDER BY sc.id DESC""")
+    return xlsx_response("subcontract_contracts.xlsx","عقود المقاولين",
+      ["العقد","المشروع","اسم المشروع","المقاول","قيمة العقد","الاحتجاز%",
+       "الدفعة المقدمة","البداية","النهاية","المعتمد","المتبقي","الحالة"],
+      [[r["contract_no"],r["project_no"],r["project_name"],r["subcontractor_name"],
+        r["contract_value"],r["retention_rate"],r["advance_amount"],r["start_date"],
+        r["end_date"],r["certified"],float(r["contract_value"])-float(r["certified"]),
+        r["status"]] for r in data])
 
 
 @app.route("/hr")

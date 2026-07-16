@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>إدارة العقود والمقاولين</h3><small>Contracts & Subcontractors</small></div><a class="btn btn-success" href="{{url_for('contracts_report')}}">التقرير</a></div>
+<div class="row g-3 mb-4">
+<div class="col-md-3"><div class="erp-kpi"><small>المقاولون النشطون</small><h4>{{stats.subcontractors}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>العقود السارية</small><h4>{{stats.contracts}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>أوامر تغيير معلقة</small><h4>{{stats.variations}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>تمديدات معلقة</small><h4>{{stats.extensions}}</h4></div></div>
+</div>
+<div class="row g-3 mb-4">{% for t,d,u in [
+('المقاولون الباطنون','بيانات المقاولين والتخصصات',url_for('subcontractors')),
+('عقود المقاولين','القيمة والنطاق والاحتجاز',url_for('subcontract_contracts')),
+('أوامر التغيير','القيمة والمدة والاعتماد',url_for('variation_orders')),
+('تمديد العقود','تمديد مدة المشروع والعقد',url_for('contract_extensions'))] %}
+<div class="col-md-3"><a class="form-card d-block text-decoration-none text-dark h-100" href="{{u}}"><h5>{{t}}</h5><p>{{d}}</p></a></div>{% endfor %}</div>
+<div class="form-card"><h5>أحدث عقود المقاولين</h5><table class="table table-striped"><tr><th>العقد</th><th>المشروع</th><th>المقاول</th><th>القيمة</th><th>المعتمد</th><th>الحالة</th></tr>{% for c in contracts %}<tr><td><a href="{{url_for('subcontract_contract_view',contract_id=c.id)}}">{{c.contract_no}}</a></td><td>{{c.project_no}} - {{c.project_name}}</td><td>{{c.subcontractor_name}}</td><td>{{c.contract_value}}</td><td>{{c.certified}}</td><td>{{c.status}}</td></tr>{% endfor %}</table></div>{% endblock %}

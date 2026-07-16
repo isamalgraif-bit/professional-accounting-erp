@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>عقود المقاولين الباطنين</h3><small>Subcontract Agreements</small></div></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-2"><input class="form-control" name="contract_no" placeholder="رقم العقد"></div>
+<div class="col-md-3"><select class="form-select" name="project_id" required>{% for p in projects %}<option value="{{p.id}}">{{p.project_no}} - {{p.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><select class="form-select" name="subcontractor_id" required>{% for s in subcontractors %}<option value="{{s.id}}">{{s.code}} - {{s.name}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><input class="form-control" type="date" name="contract_date" required></div>
+<div class="col-md-2"><input class="form-control" type="number" step=".01" name="contract_value" placeholder="قيمة العقد"></div>
+<div class="col-md-2"><input class="form-control" type="date" name="start_date"></div>
+<div class="col-md-2"><input class="form-control" type="date" name="end_date"></div>
+<div class="col-md-2"><input class="form-control" type="number" step=".01" name="retention_rate" placeholder="الاحتجاز %"></div>
+<div class="col-md-2"><input class="form-control" type="number" step=".01" name="advance_amount" placeholder="الدفعة المقدمة"></div>
+<div class="col-md-2"><input class="form-control" type="number" step=".01" name="tax_rate" value="15" placeholder="الضريبة %"></div>
+<div class="col-md-2"><select class="form-select" name="status"><option>ساري</option><option>معلق</option><option>مكتمل</option></select></div>
+<div class="col-md-8"><textarea class="form-control" name="scope_of_work" placeholder="نطاق الأعمال"></textarea></div>
+<div class="col-md-4"><textarea class="form-control" name="notes" placeholder="ملاحظات"></textarea></div>
+<div class="col-12 text-end"><button class="btn btn-primary">حفظ العقد</button></div></div></form></div>
+<div class="form-card"><table class="table table-striped"><tr><th>العقد</th><th>المشروع</th><th>المقاول</th><th>القيمة</th><th>الفترة</th><th>الحالة</th><th></th></tr>{% for c in contracts %}<tr><td>{{c.contract_no}}</td><td>{{c.project_no}} - {{c.project_name}}</td><td>{{c.subcontractor_name}}</td><td>{{c.contract_value}}</td><td>{{c.start_date or '-'}} — {{c.end_date or '-'}}</td><td>{{c.status}}</td><td><a class="btn btn-sm btn-primary" href="{{url_for('subcontract_contract_view',contract_id=c.id)}}">عرض</a></td></tr>{% endfor %}</table></div>{% endblock %}

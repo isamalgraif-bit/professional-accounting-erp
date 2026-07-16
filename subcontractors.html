@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>المقاولون الباطنون</h3><small>Subcontractors</small></div></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-2"><input class="form-control" name="code" placeholder="الكود"></div>
+<div class="col-md-3"><input class="form-control" name="name" placeholder="اسم المقاول" required></div>
+<div class="col-md-3"><input class="form-control" name="name_en" placeholder="English Name"></div>
+<div class="col-md-2"><input class="form-control" name="tax_no" placeholder="الرقم الضريبي"></div>
+<div class="col-md-2"><input class="form-control" name="commercial_registration" placeholder="السجل التجاري"></div>
+<div class="col-md-2"><input class="form-control" name="phone" placeholder="الهاتف"></div>
+<div class="col-md-3"><input class="form-control" name="email" placeholder="البريد"></div>
+<div class="col-md-3"><input class="form-control" name="specialty" placeholder="التخصص"></div>
+<div class="col-md-4"><input class="form-control" name="address" placeholder="العنوان"></div>
+<div class="col-12 text-end"><button class="btn btn-primary">حفظ المقاول</button></div></div></form></div>
+<div class="form-card"><table class="table table-striped"><tr><th>الكود</th><th>المقاول</th><th>التخصص</th><th>الرقم الضريبي</th><th>الهاتف</th><th>الحالة</th></tr>{% for r in rows %}<tr><td>{{r.code}}</td><td>{{r.name}}</td><td>{{r.specialty}}</td><td>{{r.tax_no}}</td><td>{{r.phone}}</td><td>{{'نشط' if r.active else 'موقوف'}}</td></tr>{% endfor %}</table></div>{% endblock %}

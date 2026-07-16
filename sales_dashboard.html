@@ -1,4 +1,17 @@
 {% extends "base.html" %}{% block content %}
+
+{% if dashboard_warnings %}
+<div class="alert alert-warning">
+  <strong>تنبيه:</strong>
+  تم فتح لوحة المبيعات، لكن بعض المؤشرات لم تُحمّل بالكامل.
+  <ul class="mb-0 mt-2">
+    {% for warning in dashboard_warnings %}
+    <li>{{ warning }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <div class="erp-page-title"><div><h3>لوحة المبيعات</h3><small>Sales Dashboard & Profitability</small></div><a class="btn btn-success" href="{{url_for('sales_reports_export')}}">📊 Excel</a></div>
 <div class="row g-3 mb-4">
 <div class="col-md-3"><div class="erp-kpi"><small>إجمالي الفواتير</small><h4>{{"%.2f"|format(summary.total_sales)}}</h4></div></div>
@@ -8,5 +21,14 @@
 </div>
 <div class="row g-3"><div class="col-md-6"><div class="form-card"><h5>المبيعات الشهرية</h5><table class="table table-striped"><tr><th>الشهر</th><th>الفواتير</th><th>المبيعات</th></tr>{% for r in monthly %}<tr><td>{{r.month}}</td><td>{{r.invoice_count}}</td><td>{{r.sales}}</td></tr>{% endfor %}</table></div></div>
 <div class="col-md-6"><div class="form-card"><h5>أعلى العملاء</h5><table class="table table-striped"><tr><th>العميل</th><th>المبيعات</th></tr>{% for r in top_customers %}<tr><td>{{r.name}}</td><td>{{r.total}}</td></tr>{% endfor %}</table></div></div>
-<div class="col-md-6"><div class="form-card"><h5>أعلى الأصناف</h5><table class="table table-striped"><tr><th>الصنف</th><th>الكمية</th><th>المبيعات</th></tr>{% for r in top_items %}<tr><td>{{r.item_name}}</td><td>{{r.quantity}}</td><td>{{r.sales}}</td></tr>{% endfor %}</table></div></div></div>
+<div class="col-md-6"><div class="form-card"><h5>أعلى الأصناف</h5><table class="table table-striped"><tr><th>الصنف</th><th>الكمية</th><th>المبيعات</th></tr>{% for r in top_items %}<tr><td>{{r.item_name}}</td><td>{{r.quantity}}</td><td>{{r.sales}}</td></tr>{% endfor %}</table></div></div>
+<div class="form-card mt-3">
+  <h5>ملخص الربحية</h5>
+  <div class="row g-3">
+    <div class="col-md-4"><b>صافي المبيعات:</b> {{ profit.net_sales or 0 }}</div>
+    <div class="col-md-4"><b>صافي التكلفة:</b> {{ profit.net_cost or 0 }}</div>
+    <div class="col-md-4"><b>مجمل الربح:</b> {{ profit.gross_profit or 0 }}</div>
+  </div>
+</div>
+</div>
 {% endblock %}
