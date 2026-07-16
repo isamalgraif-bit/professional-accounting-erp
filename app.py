@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "14.0.0"
+APP_VERSION = "15.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1309,6 +1309,67 @@ def budget_summary_rows(budget_id):
     return output
 
 
+
+def next_hr_number(table_name, prefix):
+    allowed={
+        "leave_requests":"request_no",
+        "employee_contracts":"contract_no",
+        "recruitment_candidates":"candidate_no"
+    }
+    if table_name not in allowed:
+        raise ValueError("Invalid HR sequence")
+    count=db.session.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar() or 0
+    return f"{prefix}-{count+1:06d}"
+
+def calculate_leave_days(start_date, end_date):
+    start=datetime.strptime(str(start_date),"%Y-%m-%d").date()
+    end=datetime.strptime(str(end_date),"%Y-%m-%d").date()
+    if end < start:
+        raise ValueError("تاريخ نهاية الإجازة يجب أن يكون بعد تاريخ البداية.")
+    return (end-start).days+1
+
+def calculate_end_of_service(employee_id, service_end_date, other_dues=0, deductions=0):
+    employee=row("SELECT * FROM employees WHERE id=:id",{"id":employee_id})
+    if not employee:
+        raise ValueError("الموظف غير موجود.")
+    start=employee.get("hire_date")
+    if not start:
+        contract=row("""SELECT start_date FROM employee_contracts
+                        WHERE employee_id=:id ORDER BY start_date LIMIT 1""",{"id":employee_id})
+        start=contract["start_date"] if contract else None
+    if not start:
+        raise ValueError("تاريخ بداية خدمة الموظف غير مسجل.")
+    end=datetime.strptime(str(service_end_date),"%Y-%m-%d").date()
+    start_date=start if hasattr(start,"year") else datetime.strptime(str(start),"%Y-%m-%d").date()
+    service_days=max((end-start_date).days,0)
+    service_years=service_days/365.25
+    basic=float(employee.get("basic_salary") or 0)
+    if service_years <= 5:
+        gratuity=(basic/2)*service_years
+    else:
+        gratuity=(basic/2)*5 + basic*(service_years-5)
+
+    current_year=end.year
+    leave_balance=row("""SELECT COALESCE(SUM(remaining),0) remaining
+                         FROM employee_leave_balances
+                         WHERE employee_id=:employee AND year=:year""",
+                      {"employee":employee_id,"year":current_year})
+    remaining=float(leave_balance["remaining"] or 0)
+    leave_amount=(basic/30)*remaining
+    net=gratuity+leave_amount+float(other_dues or 0)-float(deductions or 0)
+    return {
+        "service_start_date":start_date,
+        "service_end_date":end,
+        "service_years":round(service_years,4),
+        "last_basic_salary":round(basic,2),
+        "gratuity_amount":round(gratuity,2),
+        "leave_balance_amount":round(leave_amount,2),
+        "other_dues":round(float(other_dues or 0),2),
+        "deductions":round(float(deductions or 0),2),
+        "net_settlement":round(net,2),
+    }
+
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -2180,6 +2241,122 @@ def init_db():
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
+        """CREATE TABLE IF NOT EXISTS employee_contracts(
+            id SERIAL PRIMARY KEY,
+            employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+            contract_no VARCHAR(100) UNIQUE NOT NULL,
+            contract_type VARCHAR(50) DEFAULT 'محدد المدة',
+            start_date DATE NOT NULL,
+            end_date DATE,
+            probation_end_date DATE,
+            basic_salary NUMERIC(18,2) DEFAULT 0,
+            housing_allowance NUMERIC(18,2) DEFAULT 0,
+            transport_allowance NUMERIC(18,2) DEFAULT 0,
+            other_allowance NUMERIC(18,2) DEFAULT 0,
+            working_hours NUMERIC(8,2) DEFAULT 8,
+            annual_leave_days INTEGER DEFAULT 21,
+            status VARCHAR(50) DEFAULT 'ساري',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS leave_types(
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(50) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            paid INTEGER DEFAULT 1,
+            annual_entitlement NUMERIC(8,2) DEFAULT 0,
+            active INTEGER DEFAULT 1
+        )""",
+        """CREATE TABLE IF NOT EXISTS employee_leave_balances(
+            id SERIAL PRIMARY KEY,
+            employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+            leave_type_id INTEGER NOT NULL REFERENCES leave_types(id),
+            year INTEGER NOT NULL,
+            opening_balance NUMERIC(8,2) DEFAULT 0,
+            accrued NUMERIC(8,2) DEFAULT 0,
+            used NUMERIC(8,2) DEFAULT 0,
+            remaining NUMERIC(8,2) DEFAULT 0,
+            UNIQUE(employee_id,leave_type_id,year)
+        )""",
+        """CREATE TABLE IF NOT EXISTS leave_requests(
+            id SERIAL PRIMARY KEY,
+            request_no VARCHAR(100) UNIQUE NOT NULL,
+            employee_id INTEGER NOT NULL REFERENCES employees(id),
+            leave_type_id INTEGER NOT NULL REFERENCES leave_types(id),
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            days NUMERIC(8,2) NOT NULL DEFAULT 0,
+            reason TEXT DEFAULT '',
+            status VARCHAR(50) DEFAULT 'مسودة',
+            approved_by INTEGER REFERENCES users(id),
+            approved_at TIMESTAMP,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS employee_documents(
+            id SERIAL PRIMARY KEY,
+            employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+            document_type VARCHAR(100) NOT NULL,
+            document_no VARCHAR(150) DEFAULT '',
+            issue_date DATE,
+            expiry_date DATE,
+            file_name VARCHAR(255) DEFAULT '',
+            file_url TEXT DEFAULT '',
+            status VARCHAR(50) DEFAULT 'ساري',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS employee_warnings(
+            id SERIAL PRIMARY KEY,
+            employee_id INTEGER NOT NULL REFERENCES employees(id),
+            warning_date DATE NOT NULL,
+            warning_type VARCHAR(100) DEFAULT 'إنذار كتابي',
+            subject VARCHAR(255) NOT NULL,
+            details TEXT NOT NULL,
+            action_required TEXT DEFAULT '',
+            status VARCHAR(50) DEFAULT 'مفتوح',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS employee_end_of_service(
+            id SERIAL PRIMARY KEY,
+            employee_id INTEGER NOT NULL REFERENCES employees(id),
+            calculation_date DATE NOT NULL,
+            service_start_date DATE NOT NULL,
+            service_end_date DATE NOT NULL,
+            service_years NUMERIC(10,4) DEFAULT 0,
+            last_basic_salary NUMERIC(18,2) DEFAULT 0,
+            gratuity_amount NUMERIC(18,2) DEFAULT 0,
+            leave_balance_amount NUMERIC(18,2) DEFAULT 0,
+            other_dues NUMERIC(18,2) DEFAULT 0,
+            deductions NUMERIC(18,2) DEFAULT 0,
+            net_settlement NUMERIC(18,2) DEFAULT 0,
+            status VARCHAR(50) DEFAULT 'مسودة',
+            journal_id INTEGER REFERENCES journal_entries(id),
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS recruitment_candidates(
+            id SERIAL PRIMARY KEY,
+            candidate_no VARCHAR(100) UNIQUE NOT NULL,
+            full_name VARCHAR(255) NOT NULL,
+            nationality VARCHAR(100) DEFAULT '',
+            phone VARCHAR(100) DEFAULT '',
+            email VARCHAR(255) DEFAULT '',
+            job_title VARCHAR(255) DEFAULT '',
+            department_id INTEGER REFERENCES departments(id),
+            expected_salary NUMERIC(18,2) DEFAULT 0,
+            source VARCHAR(100) DEFAULT '',
+            stage VARCHAR(50) DEFAULT 'جديد',
+            interview_date TIMESTAMP,
+            interview_result TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
@@ -2246,6 +2423,16 @@ def init_db():
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS warehouse_id INTEGER',
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS nationality VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS passport_no VARCHAR(100) DEFAULT ''",
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS passport_expiry DATE',
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS iqama_expiry DATE',
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS medical_insurance_expiry DATE',
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS social_insurance_no VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS emergency_contact VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS emergency_phone VARCHAR(100) DEFAULT ''",
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS termination_date DATE',
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS termination_reason TEXT DEFAULT ''",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255) DEFAULT ''",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT ''",
         'ALTER TABLE users ADD COLUMN IF NOT EXISTS active INTEGER DEFAULT 1',
@@ -5497,6 +5684,322 @@ def system_health():
 
 
 
+
+
+
+@app.route("/hr")
+@login_required
+def hr_complete_center():
+    stats={
+      "employees":row("SELECT COUNT(*) c FROM employees WHERE active=1")["c"],
+      "contracts_expiring":row("""SELECT COUNT(*) c FROM employee_contracts
+        WHERE status='ساري' AND end_date IS NOT NULL
+        AND end_date BETWEEN CURRENT_DATE AND CURRENT_DATE+INTERVAL '60 days'""")["c"],
+      "documents_expiring":row("""SELECT COUNT(*) c FROM employee_documents
+        WHERE expiry_date IS NOT NULL
+        AND expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE+INTERVAL '60 days'""")["c"],
+      "pending_leaves":row("SELECT COUNT(*) c FROM leave_requests WHERE status='قيد الاعتماد'")["c"],
+    }
+    alerts=rows("""SELECT e.id,e.name,'إقامة' alert_type,e.iqama_expiry expiry_date
+                   FROM employees e
+                   WHERE e.iqama_expiry IS NOT NULL
+                   AND e.iqama_expiry<=CURRENT_DATE+INTERVAL '60 days'
+                   UNION ALL
+                   SELECT e.id,e.name,'جواز سفر',e.passport_expiry
+                   FROM employees e
+                   WHERE e.passport_expiry IS NOT NULL
+                   AND e.passport_expiry<=CURRENT_DATE+INTERVAL '60 days'
+                   UNION ALL
+                   SELECT e.id,e.name,'تأمين طبي',e.medical_insurance_expiry
+                   FROM employees e
+                   WHERE e.medical_insurance_expiry IS NOT NULL
+                   AND e.medical_insurance_expiry<=CURRENT_DATE+INTERVAL '60 days'
+                   ORDER BY expiry_date""")
+    return render_template("hr_complete_center.html",stats=stats,alerts=alerts)
+
+@app.route("/hr/employees/<int:employee_id>")
+@login_required
+def hr_employee_profile(employee_id):
+    employee=row("""SELECT e.*,d.name department_name,b.name branch_name,
+      cc.name cost_center_name FROM employees e
+      LEFT JOIN departments d ON d.id=e.department_id
+      LEFT JOIN branches b ON b.id=e.branch_id
+      LEFT JOIN cost_centers cc ON cc.id=e.cost_center_id
+      WHERE e.id=:id""",{"id":employee_id})
+    if not employee:
+        return "الموظف غير موجود",404
+    return render_template("hr_employee_profile.html",employee=employee,
+      contracts=rows("""SELECT * FROM employee_contracts
+                        WHERE employee_id=:id ORDER BY start_date DESC""",{"id":employee_id}),
+      leaves=rows("""SELECT lr.*,lt.name leave_type_name FROM leave_requests lr
+                    JOIN leave_types lt ON lt.id=lr.leave_type_id
+                    WHERE lr.employee_id=:id ORDER BY lr.start_date DESC""",{"id":employee_id}),
+      documents=rows("""SELECT * FROM employee_documents
+                        WHERE employee_id=:id ORDER BY expiry_date NULLS LAST""",{"id":employee_id}),
+      warnings=rows("""SELECT * FROM employee_warnings
+                       WHERE employee_id=:id ORDER BY warning_date DESC""",{"id":employee_id}),
+      settlements=rows("""SELECT * FROM employee_end_of_service
+                          WHERE employee_id=:id ORDER BY calculation_date DESC""",{"id":employee_id}))
+
+@app.route("/hr/contracts",methods=["GET","POST"])
+@login_required
+def hr_contracts():
+    if request.method=="POST":
+        no=request.form.get("contract_no") or next_hr_number("employee_contracts","CTR")
+        execute("""INSERT INTO employee_contracts(employee_id,contract_no,contract_type,
+          start_date,end_date,probation_end_date,basic_salary,housing_allowance,
+          transport_allowance,other_allowance,working_hours,annual_leave_days,
+          status,notes,created_by,created_at)
+          VALUES(:employee,:no,:type,:start,:end,:probation,:basic,:housing,
+          :transport,:other,:hours,:leave_days,:status,:notes,:uid,:created)""",
+          {"employee":request.form["employee_id"],"no":no,
+           "type":request.form.get("contract_type","محدد المدة"),
+           "start":request.form["start_date"],
+           "end":request.form.get("end_date") or None,
+           "probation":request.form.get("probation_end_date") or None,
+           "basic":float(request.form.get("basic_salary") or 0),
+           "housing":float(request.form.get("housing_allowance") or 0),
+           "transport":float(request.form.get("transport_allowance") or 0),
+           "other":float(request.form.get("other_allowance") or 0),
+           "hours":float(request.form.get("working_hours") or 8),
+           "leave_days":int(request.form.get("annual_leave_days") or 21),
+           "status":request.form.get("status","ساري"),
+           "notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        execute("""UPDATE employees SET basic_salary=:basic,
+          housing_allowance=:housing,transport_allowance=:transport,
+          other_allowance=:other,hire_date=COALESCE(hire_date,:start),
+          contract_end_date=:end WHERE id=:employee""",
+          {"basic":float(request.form.get("basic_salary") or 0),
+           "housing":float(request.form.get("housing_allowance") or 0),
+           "transport":float(request.form.get("transport_allowance") or 0),
+           "other":float(request.form.get("other_allowance") or 0),
+           "start":request.form["start_date"],
+           "end":request.form.get("end_date") or None,
+           "employee":request.form["employee_id"]})
+        flash("تم حفظ عقد الموظف","success")
+        return redirect(url_for("hr_contracts"))
+    return render_template("hr_contracts.html",
+      contracts=rows("""SELECT c.*,e.employee_no,e.name FROM employee_contracts c
+                        JOIN employees e ON e.id=c.employee_id
+                        ORDER BY c.start_date DESC,c.id DESC"""),
+      employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"))
+
+@app.route("/hr/leave-types",methods=["GET","POST"])
+@login_required
+def hr_leave_types():
+    if request.method=="POST":
+        execute("""INSERT INTO leave_types(code,name,paid,annual_entitlement,active)
+                   VALUES(:code,:name,:paid,:entitlement,1)
+                   ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,
+                   paid=EXCLUDED.paid,annual_entitlement=EXCLUDED.annual_entitlement""",
+                {"code":request.form["code"],"name":request.form["name"],
+                 "paid":1 if request.form.get("paid") else 0,
+                 "entitlement":float(request.form.get("annual_entitlement") or 0)})
+        flash("تم حفظ نوع الإجازة","success")
+        return redirect(url_for("hr_leave_types"))
+    return render_template("hr_leave_types.html",
+      rows=rows("SELECT * FROM leave_types ORDER BY code"))
+
+@app.route("/hr/leaves",methods=["GET","POST"])
+@login_required
+def hr_leaves():
+    if request.method=="POST":
+        days=calculate_leave_days(request.form["start_date"],request.form["end_date"])
+        no=next_hr_number("leave_requests","LEV")
+        execute("""INSERT INTO leave_requests(request_no,employee_id,leave_type_id,
+          start_date,end_date,days,reason,status,created_by,created_at)
+          VALUES(:no,:employee,:type,:start,:end,:days,:reason,'قيد الاعتماد',
+          :uid,:created)""",
+          {"no":no,"employee":request.form["employee_id"],
+           "type":request.form["leave_type_id"],
+           "start":request.form["start_date"],"end":request.form["end_date"],
+           "days":days,"reason":request.form.get("reason",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash(f"تم إنشاء طلب الإجازة {no}","success")
+        return redirect(url_for("hr_leaves"))
+    return render_template("hr_leaves.html",
+      requests=rows("""SELECT lr.*,e.employee_no,e.name,lt.name leave_type_name
+                       FROM leave_requests lr
+                       JOIN employees e ON e.id=lr.employee_id
+                       JOIN leave_types lt ON lt.id=lr.leave_type_id
+                       ORDER BY lr.id DESC"""),
+      employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"),
+      leave_types=rows("SELECT id,name FROM leave_types WHERE active=1 ORDER BY name"))
+
+@app.route("/hr/leaves/<int:request_id>/approve",methods=["POST"])
+@login_required
+def hr_leave_approve(request_id):
+    leave=row("SELECT * FROM leave_requests WHERE id=:id",{"id":request_id})
+    if not leave:
+        return "طلب الإجازة غير موجود",404
+    year=leave["start_date"].year
+    balance=row("""SELECT * FROM employee_leave_balances
+                   WHERE employee_id=:employee AND leave_type_id=:type AND year=:year""",
+                {"employee":leave["employee_id"],"type":leave["leave_type_id"],"year":year})
+    if not balance:
+        entitlement=row("SELECT annual_entitlement FROM leave_types WHERE id=:id",
+                        {"id":leave["leave_type_id"]})
+        opening=float(entitlement["annual_entitlement"] or 0)
+        execute("""INSERT INTO employee_leave_balances(employee_id,leave_type_id,year,
+          opening_balance,accrued,used,remaining)
+          VALUES(:employee,:type,:year,:opening,0,0,:opening)""",
+          {"employee":leave["employee_id"],"type":leave["leave_type_id"],
+           "year":year,"opening":opening})
+        balance=row("""SELECT * FROM employee_leave_balances
+                       WHERE employee_id=:employee AND leave_type_id=:type AND year=:year""",
+                    {"employee":leave["employee_id"],"type":leave["leave_type_id"],"year":year})
+    if float(balance["remaining"] or 0) < float(leave["days"] or 0):
+        flash("رصيد الإجازة غير كافٍ","danger")
+        return redirect(url_for("hr_leaves"))
+    execute("""UPDATE employee_leave_balances SET used=used+:days,
+      remaining=remaining-:days WHERE id=:id""",
+      {"days":leave["days"],"id":balance["id"]})
+    execute("""UPDATE leave_requests SET status='معتمد',approved_by=:user,
+      approved_at=:dt WHERE id=:id""",
+      {"user":session.get("user_id"),"dt":datetime.now(),"id":request_id})
+    flash("تم اعتماد الإجازة","success")
+    return redirect(url_for("hr_leaves"))
+
+@app.route("/hr/documents",methods=["GET","POST"])
+@login_required
+def hr_documents():
+    if request.method=="POST":
+        execute("""INSERT INTO employee_documents(employee_id,document_type,document_no,
+          issue_date,expiry_date,file_name,file_url,status,notes,created_by,created_at)
+          VALUES(:employee,:type,:no,:issue,:expiry,:file_name,:file_url,'ساري',
+          :notes,:uid,:created)""",
+          {"employee":request.form["employee_id"],
+           "type":request.form["document_type"],
+           "no":request.form.get("document_no",""),
+           "issue":request.form.get("issue_date") or None,
+           "expiry":request.form.get("expiry_date") or None,
+           "file_name":request.form.get("file_name",""),
+           "file_url":request.form.get("file_url",""),
+           "notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash("تم حفظ مستند الموظف","success")
+        return redirect(url_for("hr_documents"))
+    return render_template("hr_documents.html",
+      documents=rows("""SELECT d.*,e.employee_no,e.name FROM employee_documents d
+                        JOIN employees e ON e.id=d.employee_id
+                        ORDER BY d.expiry_date NULLS LAST,d.id DESC"""),
+      employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"))
+
+@app.route("/hr/warnings",methods=["GET","POST"])
+@login_required
+def hr_warnings():
+    if request.method=="POST":
+        execute("""INSERT INTO employee_warnings(employee_id,warning_date,warning_type,
+          subject,details,action_required,status,created_by,created_at)
+          VALUES(:employee,:dt,:type,:subject,:details,:action,'مفتوح',:uid,:created)""",
+          {"employee":request.form["employee_id"],
+           "dt":request.form["warning_date"],
+           "type":request.form.get("warning_type","إنذار كتابي"),
+           "subject":request.form["subject"],
+           "details":request.form["details"],
+           "action":request.form.get("action_required",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash("تم حفظ الإنذار","success")
+        return redirect(url_for("hr_warnings"))
+    return render_template("hr_warnings.html",
+      warnings=rows("""SELECT w.*,e.employee_no,e.name FROM employee_warnings w
+                       JOIN employees e ON e.id=w.employee_id
+                       ORDER BY w.warning_date DESC,w.id DESC"""),
+      employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"))
+
+@app.route("/hr/end-of-service",methods=["GET","POST"])
+@login_required
+def hr_end_of_service():
+    if request.method=="POST":
+        calc=calculate_end_of_service(
+            int(request.form["employee_id"]),
+            request.form["service_end_date"],
+            request.form.get("other_dues") or 0,
+            request.form.get("deductions") or 0
+        )
+        execute("""INSERT INTO employee_end_of_service(employee_id,calculation_date,
+          service_start_date,service_end_date,service_years,last_basic_salary,
+          gratuity_amount,leave_balance_amount,other_dues,deductions,net_settlement,
+          status,notes,created_by,created_at)
+          VALUES(:employee,:calc_date,:start,:end,:years,:basic,:gratuity,:leave,
+          :other,:deductions,:net,'مسودة',:notes,:uid,:created)""",
+          {"employee":request.form["employee_id"],
+           "calc_date":request.form.get("calculation_date") or datetime.now().date(),
+           "start":calc["service_start_date"],"end":calc["service_end_date"],
+           "years":calc["service_years"],"basic":calc["last_basic_salary"],
+           "gratuity":calc["gratuity_amount"],"leave":calc["leave_balance_amount"],
+           "other":calc["other_dues"],"deductions":calc["deductions"],
+           "net":calc["net_settlement"],"notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash("تم احتساب نهاية الخدمة","success")
+        return redirect(url_for("hr_end_of_service"))
+    return render_template("hr_end_of_service.html",
+      settlements=rows("""SELECT s.*,e.employee_no,e.name FROM employee_end_of_service s
+                          JOIN employees e ON e.id=s.employee_id
+                          ORDER BY s.calculation_date DESC,s.id DESC"""),
+      employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"))
+
+@app.route("/hr/recruitment",methods=["GET","POST"])
+@login_required
+def hr_recruitment():
+    if request.method=="POST":
+        no=next_hr_number("recruitment_candidates","CAN")
+        execute("""INSERT INTO recruitment_candidates(candidate_no,full_name,nationality,
+          phone,email,job_title,department_id,expected_salary,source,stage,
+          interview_date,interview_result,notes,created_by,created_at)
+          VALUES(:no,:name,:nationality,:phone,:email,:job,:department,:salary,
+          :source,:stage,:interview,:result,:notes,:uid,:created)""",
+          {"no":no,"name":request.form["full_name"],
+           "nationality":request.form.get("nationality",""),
+           "phone":request.form.get("phone",""),"email":request.form.get("email",""),
+           "job":request.form.get("job_title",""),
+           "department":request.form.get("department_id") or None,
+           "salary":float(request.form.get("expected_salary") or 0),
+           "source":request.form.get("source",""),
+           "stage":request.form.get("stage","جديد"),
+           "interview":request.form.get("interview_date") or None,
+           "result":request.form.get("interview_result",""),
+           "notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash(f"تم حفظ المرشح {no}","success")
+        return redirect(url_for("hr_recruitment"))
+    return render_template("hr_recruitment.html",
+      candidates=rows("""SELECT c.*,d.name department_name FROM recruitment_candidates c
+                         LEFT JOIN departments d ON d.id=c.department_id
+                         ORDER BY c.id DESC"""),
+      departments=rows("SELECT id,name FROM departments WHERE active=1 ORDER BY name"))
+
+@app.route("/hr/report")
+@login_required
+def hr_report():
+    data=rows("""SELECT e.id,e.employee_no,e.name,e.job_title,d.name department_name,
+      b.name branch_name,e.hire_date,e.contract_end_date,e.iqama_expiry,
+      e.passport_expiry,e.medical_insurance_expiry,e.basic_salary,e.active
+      FROM employees e
+      LEFT JOIN departments d ON d.id=e.department_id
+      LEFT JOIN branches b ON b.id=e.branch_id
+      ORDER BY e.name""")
+    return render_template("hr_report.html",rows=data)
+
+@app.route("/hr/report.xlsx")
+@login_required
+def hr_report_export():
+    data=rows("""SELECT e.employee_no,e.name,e.job_title,d.name department_name,
+      b.name branch_name,e.hire_date,e.contract_end_date,e.iqama_expiry,
+      e.passport_expiry,e.medical_insurance_expiry,e.basic_salary,e.active
+      FROM employees e
+      LEFT JOIN departments d ON d.id=e.department_id
+      LEFT JOIN branches b ON b.id=e.branch_id
+      ORDER BY e.name""")
+    return xlsx_response("hr_employees.xlsx","الموارد البشرية",
+      ["رقم الموظف","الاسم","الوظيفة","القسم","الفرع","تاريخ التعيين",
+       "نهاية العقد","انتهاء الإقامة","انتهاء الجواز","انتهاء التأمين",
+       "الراتب الأساسي","الحالة"],
+      [[r["employee_no"],r["name"],r["job_title"],r["department_name"],
+        r["branch_name"],r["hire_date"],r["contract_end_date"],r["iqama_expiry"],
+        r["passport_expiry"],r["medical_insurance_expiry"],r["basic_salary"],
+        "نشط" if r["active"] else "موقوف"] for r in data])
 
 
 @app.route("/budgets")

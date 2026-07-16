@@ -1,0 +1,19 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>الموارد البشرية</h3><small>Complete Human Resources Management</small></div><a class="btn btn-success" href="{{url_for('hr_report')}}">تقرير الموظفين</a></div>
+<div class="row g-3 mb-4">
+<div class="col-md-3"><div class="erp-kpi"><small>الموظفون النشطون</small><h4>{{stats.employees}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>عقود تنتهي خلال 60 يومًا</small><h4>{{stats.contracts_expiring}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>مستندات تنتهي خلال 60 يومًا</small><h4>{{stats.documents_expiring}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>إجازات قيد الاعتماد</small><h4>{{stats.pending_leaves}}</h4></div></div>
+</div>
+<div class="row g-3 mb-4">{% for t,d,u in [
+('العقود','عقود الموظفين والرواتب والبدلات',url_for('hr_contracts')),
+('الإجازات','طلبات وأرصدة الإجازات',url_for('hr_leaves')),
+('أنواع الإجازات','تعريف الاستحقاقات',url_for('hr_leave_types')),
+('المستندات','الإقامة والجواز والتأمين',url_for('hr_documents')),
+('الإنذارات','الإنذارات والإجراءات التأديبية',url_for('hr_warnings')),
+('نهاية الخدمة','احتساب المستحقات النهائية',url_for('hr_end_of_service')),
+('التوظيف','المرشحون والمقابلات',url_for('hr_recruitment')),
+('الرواتب','مسيرات الرواتب وكشوفها',url_for('hr_payroll_center'))] %}
+<div class="col-md-3"><a class="form-card d-block text-decoration-none text-dark h-100" href="{{u}}"><h5>{{t}}</h5><p>{{d}}</p></a></div>{% endfor %}</div>
+<div class="form-card"><h5>تنبيهات مستندات الموظفين</h5><table class="table table-striped"><thead><tr><th>الموظف</th><th>نوع التنبيه</th><th>تاريخ الانتهاء</th></tr></thead><tbody>{% for a in alerts %}<tr><td><a href="{{url_for('hr_employee_profile',employee_id=a.id)}}">{{a.name}}</a></td><td>{{a.alert_type}}</td><td>{{a.expiry_date}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}
