@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>موازنة جديدة</h3><small>New Budget</small></div></div>
+<div class="form-card"><form method="post"><div class="row g-3">
+<div class="col-md-4"><label>اسم الموازنة</label><input class="form-control" name="name" required></div>
+<div class="col-md-2"><label>السنة المالية</label><input class="form-control" type="number" name="fiscal_year" min="2020" max="2100" required></div>
+<div class="col-md-3"><label>الفرع</label><select class="form-select" name="branch_id"><option value="">كل الفروع</option>{% for b in branches %}<option value="{{b.id}}">{{b.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>ملاحظات</label><input class="form-control" name="notes"></div>
+<div class="col-12 text-end"><button class="btn btn-primary">إنشاء الموازنة</button></div>
+</div></form></div>{% endblock %}

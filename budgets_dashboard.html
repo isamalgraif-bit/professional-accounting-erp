@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>لوحة الموازنة</h3><small>Budget Dashboard</small></div></div>
+{% if budget %}
+<div class="row g-3 mb-4">{% for t,v in [('إجمالي الموازنة',summary.budget),('الفعلي',summary.actual),('الانحراف',summary.variance)] %}<div class="col-md-4"><div class="erp-kpi"><small>{{t}}</small><h4>{{v}}</h4></div></div>{% endfor %}</div>
+<div class="form-card"><h5>{{budget.name}} - {{budget.fiscal_year}}</h5><table class="table table-striped table-bordered"><thead><tr><th>الشهر</th><th>الموازنة</th><th>الفعلي</th><th>الانحراف</th></tr></thead><tbody>{% for m in monthly %}<tr><td>{{m.month_no}}</td><td>{{m.budget}}</td><td>{{m.actual}}</td><td>{{m.variance}}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="alert alert-warning">لا توجد موازنة معتمدة بعد.</div>{% endif %}{% endblock %}

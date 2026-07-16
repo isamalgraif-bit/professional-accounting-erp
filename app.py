@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "13.0.0"
+APP_VERSION = "14.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1263,6 +1263,52 @@ def approval_request_for(document_type,document_id):
                {"doc":document_type,"id":document_id})
 
 
+
+def next_budget_number(fiscal_year):
+    count=db.session.execute(text("""SELECT COUNT(*) FROM budget_headers
+        WHERE fiscal_year=:y"""),{"y":fiscal_year}).scalar() or 0
+    return f"BUD-{fiscal_year}-{count+1:04d}"
+
+def budget_actual_amount(account_id, fiscal_year, month_no, cost_center_id=None, branch_id=None):
+    conditions=["l.account_id=:account","EXTRACT(YEAR FROM j.journal_date)=:year",
+                "EXTRACT(MONTH FROM j.journal_date)=:month","j.status='مرحّل'"]
+    params={"account":account_id,"year":fiscal_year,"month":month_no}
+    if cost_center_id:
+        conditions.append("l.cost_center_id=:cc")
+        params["cc"]=cost_center_id
+    data=row(f"""SELECT COALESCE(SUM(l.debit-l.credit),0) amount
+                 FROM journal_entry_lines l
+                 JOIN journal_entries j ON j.id=l.journal_id
+                 WHERE {' AND '.join(conditions)}""",params)
+    return round(float(data["amount"] or 0),2)
+
+def budget_summary_rows(budget_id):
+    budget=row("SELECT * FROM budget_headers WHERE id=:id",{"id":budget_id})
+    if not budget:
+        return []
+    lines=rows("""SELECT bl.*,a.account_code,a.account_name_ar,a.account_type,
+      cc.code cost_center_code,cc.name cost_center_name
+      FROM budget_lines bl
+      JOIN chart_of_accounts a ON a.id=bl.account_id
+      LEFT JOIN cost_centers cc ON cc.id=bl.cost_center_id
+      WHERE bl.budget_id=:id ORDER BY a.account_code,bl.month_no""",{"id":budget_id})
+    output=[]
+    for x in lines:
+        item=dict(x)
+        actual=budget_actual_amount(x["account_id"],budget["fiscal_year"],x["month_no"],
+                                    x["cost_center_id"],budget["branch_id"])
+        # For revenue accounts, actual normally carries a credit sign.
+        if x["account_type"] in ("إيراد","التزام","حقوق ملكية"):
+            actual=-actual
+        item["actual_amount"]=actual
+        item["variance_amount"]=round(float(x["budget_amount"] or 0)-actual,2)
+        item["variance_percent"]=round(
+            item["variance_amount"]/float(x["budget_amount"] or 1)*100,2
+        ) if float(x["budget_amount"] or 0) else 0
+        output.append(item)
+    return output
+
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -2101,6 +2147,38 @@ def init_db():
             action_type VARCHAR(50) NOT NULL,
             action_notes TEXT DEFAULT '',
             action_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS budget_headers(
+            id SERIAL PRIMARY KEY,
+            budget_no VARCHAR(100) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            fiscal_year INTEGER NOT NULL,
+            branch_id INTEGER REFERENCES branches(id),
+            status VARCHAR(50) DEFAULT 'مسودة',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS budget_lines(
+            id SERIAL PRIMARY KEY,
+            budget_id INTEGER NOT NULL REFERENCES budget_headers(id) ON DELETE CASCADE,
+            account_id INTEGER NOT NULL REFERENCES chart_of_accounts(id),
+            cost_center_id INTEGER REFERENCES cost_centers(id),
+            month_no INTEGER NOT NULL,
+            budget_amount NUMERIC(18,2) DEFAULT 0,
+            forecast_amount NUMERIC(18,2) DEFAULT 0,
+            notes TEXT DEFAULT '',
+            UNIQUE(budget_id,account_id,cost_center_id,month_no)
+        )""",
+        """CREATE TABLE IF NOT EXISTS budget_revisions(
+            id SERIAL PRIMARY KEY,
+            budget_id INTEGER NOT NULL REFERENCES budget_headers(id) ON DELETE CASCADE,
+            revision_no INTEGER NOT NULL,
+            revision_date DATE NOT NULL,
+            reason TEXT DEFAULT '',
+            approved_by INTEGER REFERENCES users(id),
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
@@ -5418,6 +5496,162 @@ def system_health():
 
 
 
+
+
+
+@app.route("/budgets")
+@login_required
+def budgets_center():
+    budgets=rows("""SELECT b.*,br.name branch_name,
+      COALESCE((SELECT SUM(bl.budget_amount) FROM budget_lines bl
+                WHERE bl.budget_id=b.id),0) total_budget,
+      COALESCE((SELECT SUM(bl.forecast_amount) FROM budget_lines bl
+                WHERE bl.budget_id=b.id),0) total_forecast
+      FROM budget_headers b
+      LEFT JOIN branches br ON br.id=b.branch_id
+      ORDER BY b.fiscal_year DESC,b.id DESC""")
+    return render_template("budgets_center.html",budgets=budgets)
+
+@app.route("/budgets/new",methods=["GET","POST"])
+@login_required
+def budget_new():
+    if request.method=="POST":
+        year=int(request.form["fiscal_year"])
+        no=next_budget_number(year)
+        execute("""INSERT INTO budget_headers(budget_no,name,fiscal_year,branch_id,
+          status,notes,created_by,created_at)
+          VALUES(:no,:name,:year,:branch,'مسودة',:notes,:user,:dt)""",
+          {"no":no,"name":request.form["name"],"year":year,
+           "branch":request.form.get("branch_id") or None,
+           "notes":request.form.get("notes",""),
+           "user":session.get("user_id"),"dt":datetime.now()})
+        budget_id=row("SELECT id FROM budget_headers WHERE budget_no=:no",{"no":no})["id"]
+        flash(f"تم إنشاء الموازنة {no}","success")
+        return redirect(url_for("budget_view",budget_id=budget_id))
+    return render_template("budget_form.html",
+      branches=rows("SELECT id,name FROM branches WHERE active=1 ORDER BY name"))
+
+@app.route("/budgets/<int:budget_id>",methods=["GET","POST"])
+@login_required
+def budget_view(budget_id):
+    budget=row("""SELECT b.*,br.name branch_name FROM budget_headers b
+                  LEFT JOIN branches br ON br.id=b.branch_id WHERE b.id=:id""",
+               {"id":budget_id})
+    if not budget:
+        return "الموازنة غير موجودة",404
+    if request.method=="POST":
+        account_id=int(request.form["account_id"])
+        cost_center_id=request.form.get("cost_center_id") or None
+        month_no=int(request.form["month_no"])
+        amount=float(request.form.get("budget_amount") or 0)
+        forecast=float(request.form.get("forecast_amount") or amount)
+        execute("""INSERT INTO budget_lines(budget_id,account_id,cost_center_id,
+          month_no,budget_amount,forecast_amount,notes)
+          VALUES(:budget,:account,:cc,:month,:amount,:forecast,:notes)
+          ON CONFLICT(budget_id,account_id,cost_center_id,month_no)
+          DO UPDATE SET budget_amount=EXCLUDED.budget_amount,
+          forecast_amount=EXCLUDED.forecast_amount,notes=EXCLUDED.notes""",
+          {"budget":budget_id,"account":account_id,"cc":cost_center_id,
+           "month":month_no,"amount":amount,"forecast":forecast,
+           "notes":request.form.get("notes","")})
+        flash("تم حفظ بند الموازنة","success")
+        return redirect(url_for("budget_view",budget_id=budget_id))
+    summary=budget_summary_rows(budget_id)
+    totals={
+        "budget":round(sum(float(x["budget_amount"] or 0) for x in summary),2),
+        "forecast":round(sum(float(x["forecast_amount"] or 0) for x in summary),2),
+        "actual":round(sum(float(x["actual_amount"] or 0) for x in summary),2),
+        "variance":round(sum(float(x["variance_amount"] or 0) for x in summary),2),
+    }
+    return render_template("budget_view.html",budget=budget,lines=summary,totals=totals,
+      accounts=rows("""SELECT id,account_code,account_name_ar,account_type
+                       FROM chart_of_accounts
+                       WHERE active=1 AND accepts_entries=1
+                       ORDER BY account_code"""),
+      centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"))
+
+@app.route("/budgets/<int:budget_id>/approve",methods=["POST"])
+@login_required
+def budget_approve(budget_id):
+    execute("UPDATE budget_headers SET status='معتمد' WHERE id=:id",{"id":budget_id})
+    audit("APPROVE","BUDGET",f"اعتماد الموازنة رقم {budget_id}")
+    flash("تم اعتماد الموازنة","success")
+    return redirect(url_for("budget_view",budget_id=budget_id))
+
+@app.route("/budgets/<int:budget_id>/revision",methods=["POST"])
+@login_required
+def budget_revision(budget_id):
+    revision_no=(db.session.execute(text("""SELECT COALESCE(MAX(revision_no),0)+1
+      FROM budget_revisions WHERE budget_id=:id"""),{"id":budget_id}).scalar() or 1)
+    execute("""INSERT INTO budget_revisions(budget_id,revision_no,revision_date,
+      reason,approved_by,created_by,created_at)
+      VALUES(:budget,:revision,:dt,:reason,:approved,:created_by,:created)""",
+      {"budget":budget_id,"revision":revision_no,"dt":request.form["revision_date"],
+       "reason":request.form.get("reason",""),
+       "approved":session.get("user_id"),"created_by":session.get("user_id"),
+       "created":datetime.now()})
+    execute("UPDATE budget_headers SET status='معدلة' WHERE id=:id",{"id":budget_id})
+    flash(f"تم تسجيل المراجعة رقم {revision_no}","success")
+    return redirect(url_for("budget_view",budget_id=budget_id))
+
+@app.route("/budgets/<int:budget_id>/variance")
+@login_required
+def budget_variance_report(budget_id):
+    budget=row("SELECT * FROM budget_headers WHERE id=:id",{"id":budget_id})
+    if not budget:
+        return "الموازنة غير موجودة",404
+    rows_data=budget_summary_rows(budget_id)
+    monthly=[]
+    for month_no in range(1,13):
+        month_rows=[x for x in rows_data if x["month_no"]==month_no]
+        monthly.append({
+            "month_no":month_no,
+            "budget":round(sum(float(x["budget_amount"] or 0) for x in month_rows),2),
+            "forecast":round(sum(float(x["forecast_amount"] or 0) for x in month_rows),2),
+            "actual":round(sum(float(x["actual_amount"] or 0) for x in month_rows),2),
+            "variance":round(sum(float(x["variance_amount"] or 0) for x in month_rows),2),
+        })
+    return render_template("budget_variance_report.html",budget=budget,
+                           rows=rows_data,monthly=monthly)
+
+@app.route("/budgets/<int:budget_id>/export.xlsx")
+@login_required
+def budget_export(budget_id):
+    budget=row("SELECT * FROM budget_headers WHERE id=:id",{"id":budget_id})
+    data=budget_summary_rows(budget_id)
+    return xlsx_response(f"budget_{budget['fiscal_year']}.xlsx","الموازنة",
+      ["الحساب","اسم الحساب","مركز التكلفة","الشهر","الموازنة","التوقع",
+       "الفعلي","الانحراف","نسبة الانحراف"],
+      [[r["account_code"],r["account_name_ar"],
+        f"{r['cost_center_code'] or ''} {r['cost_center_name'] or ''}".strip(),
+        r["month_no"],r["budget_amount"],r["forecast_amount"],
+        r["actual_amount"],r["variance_amount"],r["variance_percent"]] for r in data])
+
+@app.route("/budgets/dashboard")
+@login_required
+def budgets_dashboard():
+    latest=row("""SELECT * FROM budget_headers
+                  WHERE status IN ('معتمد','معدلة')
+                  ORDER BY fiscal_year DESC,id DESC LIMIT 1""")
+    if not latest:
+        return render_template("budgets_dashboard.html",budget=None,monthly=[],summary={})
+    data=budget_summary_rows(latest["id"])
+    monthly=[]
+    for month_no in range(1,13):
+        month_rows=[x for x in data if x["month_no"]==month_no]
+        monthly.append({
+            "month_no":month_no,
+            "budget":round(sum(float(x["budget_amount"] or 0) for x in month_rows),2),
+            "actual":round(sum(float(x["actual_amount"] or 0) for x in month_rows),2),
+            "variance":round(sum(float(x["variance_amount"] or 0) for x in month_rows),2),
+        })
+    summary={
+        "budget":round(sum(x["budget"] for x in monthly),2),
+        "actual":round(sum(x["actual"] for x in monthly),2),
+        "variance":round(sum(x["variance"] for x in monthly),2),
+    }
+    return render_template("budgets_dashboard.html",budget=latest,
+                           monthly=monthly,summary=summary)
 
 
 @app.route("/approvals")

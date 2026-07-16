@@ -1,0 +1,3 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>الموازنات والتخطيط المالي</h3><small>Budgeting & Forecasting</small></div><a class="btn btn-primary" href="{{url_for('budget_new')}}">موازنة جديدة</a></div>
+<div class="row g-3">{% for b in budgets %}<div class="col-md-4"><a class="form-card d-block text-decoration-none text-dark h-100" href="{{url_for('budget_view',budget_id=b.id)}}"><h5>{{b.budget_no}} - {{b.name}}</h5><p>{{b.fiscal_year}} | {{b.branch_name or 'كل الفروع'}}</p><div>الموازنة: {{b.total_budget}}</div><div>التوقع: {{b.total_forecast}}</div><div class="mt-2"><span class="badge bg-secondary">{{b.status}}</span></div></a></div>{% endfor %}</div>{% endblock %}
