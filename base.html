@@ -168,6 +168,7 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 <a href="{{ url_for('fiscal_periods') }}">الفترات المالية</a>
 <a href="{{ url_for('manage_module', module_name='branches') }}">الفروع</a>
 <a href="{{ url_for('settings') }}">الإعدادات</a>
+<a href="{{ url_for('data_import_center') }}">استيراد Excel</a>
 {% if can('users.view') %}
 <a href="{{ url_for('users_admin') }}">المستخدمون</a>
 <a href="{{ url_for('roles_admin') }}">الأدوار والصلاحيات</a>

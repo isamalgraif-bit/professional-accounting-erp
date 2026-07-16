@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 from sqlalchemy import text
 from functools import wraps
 from datetime import datetime, timedelta
@@ -13,7 +14,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "18.1.0"
+APP_VERSION = "RC2-1.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1079,6 +1080,7 @@ ENDPOINT_MODULE_MAP = {
     "crm_center":"crm","crm_leads":"crm","crm_opportunities":"crm",
     "crm_activities":"crm","crm_pipeline":"crm","crm_report":"crm",
     "documents_center":"settings","document_categories":"settings","document_new":"settings","document_view":"settings","document_add_version":"settings","document_status_update":"settings","documents_report":"reports","documents_report_export":"reports",
+    "data_import_center":"settings","data_import_template":"settings","data_import_upload":"settings","data_import_confirm":"settings",
     "settings":"settings","branches":"settings","cost_centers":"settings",
     "users_admin":"users","roles_admin":"users","security_audit":"users",
 }
@@ -1751,6 +1753,225 @@ def replace_invoice_items(invoice_id, prepared_items):
 def invoice_is_editable(invoice):
     return bool(invoice and invoice.get("status") in ("مسودة","معاد للتعديل")
                 and not invoice.get("journal_id"))
+
+
+
+EXCEL_IMPORT_DEFINITIONS = {
+    "customers": {
+        "title": "العملاء",
+        "headers": ["code","name","name_en","vat_no","phone","email","address","credit_limit"],
+        "required": ["name"],
+        "sample": ["CUST-001","شركة العميل","Customer Co.","300000000000003","0500000000","info@example.com","الدمام",50000],
+    },
+    "suppliers": {
+        "title": "الموردون",
+        "headers": ["code","name","name_en","vat_no","phone","email","address"],
+        "required": ["name"],
+        "sample": ["SUP-001","شركة المورد","Supplier Co.","300000000000003","0500000000","sales@example.com","الرياض"],
+    },
+    "inventory": {
+        "title": "الأصناف",
+        "headers": ["code","name","description","unit","quantity","unit_cost","reorder_level","active"],
+        "required": ["name"],
+        "sample": ["ITEM-001","كابل كهربائي","وصف الصنف","متر",100,25,20,1],
+    },
+    "employees": {
+        "title": "الموظفون",
+        "headers": ["employee_no","name","name_en","job_title","basic_salary","phone","email","hire_date","nationality"],
+        "required": ["name"],
+        "sample": ["EMP-001","اسم الموظف","Employee Name","محاسب",5000,"0500000000","employee@example.com","2026-01-01","سوداني"],
+    },
+    "accounts": {
+        "title": "دليل الحسابات",
+        "headers": ["account_code","account_name_ar","account_name_en","account_type","parent_code","accepts_entries","active"],
+        "required": ["account_code","account_name_ar","account_type"],
+        "sample": ["110101","النقدية","Cash","أصل","1101",1,1],
+    },
+    "cost_centers": {
+        "title": "مراكز التكلفة",
+        "headers": ["code","name","parent_code","active"],
+        "required": ["code","name"],
+        "sample": ["CC-001","المشروع الرئيسي","",1],
+    },
+}
+
+def next_import_number():
+    count=db.session.execute(text("SELECT COUNT(*) FROM data_import_jobs")).scalar() or 0
+    return f"IMP-{count+1:07d}"
+
+def normalize_excel_value(value):
+    if value is None:
+        return ""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value).strip()
+
+def validate_import_row(module_name, row_data, row_no):
+    definition=EXCEL_IMPORT_DEFINITIONS[module_name]
+    errors=[]
+    for field in definition["required"]:
+        if not str(row_data.get(field,"")).strip():
+            errors.append(f"الصف {row_no}: الحقل {field} مطلوب.")
+    if row_data.get("email") and "@" not in str(row_data["email"]):
+        errors.append(f"الصف {row_no}: البريد الإلكتروني غير صحيح.")
+    if row_data.get("vat_no") and len(str(row_data["vat_no"]).replace(".0","")) not in (0,15):
+        errors.append(f"الصف {row_no}: الرقم الضريبي يجب أن يكون 15 رقمًا.")
+    return errors
+
+def import_excel_row(module_name, data, import_mode):
+    updated=False
+    if module_name=="customers":
+        code=data.get("code") or None
+        existing=row("""SELECT id FROM customers WHERE
+                        (:code IS NOT NULL AND code=:code) OR name=:name
+                        ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]})
+        if existing:
+            if import_mode=="إضافة وتحديث":
+                execute("""UPDATE customers SET name=:name,name_en=:name_en,vat_no=:vat,
+                  phone=:phone,email=:email,address=:address,credit_limit=:limit
+                  WHERE id=:id""",
+                  {"name":data["name"],"name_en":data.get("name_en",""),
+                   "vat":data.get("vat_no",""),"phone":data.get("phone",""),
+                   "email":data.get("email",""),"address":data.get("address",""),
+                   "limit":float(data.get("credit_limit") or 0),"id":existing["id"]})
+                updated=True
+            else:
+                raise ValueError("العميل موجود مسبقًا.")
+        else:
+            execute("""INSERT INTO customers(code,name,name_en,vat_no,phone,email,
+              address,credit_limit,active,created_at)
+              VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,:limit,1,:dt)""",
+              {"code":code,"name":data["name"],"name_en":data.get("name_en",""),
+               "vat":data.get("vat_no",""),"phone":data.get("phone",""),
+               "email":data.get("email",""),"address":data.get("address",""),
+               "limit":float(data.get("credit_limit") or 0),"dt":datetime.now()})
+
+    elif module_name=="suppliers":
+        code=data.get("code") or None
+        existing=row("""SELECT id FROM suppliers WHERE
+                        (:code IS NOT NULL AND code=:code) OR name=:name
+                        ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]})
+        if existing:
+            if import_mode=="إضافة وتحديث":
+                execute("""UPDATE suppliers SET name=:name,name_en=:name_en,vat_no=:vat,
+                  phone=:phone,email=:email,address=:address WHERE id=:id""",
+                  {"name":data["name"],"name_en":data.get("name_en",""),
+                   "vat":data.get("vat_no",""),"phone":data.get("phone",""),
+                   "email":data.get("email",""),"address":data.get("address",""),
+                   "id":existing["id"]})
+                updated=True
+            else:
+                raise ValueError("المورد موجود مسبقًا.")
+        else:
+            execute("""INSERT INTO suppliers(code,name,name_en,vat_no,phone,email,
+              address,active,created_at)
+              VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,1,:dt)""",
+              {"code":code,"name":data["name"],"name_en":data.get("name_en",""),
+               "vat":data.get("vat_no",""),"phone":data.get("phone",""),
+               "email":data.get("email",""),"address":data.get("address",""),
+               "dt":datetime.now()})
+
+    elif module_name=="inventory":
+        code=data.get("code") or None
+        existing=row("""SELECT id FROM inventory WHERE
+                        (:code IS NOT NULL AND code=:code) OR name=:name
+                        ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]})
+        payload={"code":code,"name":data["name"],"description":data.get("description",""),
+                 "unit":data.get("unit","وحدة"),"quantity":float(data.get("quantity") or 0),
+                 "unit_cost":float(data.get("unit_cost") or 0),
+                 "reorder":float(data.get("reorder_level") or 0),
+                 "active":int(float(data.get("active") or 1))}
+        if existing:
+            if import_mode=="إضافة وتحديث":
+                execute("""UPDATE inventory SET name=:name,description=:description,
+                  unit=:unit,quantity=:quantity,unit_cost=:unit_cost,
+                  reorder_level=:reorder,active=:active WHERE id=:id""",
+                  {**payload,"id":existing["id"]})
+                updated=True
+            else:
+                raise ValueError("الصنف موجود مسبقًا.")
+        else:
+            execute("""INSERT INTO inventory(code,name,description,unit,quantity,
+              unit_cost,reorder_level,active)
+              VALUES(:code,:name,:description,:unit,:quantity,:unit_cost,:reorder,:active)""",
+              payload)
+
+    elif module_name=="employees":
+        emp_no=data.get("employee_no") or None
+        existing=row("""SELECT id FROM employees WHERE
+                        (:no IS NOT NULL AND employee_no=:no) OR name=:name
+                        ORDER BY id LIMIT 1""",{"no":emp_no,"name":data["name"]})
+        payload={"no":emp_no,"name":data["name"],"name_en":data.get("name_en",""),
+                 "job":data.get("job_title",""),"salary":float(data.get("basic_salary") or 0),
+                 "phone":data.get("phone",""),"email":data.get("email",""),
+                 "hire":data.get("hire_date") or None,"nationality":data.get("nationality","")}
+        if existing:
+            if import_mode=="إضافة وتحديث":
+                execute("""UPDATE employees SET name=:name,name_en=:name_en,
+                  job_title=:job,basic_salary=:salary,phone=:phone,email=:email,
+                  hire_date=:hire,nationality=:nationality WHERE id=:id""",
+                  {**payload,"id":existing["id"]})
+                updated=True
+            else:
+                raise ValueError("الموظف موجود مسبقًا.")
+        else:
+            execute("""INSERT INTO employees(employee_no,name,name_en,job_title,
+              basic_salary,phone,email,hire_date,nationality,active)
+              VALUES(:no,:name,:name_en,:job,:salary,:phone,:email,:hire,:nationality,1)""",
+              payload)
+
+    elif module_name=="accounts":
+        existing=row("SELECT id FROM chart_of_accounts WHERE account_code=:code",
+                     {"code":data["account_code"]})
+        parent_id=None
+        if data.get("parent_code"):
+            parent=row("SELECT id FROM chart_of_accounts WHERE account_code=:code",
+                       {"code":data["parent_code"]})
+            if not parent:
+                raise ValueError(f"الحساب الأب {data['parent_code']} غير موجود.")
+            parent_id=parent["id"]
+        payload={"code":data["account_code"],"ar":data["account_name_ar"],
+                 "en":data.get("account_name_en",""),"type":data["account_type"],
+                 "parent":parent_id,"accepts":int(float(data.get("accepts_entries") or 1)),
+                 "active":int(float(data.get("active") or 1))}
+        if existing:
+            if import_mode=="إضافة وتحديث":
+                execute("""UPDATE chart_of_accounts SET account_name_ar=:ar,
+                  account_name_en=:en,account_type=:type,parent_id=:parent,
+                  accepts_entries=:accepts,active=:active WHERE id=:id""",
+                  {**payload,"id":existing["id"]})
+                updated=True
+            else:
+                raise ValueError("الحساب موجود مسبقًا.")
+        else:
+            execute("""INSERT INTO chart_of_accounts(account_code,account_name_ar,
+              account_name_en,account_type,parent_id,accepts_entries,active)
+              VALUES(:code,:ar,:en,:type,:parent,:accepts,:active)""",payload)
+
+    elif module_name=="cost_centers":
+        existing=row("SELECT id FROM cost_centers WHERE code=:code",
+                     {"code":data["code"]})
+        parent_id=None
+        if data.get("parent_code"):
+            parent=row("SELECT id FROM cost_centers WHERE code=:code",
+                       {"code":data["parent_code"]})
+            if not parent:
+                raise ValueError(f"مركز التكلفة الأب {data['parent_code']} غير موجود.")
+            parent_id=parent["id"]
+        payload={"code":data["code"],"name":data["name"],"parent":parent_id,
+                 "active":int(float(data.get("active") or 1))}
+        if existing:
+            if import_mode=="إضافة وتحديث":
+                execute("""UPDATE cost_centers SET name=:name,parent_id=:parent,
+                           active=:active WHERE id=:id""",
+                        {**payload,"id":existing["id"]})
+                updated=True
+            else:
+                raise ValueError("مركز التكلفة موجود مسبقًا.")
+        else:
+            execute("""INSERT INTO cost_centers(code,name,parent_id,active)
+                       VALUES(:code,:name,:parent,:active)""",payload)
+    return updated
 
 
 def init_db():
@@ -2891,6 +3112,21 @@ def init_db():
             action_type VARCHAR(50) NOT NULL,
             ip_address VARCHAR(100) DEFAULT '',
             action_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS data_import_jobs(
+            id SERIAL PRIMARY KEY,
+            import_no VARCHAR(100) UNIQUE NOT NULL,
+            module_name VARCHAR(100) NOT NULL,
+            file_name VARCHAR(255) DEFAULT '',
+            import_mode VARCHAR(50) DEFAULT 'إضافة فقط',
+            total_rows INTEGER DEFAULT 0,
+            success_rows INTEGER DEFAULT 0,
+            updated_rows INTEGER DEFAULT 0,
+            failed_rows INTEGER DEFAULT 0,
+            status VARCHAR(50) DEFAULT 'مكتمل',
+            error_details TEXT DEFAULT '',
+            imported_by INTEGER REFERENCES users(id),
+            imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
@@ -8618,6 +8854,114 @@ def fixed_assets_report_export():
         r["accumulated_depreciation"],r["net_book_value"],r["status"],r["location"]] for r in data])
 
 
+
+@app.route("/data-import")
+@login_required
+def data_import_center():
+    return render_template("data_import_center.html",
+      modules=EXCEL_IMPORT_DEFINITIONS,
+      jobs=rows("""SELECT j.*,u.username FROM data_import_jobs j
+                   LEFT JOIN users u ON u.id=j.imported_by
+                   ORDER BY j.id DESC LIMIT 100"""))
+
+@app.route("/data-import/template/<module_name>")
+@login_required
+def data_import_template(module_name):
+    if module_name not in EXCEL_IMPORT_DEFINITIONS:
+        return "الوحدة غير مدعومة",404
+    definition=EXCEL_IMPORT_DEFINITIONS[module_name]
+    return xlsx_response(
+        f"{module_name}_import_template.xlsx",
+        definition["title"],
+        definition["headers"],
+        [definition["sample"]],
+    )
+
+@app.route("/data-import/<module_name>",methods=["GET","POST"])
+@login_required
+def data_import_upload(module_name):
+    if module_name not in EXCEL_IMPORT_DEFINITIONS:
+        return "الوحدة غير مدعومة",404
+    definition=EXCEL_IMPORT_DEFINITIONS[module_name]
+    preview=[]
+    errors=[]
+    if request.method=="POST":
+        uploaded=request.files.get("excel_file")
+        if not uploaded or not uploaded.filename:
+            flash("اختر ملف Excel أولاً.","danger")
+            return redirect(url_for("data_import_upload",module_name=module_name))
+        try:
+            workbook=openpyxl.load_workbook(uploaded,read_only=True,data_only=True)
+            sheet=workbook.active
+            raw_headers=[normalize_excel_value(x.value) for x in next(sheet.iter_rows())]
+            missing=[h for h in definition["required"] if h not in raw_headers]
+            if missing:
+                raise ValueError("الأعمدة المطلوبة غير موجودة: "+", ".join(missing))
+            for row_no,cells in enumerate(sheet.iter_rows(),start=2):
+                values=[normalize_excel_value(c.value) for c in cells]
+                data={raw_headers[i]:values[i] if i<len(values) else ""
+                      for i in range(len(raw_headers))}
+                if not any(str(v).strip() for v in data.values()):
+                    continue
+                row_errors=validate_import_row(module_name,data,row_no)
+                preview.append({"row_no":row_no,"data":data,"errors":row_errors})
+                errors.extend(row_errors)
+            session["import_preview"]={
+                "module_name":module_name,
+                "file_name":secure_filename(uploaded.filename),
+                "rows":preview[:1000],
+            }
+            flash(f"تمت قراءة {len(preview)} صفًا. راجع المعاينة قبل التأكيد.",
+                  "warning" if errors else "success")
+        except Exception as exc:
+            db.session.rollback()
+            flash(f"تعذر قراءة الملف: {exc}","danger")
+    return render_template("data_import_upload.html",module_name=module_name,
+      definition=definition,preview=preview,errors=errors)
+
+@app.route("/data-import/<module_name>/confirm",methods=["POST"])
+@login_required
+def data_import_confirm(module_name):
+    preview=session.get("import_preview") or {}
+    if preview.get("module_name")!=module_name:
+        flash("لا توجد معاينة صالحة للاستيراد.","danger")
+        return redirect(url_for("data_import_upload",module_name=module_name))
+    import_mode=request.form.get("import_mode","إضافة فقط")
+    success=updated=failed=0
+    error_details=[]
+    rows_data=preview.get("rows",[])
+    for item in rows_data:
+        if item.get("errors"):
+            failed+=1
+            error_details.extend(item["errors"])
+            continue
+        try:
+            was_updated=import_excel_row(module_name,item["data"],import_mode)
+            updated+=1 if was_updated else 0
+            success+=1
+        except Exception as exc:
+            db.session.rollback()
+            failed+=1
+            error_details.append(f"الصف {item['row_no']}: {exc}")
+    import_no=next_import_number()
+    execute("""INSERT INTO data_import_jobs(import_no,module_name,file_name,
+      import_mode,total_rows,success_rows,updated_rows,failed_rows,status,
+      error_details,imported_by,imported_at)
+      VALUES(:no,:module,:file,:mode,:total,:success,:updated,:failed,:status,
+      :errors,:user,:dt)""",
+      {"no":import_no,"module":module_name,"file":preview.get("file_name",""),
+       "mode":import_mode,"total":len(rows_data),"success":success,
+       "updated":updated,"failed":failed,
+       "status":"مكتمل مع أخطاء" if failed else "مكتمل",
+       "errors":"\n".join(error_details[:500]),"user":session.get("user_id"),
+       "dt":datetime.now()})
+    session.pop("import_preview",None)
+    audit("IMPORT","EXCEL",f"استيراد {module_name}: ناجح {success}، فاشل {failed}")
+    flash(f"اكتمل الاستيراد: ناجح {success}، تحديث {updated}، فاشل {failed}.",
+          "warning" if failed else "success")
+    return redirect(url_for("data_import_center"))
+
+
 @app.route("/financial-statements")
 @login_required
 def financial_statements_center():
@@ -8943,6 +9287,23 @@ def export_customers():
         ["اسم العميل", "الرقم الضريبي", "الهاتف", "البريد", "الرصيد"],
         records
     )
+
+
+@app.errorhandler(404)
+def handle_not_found(error):
+    return render_template("error_page.html",
+                           error_title="الصفحة غير موجودة",
+                           error_message="تعذر العثور على الصفحة المطلوبة.",
+                           error_code=404), 404
+
+@app.errorhandler(500)
+def handle_internal_error(error):
+    db.session.rollback()
+    app.logger.exception("Unhandled application error")
+    return render_template("error_page.html",
+                           error_title="حدث خطأ في النظام",
+                           error_message="تم تسجيل الخطأ. يرجى العودة للوحة التحكم والمحاولة مرة أخرى.",
+                           error_code=500), 500
 
 if __name__ == "__main__":
     with app.app_context():

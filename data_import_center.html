@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>مركز استيراد البيانات من Excel</h3><small>Excel Data Import Center</small></div></div>
+<div class="alert alert-info">ابدأ بتحميل النموذج الخاص بالوحدة، املأ البيانات، ثم ارفع الملف للمعاينة والتحقق قبل الإدخال.</div>
+<div class="row g-3 mb-4">
+{% for key,definition in modules.items() %}
+<div class="col-md-4"><div class="form-card h-100"><h5>{{definition.title}}</h5><p class="text-muted">استيراد وإضافة أو تحديث بيانات {{definition.title}}</p><a class="btn btn-outline-success" href="{{url_for('data_import_template',module_name=key)}}">تحميل النموذج</a><a class="btn btn-primary" href="{{url_for('data_import_upload',module_name=key)}}">رفع الملف</a></div></div>
+{% endfor %}
+</div>
+<div class="form-card"><h5>سجل عمليات الاستيراد</h5><div class="table-responsive"><table class="table table-striped"><thead><tr><th>الرقم</th><th>الوحدة</th><th>الملف</th><th>الوضع</th><th>الإجمالي</th><th>الناجح</th><th>التحديث</th><th>الفاشل</th><th>الحالة</th><th>المستخدم</th><th>التاريخ</th></tr></thead><tbody>{% for j in jobs %}<tr><td>{{j.import_no}}</td><td>{{j.module_name}}</td><td>{{j.file_name}}</td><td>{{j.import_mode}}</td><td>{{j.total_rows}}</td><td>{{j.success_rows}}</td><td>{{j.updated_rows}}</td><td>{{j.failed_rows}}</td><td>{{j.status}}</td><td>{{j.username or '-'}}</td><td>{{j.imported_at}}</td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}
