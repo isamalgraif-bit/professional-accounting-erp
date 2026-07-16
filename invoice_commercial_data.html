@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>البيانات التجارية للفاتورة</h3><small>{{invoice.invoice_no}} — {{invoice.customer_name}}</small></div></div>
+<div class="form-card"><form method="post"><div class="row g-3">
+<div class="col-md-3"><label>تاريخ الاستحقاق</label><input class="form-control" type="date" name="due_date" value="{{invoice.due_date or ''}}"></div>
+<div class="col-md-3"><label>شروط الدفع</label><input class="form-control" name="payment_terms" value="{{invoice.payment_terms or ''}}" placeholder="مثال: 30 يوم"></div>
+<div class="col-md-3"><label>طريقة السداد</label><select class="form-select" name="payment_method"><option value="">اختر</option>{% for m in ['نقدي','تحويل بنكي','شيك','آجل'] %}<option {% if invoice.payment_method==m %}selected{% endif %}>{{m}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>مندوب المبيعات</label><input class="form-control" name="sales_person" value="{{invoice.sales_person or ''}}"></div>
+<div class="col-md-4"><label>مرجع العميل</label><input class="form-control" name="customer_reference" value="{{invoice.customer_reference or ''}}"></div>
+<div class="col-md-8"><label>ملاحظات</label><textarea class="form-control" name="notes" rows="3">{{invoice.notes or ''}}</textarea></div>
+<div class="col-12 text-end"><button class="btn btn-primary">💾 حفظ التعديلات</button></div></div></form></div>{% endblock %}

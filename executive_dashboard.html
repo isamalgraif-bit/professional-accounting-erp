@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>لوحة الإدارة التنفيذية</h3><small>Executive Dashboard</small></div><button class="btn btn-dark" onclick="window.print()">طباعة/PDF</button></div>
+<div class="row g-3 mb-4">
+{% for title,value in [('المبيعات',sales.amount),('المشتريات',purchases.amount),('المصروفات',expenses.amount),('صافي الربح التقديري',net_profit),('الذمم المدينة',receivables.amount),('الذمم الدائنة',payables.amount),('قيمة المخزون',inventory_value.amount),('النقدية والبنوك',cash.amount)] %}
+<div class="col-md-3"><div class="erp-kpi"><small>{{title}}</small><h4>{{"%.2f"|format(value or 0)}}</h4></div></div>{% endfor %}
+</div>
+<div class="row g-3"><div class="col-md-6"><div class="form-card"><h5>المبيعات الشهرية</h5><table class="table table-striped"><tr><th>الشهر</th><th>المبيعات</th></tr>{% for r in monthly %}<tr><td>{{r.month}}</td><td>{{r.total}}</td></tr>{% endfor %}</table></div></div>
+<div class="col-md-6"><div class="form-card"><h5>أعلى العملاء</h5><table class="table table-striped"><tr><th>العميل</th><th>المبيعات</th></tr>{% for r in top_customers %}<tr><td>{{r.name}}</td><td>{{r.total}}</td></tr>{% endfor %}</table></div></div>
+<div class="col-md-6"><div class="form-card"><h5>أعلى الموردين</h5><table class="table table-striped"><tr><th>المورد</th><th>المشتريات</th></tr>{% for r in top_suppliers %}<tr><td>{{r.name}}</td><td>{{r.total}}</td></tr>{% endfor %}</table></div></div>
+<div class="col-md-6"><div class="form-card"><h5>تنبيهات المخزون المنخفض</h5><table class="table table-striped"><tr><th>الكود</th><th>الصنف</th><th>الرصيد</th><th>حد الطلب</th></tr>{% for r in low_stock %}<tr><td>{{r.sku}}</td><td>{{r.name}}</td><td>{{r.quantity}}</td><td>{{r.reorder_level}}</td></tr>{% endfor %}</table></div></div></div>{% endblock %}

@@ -3,7 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import text
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import csv
 import io
@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "7.2.0"
+APP_VERSION = "7.4.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -571,6 +571,20 @@ def create_invoice_from_sales_delivery(delivery_id):
         "created":datetime.now(),"order_id":delivery["order_id"],"delivery_id":delivery_id,
         "cc":delivery["cost_center_id"],"warehouse":delivery["warehouse_id"]
     })
+    order_meta = row("""SELECT payment_terms,sales_person FROM sales_orders WHERE id=:id""",
+                     {"id":delivery["order_id"]})
+    due_date = delivery["delivery_date"]
+    if order_meta and order_meta.get("payment_terms"):
+        match = re.search(r"(\d+)", order_meta["payment_terms"])
+        if match:
+            due_date = delivery["delivery_date"] + timedelta(days=int(match.group(1)))
+    execute("""UPDATE invoices SET due_date=:due,payment_terms=:terms,
+               sales_person=:sales_person,payment_method='آجل'
+               WHERE id=:id""",
+            {"due":due_date,
+             "terms":order_meta["payment_terms"] if order_meta else "",
+             "sales_person":order_meta["sales_person"] if order_meta else "",
+             "id":invoice_id})
     invoice_id = row("SELECT id FROM invoices WHERE invoice_no=:no",{"no":invoice_no})["id"]
 
     for x in prepared:
@@ -697,6 +711,127 @@ def allocate_customer_receipt(voucher_id, allocations):
                  "dt":voucher["voucher_date"],"uid":session.get("user_id"),
                  "created":datetime.now()})
         refresh_invoice_payment_status(invoice_id)
+
+
+
+def sales_document_timeline(invoice_id=None, delivery_id=None, order_id=None, quotation_id=None):
+    context = {
+        "quotation": None, "order": None, "delivery": None,
+        "invoice": None, "receipt_allocations": [], "return_docs": []
+    }
+
+    if invoice_id:
+        context["invoice"] = row("""SELECT i.*,c.name customer_name
+                                    FROM invoices i JOIN customers c ON c.id=i.customer_id
+                                    WHERE i.id=:id""", {"id":invoice_id})
+        if context["invoice"]:
+            delivery_id = delivery_id or context["invoice"].get("delivery_id")
+            order_id = order_id or context["invoice"].get("sales_order_id")
+            context["receipt_allocations"] = rows("""SELECT a.*,tv.voucher_no,tv.voucher_date,
+                tv.payment_method,tv.reference
+                FROM invoice_payment_allocations a
+                JOIN treasury_vouchers tv ON tv.id=a.voucher_id
+                WHERE a.invoice_id=:id ORDER BY tv.voucher_date,tv.id""", {"id":invoice_id})
+            context["return_docs"] = rows("""SELECT id,return_no,return_date,total,status
+                                             FROM sales_returns WHERE invoice_id=:id
+                                             ORDER BY return_date,id""", {"id":invoice_id})
+
+    if delivery_id:
+        context["delivery"] = row("""SELECT d.*,o.order_no
+                                     FROM sales_deliveries d
+                                     JOIN sales_orders o ON o.id=d.order_id
+                                     WHERE d.id=:id""", {"id":delivery_id})
+        if context["delivery"]:
+            order_id = order_id or context["delivery"]["order_id"]
+
+    if order_id:
+        context["order"] = row("""SELECT o.*,q.quotation_no
+                                  FROM sales_orders o
+                                  LEFT JOIN sales_quotations q ON q.id=o.quotation_id
+                                  WHERE o.id=:id""", {"id":order_id})
+        if context["order"]:
+            quotation_id = quotation_id or context["order"].get("quotation_id")
+
+    if quotation_id:
+        context["quotation"] = row("SELECT * FROM sales_quotations WHERE id=:id",
+                                   {"id":quotation_id})
+
+    return context
+
+
+
+def financial_date_filters():
+    return {
+        "date_from": request.args.get("date_from","").strip(),
+        "date_to": request.args.get("date_to","").strip(),
+        "branch_id": request.args.get("branch_id","").strip(),
+        "cost_center_id": request.args.get("cost_center_id","").strip(),
+    }
+
+def financial_where(filters, journal_alias="j", line_alias="l"):
+    conditions=[f"{journal_alias}.status='مرحّل'"]
+    params={}
+    if filters.get("date_from"):
+        conditions.append(f"{journal_alias}.journal_date>=:date_from")
+        params["date_from"]=filters["date_from"]
+    if filters.get("date_to"):
+        conditions.append(f"{journal_alias}.journal_date<=:date_to")
+        params["date_to"]=filters["date_to"]
+    if filters.get("cost_center_id"):
+        conditions.append(f"{line_alias}.cost_center_id=:cost_center_id")
+        params["cost_center_id"]=filters["cost_center_id"]
+    return " AND ".join(conditions),params
+
+def account_signed_balance(account_type, debit, credit):
+    debit=float(debit or 0); credit=float(credit or 0)
+    if account_type in ("التزام","حقوق ملكية","إيراد"):
+        return credit-debit
+    return debit-credit
+
+def financial_statement_data(filters):
+    where,params=financial_where(filters)
+    data=rows(f"""SELECT a.id,a.account_code,a.account_name_ar,a.account_name_en,
+      a.account_type,a.statement_type,a.normal_balance,
+      COALESCE(SUM(l.debit),0) total_debit,COALESCE(SUM(l.credit),0) total_credit
+      FROM chart_of_accounts a
+      LEFT JOIN journal_entry_lines l ON l.account_id=a.id
+      LEFT JOIN journal_entries j ON j.id=l.journal_id AND {where}
+      WHERE a.active=1
+      GROUP BY a.id,a.account_code,a.account_name_ar,a.account_name_en,
+               a.account_type,a.statement_type,a.normal_balance
+      ORDER BY a.account_code""",params)
+    result=[]
+    for r in data:
+        item=dict(r)
+        item["balance"]=round(account_signed_balance(
+            item["account_type"],item["total_debit"],item["total_credit"]),2)
+        result.append(item)
+    return result
+
+def party_statement_rows(party_type, party_id, date_from="", date_to=""):
+    field="customer_id" if party_type=="customer" else "supplier_id"
+    conditions=[f"l.{field}=:party","j.status='مرحّل'"]
+    params={"party":party_id}
+    if date_from:
+        conditions.append("j.journal_date>=:date_from");params["date_from"]=date_from
+    if date_to:
+        conditions.append("j.journal_date<=:date_to");params["date_to"]=date_to
+    data=rows(f"""SELECT j.id journal_id,j.journal_no,j.journal_date,j.reference,
+      j.description,l.invoice_number,l.invoice_date,l.line_description,
+      l.debit,l.credit,a.account_code,a.account_name_ar
+      FROM journal_entry_lines l
+      JOIN journal_entries j ON j.id=l.journal_id
+      JOIN chart_of_accounts a ON a.id=l.account_id
+      WHERE {' AND '.join(conditions)}
+      ORDER BY j.journal_date,j.id,l.id""",params)
+    running=0
+    output=[]
+    for r in data:
+        item=dict(r)
+        running += float(item["debit"] or 0)-float(item["credit"] or 0)
+        item["running_balance"]=round(running,2)
+        output.append(item)
+    return output
 
 
 def init_db():
@@ -1229,6 +1364,16 @@ def init_db():
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS warehouse_id INTEGER',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_status VARCHAR(30) DEFAULT \'غير مسددة\'',
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_terms VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT ''",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sales_person VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS customer_reference VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS discount NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE sales_quotations ADD COLUMN IF NOT EXISTS sales_person VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE sales_quotations ADD COLUMN IF NOT EXISTS payment_terms VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS sales_person VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS payment_terms VARCHAR(255) DEFAULT ''",
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS due_date DATE',
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_status VARCHAR(30) DEFAULT 'غير مسددة'",
         "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
@@ -3967,6 +4112,92 @@ def supplier_invoice_post(invoice_id):
 
 
 
+
+@app.route("/sales/tracking")
+@login_required
+def sales_tracking():
+    query=request.args.get("q","").strip()
+    conditions=[];params={}
+    if query:
+        conditions.append("""(q.quotation_no ILIKE :q OR o.order_no ILIKE :q
+                           OR d.delivery_no ILIKE :q OR i.invoice_no ILIKE :q
+                           OR c.name ILIKE :q)""")
+        params["q"]=f"%{query}%"
+    where=" WHERE "+" AND ".join(conditions) if conditions else ""
+    docs=rows(f"""SELECT
+      q.id quotation_id,q.quotation_no,q.status quotation_status,
+      o.id order_id,o.order_no,o.status order_status,
+      d.id delivery_id,d.delivery_no,d.status delivery_status,
+      i.id invoice_id,i.invoice_no,i.status invoice_status,i.payment_status,
+      c.name customer_name,
+      COALESCE(i.total,o.total,q.total,0) total,
+      COALESCE(i.invoice_date,d.delivery_date,o.order_date,q.quotation_date) document_date,
+      COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                WHERE a.invoice_id=i.id),0) paid,
+      COALESCE(i.total,0)-COALESCE((SELECT SUM(a.allocated_amount)
+                FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0) outstanding
+      FROM sales_quotations q
+      LEFT JOIN sales_orders o ON o.quotation_id=q.id
+      LEFT JOIN sales_deliveries d ON d.order_id=o.id
+      LEFT JOIN invoices i ON i.delivery_id=d.id
+      JOIN customers c ON c.id=q.customer_id
+      {where}
+      ORDER BY document_date DESC,q.id DESC""",params)
+
+    direct_orders=rows(f"""SELECT
+      NULL quotation_id,NULL quotation_no,NULL quotation_status,
+      o.id order_id,o.order_no,o.status order_status,
+      d.id delivery_id,d.delivery_no,d.status delivery_status,
+      i.id invoice_id,i.invoice_no,i.status invoice_status,i.payment_status,
+      c.name customer_name,
+      COALESCE(i.total,o.total,0) total,
+      COALESCE(i.invoice_date,d.delivery_date,o.order_date) document_date,
+      COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                WHERE a.invoice_id=i.id),0) paid,
+      COALESCE(i.total,0)-COALESCE((SELECT SUM(a.allocated_amount)
+                FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0) outstanding
+      FROM sales_orders o
+      LEFT JOIN sales_deliveries d ON d.order_id=o.id
+      LEFT JOIN invoices i ON i.delivery_id=d.id
+      JOIN customers c ON c.id=o.customer_id
+      WHERE o.quotation_id IS NULL
+      ORDER BY document_date DESC,o.id DESC""")
+    return render_template("sales_tracking.html",docs=list(docs)+list(direct_orders),q=query)
+
+@app.route("/sales/timeline")
+@login_required
+def sales_timeline():
+    invoice_id=request.args.get("invoice_id",type=int)
+    delivery_id=request.args.get("delivery_id",type=int)
+    order_id=request.args.get("order_id",type=int)
+    quotation_id=request.args.get("quotation_id",type=int)
+    timeline=sales_document_timeline(invoice_id,delivery_id,order_id,quotation_id)
+    return render_template("sales_timeline.html",timeline=timeline)
+
+@app.route("/invoices/<int:invoice_id>/commercial-data",methods=["GET","POST"])
+@login_required
+def invoice_commercial_data(invoice_id):
+    inv=row("""SELECT i.*,c.name customer_name FROM invoices i
+               JOIN customers c ON c.id=i.customer_id WHERE i.id=:id""",{"id":invoice_id})
+    if not inv:
+        return "الفاتورة غير موجودة",404
+    if request.method=="POST":
+        due_date=request.form.get("due_date") or None
+        execute("""UPDATE invoices SET due_date=:due,payment_terms=:terms,
+          payment_method=:method,sales_person=:sales_person,
+          customer_reference=:customer_reference,notes=:notes
+          WHERE id=:id""",
+          {"due":due_date,"terms":request.form.get("payment_terms",""),
+           "method":request.form.get("payment_method",""),
+           "sales_person":request.form.get("sales_person",""),
+           "customer_reference":request.form.get("customer_reference",""),
+           "notes":request.form.get("notes",""),"id":invoice_id})
+        audit("UPDATE","INVOICE",f"تحديث البيانات التجارية للفاتورة {inv['invoice_no']}")
+        flash("تم تحديث بيانات الفاتورة","success")
+        return redirect(url_for("invoice_view",invoice_id=invoice_id))
+    return render_template("invoice_commercial_data.html",invoice=inv)
+
+
 @app.route("/receivables",methods=["GET","POST"])
 @login_required
 def receivables():
@@ -4277,6 +4508,184 @@ def expense_post(expense_id):
         flash("تم ترحيل المصروف محاسبيًا","success")
     except Exception as exc: flash(str(exc),"danger")
     return redirect(url_for("expenses"))
+
+
+
+@app.route("/financial-statements")
+@login_required
+def financial_statements_center():
+    return render_template("financial_statements_center.html")
+
+@app.route("/financial-statements/income-statement")
+@login_required
+def income_statement():
+    filters=financial_date_filters()
+    data=financial_statement_data(filters)
+    revenues=[x for x in data if x["account_type"]=="إيراد" and abs(x["balance"])>0.005]
+    cost_sales=[x for x in data if x["account_type"]=="مصروف" and
+                ("تكلفة" in (x["account_name_ar"] or "") or
+                 "مبيعات" in (x["account_name_ar"] or "")) and abs(x["balance"])>0.005]
+    expenses=[x for x in data if x["account_type"]=="مصروف" and x not in cost_sales
+              and abs(x["balance"])>0.005]
+    total_revenue=round(sum(x["balance"] for x in revenues),2)
+    total_cost=round(sum(x["balance"] for x in cost_sales),2)
+    gross_profit=round(total_revenue-total_cost,2)
+    total_expenses=round(sum(x["balance"] for x in expenses),2)
+    net_profit=round(gross_profit-total_expenses,2)
+    return render_template("income_statement.html",filters=filters,revenues=revenues,
+      cost_sales=cost_sales,expenses=expenses,total_revenue=total_revenue,
+      total_cost=total_cost,gross_profit=gross_profit,total_expenses=total_expenses,
+      net_profit=net_profit,branches=rows("SELECT id,name FROM branches WHERE active=1 ORDER BY name"),
+      centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"))
+
+@app.route("/financial-statements/balance-sheet")
+@login_required
+def balance_sheet():
+    filters=financial_date_filters()
+    data=financial_statement_data(filters)
+    assets=[x for x in data if x["account_type"]=="أصل" and abs(x["balance"])>0.005]
+    liabilities=[x for x in data if x["account_type"]=="التزام" and abs(x["balance"])>0.005]
+    equity=[x for x in data if x["account_type"]=="حقوق ملكية" and abs(x["balance"])>0.005]
+    revenue_total=sum(x["balance"] for x in data if x["account_type"]=="إيراد")
+    expense_total=sum(x["balance"] for x in data if x["account_type"]=="مصروف")
+    retained=round(revenue_total-expense_total,2)
+    total_assets=round(sum(x["balance"] for x in assets),2)
+    total_liabilities=round(sum(x["balance"] for x in liabilities),2)
+    total_equity=round(sum(x["balance"] for x in equity)+retained,2)
+    difference=round(total_assets-total_liabilities-total_equity,2)
+    return render_template("balance_sheet.html",filters=filters,assets=assets,
+      liabilities=liabilities,equity=equity,retained=retained,total_assets=total_assets,
+      total_liabilities=total_liabilities,total_equity=total_equity,difference=difference,
+      branches=rows("SELECT id,name FROM branches WHERE active=1 ORDER BY name"),
+      centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"))
+
+@app.route("/financial-statements/cash-flow")
+@login_required
+def cash_flow_statement():
+    filters=financial_date_filters()
+    conditions=["j.status='مرحّل'"];params={}
+    if filters["date_from"]:
+        conditions.append("j.journal_date>=:date_from");params["date_from"]=filters["date_from"]
+    if filters["date_to"]:
+        conditions.append("j.journal_date<=:date_to");params["date_to"]=filters["date_to"]
+    data=rows(f"""SELECT a.account_code,a.account_name_ar,
+      SUM(l.debit) debit,SUM(l.credit) credit,SUM(l.debit-l.credit) net_movement
+      FROM journal_entry_lines l JOIN journal_entries j ON j.id=l.journal_id
+      JOIN chart_of_accounts a ON a.id=l.account_id
+      WHERE {' AND '.join(conditions)}
+      AND a.account_type='أصل'
+      AND (a.account_name_ar ILIKE '%صندوق%' OR a.account_name_ar ILIKE '%بنك%'
+           OR a.account_name_ar ILIKE '%نقد%')
+      GROUP BY a.id,a.account_code,a.account_name_ar ORDER BY a.account_code""",params)
+    net_cash=round(sum(float(x["net_movement"] or 0) for x in data),2)
+    receipts=row(f"""SELECT COALESCE(SUM(tv.amount),0) amount FROM treasury_vouchers tv
+      WHERE tv.voucher_type='قبض' AND tv.posting_status='مرحّل'
+      {"AND tv.voucher_date>=:date_from" if filters["date_from"] else ""}
+      {"AND tv.voucher_date<=:date_to" if filters["date_to"] else ""}""",params)["amount"]
+    payments=row(f"""SELECT COALESCE(SUM(tv.amount),0) amount FROM treasury_vouchers tv
+      WHERE tv.voucher_type='صرف' AND tv.posting_status='مرحّل'
+      {"AND tv.voucher_date>=:date_from" if filters["date_from"] else ""}
+      {"AND tv.voucher_date<=:date_to" if filters["date_to"] else ""}""",params)["amount"]
+    return render_template("cash_flow_statement.html",filters=filters,accounts=data,
+      receipts=receipts,payments=payments,net_cash=net_cash)
+
+@app.route("/financial-statements/export.xlsx")
+@login_required
+def financial_statements_export():
+    statement=request.args.get("statement","income")
+    filters=financial_date_filters()
+    data=financial_statement_data(filters)
+    if statement=="balance":
+        records=[[x["account_code"],x["account_name_ar"],x["account_type"],x["balance"]]
+                 for x in data if x["account_type"] in ("أصل","التزام","حقوق ملكية")
+                 and abs(x["balance"])>0.005]
+        return xlsx_response("balance_sheet.xlsx","الميزانية العمومية",
+          ["الكود","الحساب","النوع","الرصيد"],records)
+    records=[[x["account_code"],x["account_name_ar"],x["account_type"],x["balance"]]
+             for x in data if x["account_type"] in ("إيراد","مصروف")
+             and abs(x["balance"])>0.005]
+    return xlsx_response("income_statement.xlsx","قائمة الدخل",
+      ["الكود","الحساب","النوع","الرصيد"],records)
+
+@app.route("/party-statements")
+@login_required
+def party_statements():
+    party_type=request.args.get("party_type","customer")
+    party_id=request.args.get("party_id",type=int)
+    date_from=request.args.get("date_from","")
+    date_to=request.args.get("date_to","")
+    data=party_statement_rows(party_type,party_id,date_from,date_to) if party_id else []
+    parties=rows("SELECT id,name FROM customers ORDER BY name") if party_type=="customer" \
+            else rows("SELECT id,name FROM suppliers ORDER BY name")
+    return render_template("party_statement.html",party_type=party_type,party_id=party_id,
+      date_from=date_from,date_to=date_to,rows=data,parties=parties)
+
+@app.route("/party-statements.xlsx")
+@login_required
+def party_statements_export():
+    party_type=request.args.get("party_type","customer")
+    party_id=request.args.get("party_id",type=int)
+    data=party_statement_rows(party_type,party_id,request.args.get("date_from",""),
+                              request.args.get("date_to","")) if party_id else []
+    return xlsx_response("party_statement.xlsx","كشف الحساب",
+      ["التاريخ","القيد","المرجع","البيان","رقم الفاتورة","مدين","دائن","الرصيد"],
+      [[r["journal_date"],r["journal_no"],r["reference"],r["line_description"],
+        r["invoice_number"],r["debit"],r["credit"],r["running_balance"]] for r in data])
+
+@app.route("/payables-aging")
+@login_required
+def payables_aging():
+    data=rows("""SELECT s.id,s.name,
+      SUM(CASE WHEN CURRENT_DATE-si.invoice_date<=30 THEN si.total ELSE 0 END) bucket_0_30,
+      SUM(CASE WHEN CURRENT_DATE-si.invoice_date BETWEEN 31 AND 60 THEN si.total ELSE 0 END) bucket_31_60,
+      SUM(CASE WHEN CURRENT_DATE-si.invoice_date BETWEEN 61 AND 90 THEN si.total ELSE 0 END) bucket_61_90,
+      SUM(CASE WHEN CURRENT_DATE-si.invoice_date>90 THEN si.total ELSE 0 END) bucket_over_90,
+      SUM(si.total) total_outstanding
+      FROM supplier_invoices si JOIN suppliers s ON s.id=si.supplier_id
+      WHERE si.status='معتمدة'
+      GROUP BY s.id,s.name ORDER BY total_outstanding DESC""")
+    return render_template("payables_aging.html",rows=data)
+
+@app.route("/executive-dashboard")
+@login_required
+def executive_dashboard():
+    sales=row("""SELECT COALESCE(SUM(total),0) amount,COUNT(*) count
+                 FROM invoices WHERE status='معتمدة'""")
+    purchases=row("""SELECT COALESCE(SUM(total),0) amount,COUNT(*) count
+                     FROM supplier_invoices WHERE status='معتمدة'""")
+    expenses=row("""SELECT COALESCE(SUM(amount),0) amount,COUNT(*) count
+                    FROM expenses WHERE status='معتمدة'""")
+    receivables=row("""SELECT COALESCE(SUM(i.total-COALESCE(
+      (SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+       WHERE a.invoice_id=i.id),0)),0) amount
+      FROM invoices i WHERE i.status='معتمدة'""")
+    payables=row("""SELECT COALESCE(SUM(total),0) amount FROM supplier_invoices
+                    WHERE status='معتمدة'""")
+    inventory_value=row("""SELECT COALESCE(SUM(quantity*cost),0) amount FROM inventory
+                           WHERE active=1""")
+    cash=row("""SELECT COALESCE(SUM(CASE WHEN l.debit>0 THEN l.debit ELSE -l.credit END),0) amount
+      FROM journal_entry_lines l JOIN journal_entries j ON j.id=l.journal_id
+      JOIN chart_of_accounts a ON a.id=l.account_id
+      WHERE j.status='مرحّل' AND a.account_type='أصل'
+      AND (a.account_name_ar ILIKE '%صندوق%' OR a.account_name_ar ILIKE '%بنك%'
+           OR a.account_name_ar ILIKE '%نقد%')""")
+    top_customers=rows("""SELECT c.name,SUM(i.total) total FROM invoices i
+      JOIN customers c ON c.id=i.customer_id WHERE i.status='معتمدة'
+      GROUP BY c.id,c.name ORDER BY total DESC LIMIT 10""")
+    top_suppliers=rows("""SELECT s.name,SUM(si.total) total FROM supplier_invoices si
+      JOIN suppliers s ON s.id=si.supplier_id WHERE si.status='معتمدة'
+      GROUP BY s.id,s.name ORDER BY total DESC LIMIT 10""")
+    low_stock=rows("""SELECT sku,name,quantity,reorder_level FROM inventory
+      WHERE active=1 AND quantity<=reorder_level ORDER BY quantity LIMIT 10""")
+    monthly=rows("""SELECT TO_CHAR(invoice_date,'YYYY-MM') month,SUM(total) total
+      FROM invoices WHERE status='معتمدة'
+      GROUP BY TO_CHAR(invoice_date,'YYYY-MM') ORDER BY month DESC LIMIT 12""")
+    net_profit=round(float(sales["amount"] or 0)-float(expenses["amount"] or 0),2)
+    return render_template("executive_dashboard.html",sales=sales,purchases=purchases,
+      expenses=expenses,receivables=receivables,payables=payables,
+      inventory_value=inventory_value,cash=cash,net_profit=net_profit,
+      top_customers=top_customers,top_suppliers=top_suppliers,
+      low_stock=low_stock,monthly=monthly)
 
 
 @app.route("/reports")

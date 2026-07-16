@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>القوائم المالية</h3><small>Financial Statements</small></div></div>
+<div class="row g-3">
+<div class="col-md-4"><a class="form-card d-block text-decoration-none text-dark h-100" href="{{url_for('income_statement')}}"><h4>قائمة الدخل</h4><p class="text-muted">الإيرادات، تكلفة المبيعات، المصروفات وصافي الربح</p></a></div>
+<div class="col-md-4"><a class="form-card d-block text-decoration-none text-dark h-100" href="{{url_for('balance_sheet')}}"><h4>الميزانية العمومية</h4><p class="text-muted">الأصول، الالتزامات وحقوق الملكية</p></a></div>
+<div class="col-md-4"><a class="form-card d-block text-decoration-none text-dark h-100" href="{{url_for('cash_flow_statement')}}"><h4>التدفقات النقدية</h4><p class="text-muted">حركة الصناديق والبنوك والتحصيلات والمدفوعات</p></a></div>
+</div>{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>تتبع مستندات المبيعات</h3><small>Quotation → Order → Delivery → Invoice → Receipt</small></div></div>
+<div class="form-card mb-3"><form method="get"><div class="row g-2"><div class="col-md-10"><input class="form-control" name="q" value="{{q}}" placeholder="بحث برقم المستند أو اسم العميل"></div><div class="col-md-2"><button class="btn btn-primary w-100">بحث</button></div></div></form></div>
+<div class="form-card"><div class="table-responsive"><table class="table table-striped align-middle">
+<thead><tr><th>العميل</th><th>عرض السعر</th><th>أمر البيع</th><th>التسليم</th><th>الفاتورة</th><th>حالة السداد</th><th>الإجمالي</th><th>المسدّد</th><th>المتبقي</th><th></th></tr></thead>
+<tbody>{% for d in docs %}<tr>
+<td>{{d.customer_name}}</td>
+<td>{% if d.quotation_id %}<a href="{{url_for('sales_quotation_view',quotation_id=d.quotation_id)}}">{{d.quotation_no}}</a><br><small>{{d.quotation_status}}</small>{% else %}-{% endif %}</td>
+<td>{% if d.order_id %}<a href="{{url_for('sales_order_view',order_id=d.order_id)}}">{{d.order_no}}</a><br><small>{{d.order_status}}</small>{% else %}-{% endif %}</td>
+<td>{% if d.delivery_id %}<a href="{{url_for('sales_delivery_view',delivery_id=d.delivery_id)}}">{{d.delivery_no}}</a><br><small>{{d.delivery_status}}</small>{% else %}-{% endif %}</td>
+<td>{% if d.invoice_id %}<a href="{{url_for('invoice_view',invoice_id=d.invoice_id)}}">{{d.invoice_no}}</a><br><small>{{d.invoice_status}}</small>{% else %}-{% endif %}</td>
+<td>{{d.payment_status or '-'}}</td><td>{{"%.2f"|format(d.total or 0)}}</td><td>{{"%.2f"|format(d.paid or 0)}}</td><td>{{"%.2f"|format(d.outstanding or 0)}}</td>
+<td><a class="btn btn-sm btn-primary" href="{{url_for('sales_timeline',invoice_id=d.invoice_id,delivery_id=d.delivery_id,order_id=d.order_id,quotation_id=d.quotation_id)}}">التسلسل الكامل</a></td>
+</tr>{% endfor %}</tbody></table></div></div>{% endblock %}

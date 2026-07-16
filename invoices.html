@@ -93,6 +93,8 @@
 <td><span class="badge bg-secondary">{{r.status}}</span></td>
 <td>
 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_view', invoice_id=r.id) }}">عرض</a>
+<a class="btn btn-sm btn-outline-secondary" href="{{url_for('invoice_commercial_data',invoice_id=r.id)}}">بيانات تجارية</a>
+<a class="btn btn-sm btn-outline-info" href="{{url_for('sales_timeline',invoice_id=r.id)}}">تتبع</a>
 <a class="btn btn-sm btn-outline-dark" target="_blank" href="{{ url_for('invoice_view', invoice_id=r.id) }}?print=1">طباعة / PDF</a> <form class="d-inline" method="post" action="{{url_for('invoice_delete',invoice_id=r.id)}}" onsubmit="return confirm('تأكيد حذف الفاتورة المسودة؟')"><button class="btn btn-sm btn-outline-danger">حذف</button></form>
 </td>
 </tr>
