@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>الإهلاك الشهري</h3><small>Monthly Depreciation Run</small></div></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-3"><label>تاريخ الفترة</label><input class="form-control" type="date" name="period_date" required></div>
+<div class="col-md-7"><label>ملاحظات</label><input class="form-control" name="notes"></div>
+<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">تشغيل وترحيل الإهلاك</button></div>
+</div></form></div>
+<div class="form-card"><table class="table table-striped"><thead><tr><th>رقم الدفعة</th><th>الفترة</th><th>الإجمالي</th><th>الحالة</th><th>القيد</th></tr></thead><tbody>{% for r in runs %}<tr><td>{{r.run_no}}</td><td>{{r.period_date}}</td><td>{{r.total_amount}}</td><td>{{r.status}}</td><td>{{r.journal_no or '-'}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

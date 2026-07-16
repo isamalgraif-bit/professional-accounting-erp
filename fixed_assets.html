@@ -1,0 +1,20 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>بطاقات الأصول</h3><small>Fixed Asset Register</small></div></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-3"><label>اسم الأصل</label><input class="form-control" name="name" required></div>
+<div class="col-md-3"><label>English Name</label><input class="form-control" name="name_en"></div>
+<div class="col-md-3"><label>الفئة</label><select class="form-select" name="category_id" required>{% for c in categories %}<option value="{{c.id}}">{{c.code}} - {{c.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>المورد</label><select class="form-select" name="supplier_id"><option value="">بدون</option>{% for s in suppliers %}<option value="{{s.id}}">{{s.name}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>تاريخ الشراء</label><input class="form-control" type="date" name="purchase_date" required></div>
+<div class="col-md-2"><label>تاريخ الرسملة</label><input class="form-control" type="date" name="capitalization_date" required></div>
+<div class="col-md-2"><label>التكلفة</label><input class="form-control" type="number" step=".01" name="purchase_cost" required></div>
+<div class="col-md-2"><label>القيمة التخريدية</label><input class="form-control" type="number" step=".01" name="residual_value" value="0"></div>
+<div class="col-md-2"><label>العمر بالشهور</label><input class="form-control" type="number" name="useful_life_months" value="60"></div>
+<div class="col-md-2"><label>السيريال</label><input class="form-control" name="serial_number"></div>
+<div class="col-md-3"><label>الفرع</label><select class="form-select" name="branch_id"><option value="">بدون</option>{% for b in branches %}<option value="{{b.id}}">{{b.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>مركز التكلفة</label><select class="form-select" name="cost_center_id"><option value="">بدون</option>{% for c in centers %}<option value="{{c.id}}">{{c.code}} - {{c.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>الموقع</label><input class="form-control" name="location"></div>
+<div class="col-md-3"><label>ملاحظات</label><input class="form-control" name="notes"></div>
+<div class="col-12 text-end"><button class="btn btn-primary">حفظ الأصل</button></div>
+</div></form></div>
+<div class="form-card"><table class="table table-striped"><thead><tr><th>الرقم</th><th>الأصل</th><th>الفئة</th><th>التكلفة</th><th>مجمع الإهلاك</th><th>صافي القيمة</th><th>الحالة</th></tr></thead><tbody>{% for a in assets %}<tr><td>{{a.asset_no}}</td><td>{{a.name}}</td><td>{{a.category_name}}</td><td>{{a.purchase_cost}}</td><td>{{a.accumulated_depreciation}}</td><td>{{a.net_book_value}}</td><td>{{a.status}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

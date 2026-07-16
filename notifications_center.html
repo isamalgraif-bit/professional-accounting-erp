@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>مركز التنبيهات</h3><small>Notifications & Pending Operations</small></div><button class="btn btn-outline-primary" onclick="location.reload()">تحديث</button></div>
+<div class="row g-3">
+{% if notifications %}
+{% for n in notifications %}
+<div class="col-md-6"><a href="{{n.url}}" class="text-decoration-none"><div class="alert alert-{{n.level}} h-100 mb-0"><h5>{{n.title}}</h5><div>{{n.message}}</div></div></a></div>
+{% endfor %}
+{% else %}<div class="col-12"><div class="alert alert-success">لا توجد تنبيهات أو عمليات معلّقة حاليًا.</div></div>{% endif %}
+</div>{% endblock %}

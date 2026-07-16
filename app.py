@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "7.4.0"
+APP_VERSION = "8.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -834,6 +834,59 @@ def party_statement_rows(party_type, party_id, date_from="", date_to=""):
     return output
 
 
+
+def next_asset_number():
+    count = db.session.execute(text("SELECT COUNT(*) FROM fixed_assets")).scalar() or 0
+    return f"FA-{count+1:06d}"
+
+def next_asset_run_number(period_date):
+    year = period_date.year if hasattr(period_date,"year") else datetime.strptime(period_date,"%Y-%m-%d").year
+    count = db.session.execute(text("""SELECT COUNT(*) FROM asset_depreciation_runs
+        WHERE EXTRACT(YEAR FROM period_date)=:y"""),{"y":year}).scalar() or 0
+    return f"DEP-{year}-{count+1:05d}"
+
+def calculate_monthly_depreciation(asset):
+    cost=float(asset["purchase_cost"] or 0)
+    residual=float(asset["residual_value"] or 0)
+    life=int(asset["useful_life_months"] or 1)
+    accumulated=float(asset["accumulated_depreciation"] or 0)
+    depreciable=max(cost-residual,0)
+    remaining=max(depreciable-accumulated,0)
+    if remaining<=0:
+        return 0
+    if asset["depreciation_method"]=="القسط الثابت":
+        return round(min(depreciable/life,remaining),2)
+    return round(min(depreciable/life,remaining),2)
+
+def post_depreciation_run(run_id):
+    run=row("SELECT * FROM asset_depreciation_runs WHERE id=:id",{"id":run_id})
+    if not run:
+        raise ValueError("دفعة الإهلاك غير موجودة.")
+    if run.get("journal_id"):
+        return run["journal_id"]
+    lines=rows("""SELECT dl.*,fa.name,ac.depreciation_expense_account_id,
+      ac.accumulated_depr_account_id
+      FROM asset_depreciation_lines dl
+      JOIN fixed_assets fa ON fa.id=dl.asset_id
+      JOIN asset_categories ac ON ac.id=fa.category_id
+      WHERE dl.run_id=:id""",{"id":run_id})
+    journal_lines=[]
+    for x in lines:
+        if not x["depreciation_expense_account_id"] or not x["accumulated_depr_account_id"]:
+            raise ValueError(f"فئة الأصل {x['name']} لا تحتوي على حسابات الإهلاك.")
+        journal_lines.extend([
+            {"account_id":x["depreciation_expense_account_id"],"debit":x["depreciation_amount"],
+             "line_description":f"إهلاك الأصل {x['name']}"},
+            {"account_id":x["accumulated_depr_account_id"],"credit":x["depreciation_amount"],
+             "line_description":f"مجمع إهلاك الأصل {x['name']}"},
+        ])
+    jid=create_system_journal(run["period_date"],f"إهلاك الأصول {run['run_no']}",
+                              run["run_no"],"ASSET_DEPRECIATION",run_id,journal_lines)
+    execute("UPDATE asset_depreciation_runs SET journal_id=:jid,status='مرحّل' WHERE id=:id",
+            {"jid":jid,"id":run_id})
+    return jid
+
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -1298,6 +1351,74 @@ def init_db():
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(invoice_id,voucher_id)
         )""",
+        """CREATE TABLE IF NOT EXISTS asset_categories(
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(50) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            useful_life_months INTEGER NOT NULL DEFAULT 60,
+            depreciation_method VARCHAR(50) DEFAULT 'القسط الثابت',
+            asset_account_id INTEGER REFERENCES chart_of_accounts(id),
+            accumulated_depr_account_id INTEGER REFERENCES chart_of_accounts(id),
+            depreciation_expense_account_id INTEGER REFERENCES chart_of_accounts(id),
+            active INTEGER DEFAULT 1
+        )""",
+        """CREATE TABLE IF NOT EXISTS fixed_assets(
+            id SERIAL PRIMARY KEY,
+            asset_no VARCHAR(100) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            name_en VARCHAR(255) DEFAULT '',
+            category_id INTEGER REFERENCES asset_categories(id),
+            branch_id INTEGER REFERENCES branches(id),
+            cost_center_id INTEGER REFERENCES cost_centers(id),
+            supplier_id INTEGER REFERENCES suppliers(id),
+            purchase_date DATE NOT NULL,
+            capitalization_date DATE NOT NULL,
+            purchase_cost NUMERIC(18,2) NOT NULL DEFAULT 0,
+            residual_value NUMERIC(18,2) DEFAULT 0,
+            useful_life_months INTEGER NOT NULL DEFAULT 60,
+            depreciation_method VARCHAR(50) DEFAULT 'القسط الثابت',
+            accumulated_depreciation NUMERIC(18,2) DEFAULT 0,
+            net_book_value NUMERIC(18,2) DEFAULT 0,
+            serial_number VARCHAR(100) DEFAULT '',
+            location VARCHAR(255) DEFAULT '',
+            status VARCHAR(50) DEFAULT 'نشط',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS asset_depreciation_runs(
+            id SERIAL PRIMARY KEY,
+            run_no VARCHAR(100) UNIQUE NOT NULL,
+            period_date DATE NOT NULL,
+            status VARCHAR(40) DEFAULT 'مسودة',
+            total_amount NUMERIC(18,2) DEFAULT 0,
+            journal_id INTEGER,
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS asset_depreciation_lines(
+            id SERIAL PRIMARY KEY,
+            run_id INTEGER NOT NULL REFERENCES asset_depreciation_runs(id) ON DELETE CASCADE,
+            asset_id INTEGER NOT NULL REFERENCES fixed_assets(id),
+            depreciation_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+            accumulated_before NUMERIC(18,2) DEFAULT 0,
+            accumulated_after NUMERIC(18,2) DEFAULT 0,
+            net_book_value_after NUMERIC(18,2) DEFAULT 0
+        )""",
+        """CREATE TABLE IF NOT EXISTS asset_disposals(
+            id SERIAL PRIMARY KEY,
+            disposal_no VARCHAR(100) UNIQUE NOT NULL,
+            asset_id INTEGER NOT NULL REFERENCES fixed_assets(id),
+            disposal_date DATE NOT NULL,
+            disposal_type VARCHAR(50) NOT NULL,
+            proceeds NUMERIC(18,2) DEFAULT 0,
+            gain_loss NUMERIC(18,2) DEFAULT 0,
+            journal_id INTEGER,
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
@@ -1364,6 +1485,9 @@ def init_db():
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS warehouse_id INTEGER',
+        'ALTER TABLE sales_returns ADD COLUMN IF NOT EXISTS cost_total NUMERIC(18,2) DEFAULT 0',
+        'ALTER TABLE sales_returns ADD COLUMN IF NOT EXISTS journal_id INTEGER',
+        "ALTER TABLE sales_returns ADD COLUMN IF NOT EXISTS status VARCHAR(40) DEFAULT 'معتمد'",
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_status VARCHAR(30) DEFAULT \'غير مسددة\'',
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_terms VARCHAR(255) DEFAULT ''",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT ''",
@@ -3688,7 +3812,8 @@ def sales_dashboard():
                                   COUNT(*) return_count FROM sales_returns""")
     profit=row("""SELECT COALESCE(SUM(i.total),0)-COALESCE((SELECT SUM(r.total) FROM sales_returns r),0) net_sales,
       COALESCE((SELECT SUM(di.quantity*di.unit_cost) FROM sales_delivery_items di),0)
-      -COALESCE((SELECT SUM(cost_total) FROM sales_returns),0) net_cost""")
+      -COALESCE((SELECT SUM(COALESCE(sri.quantity,0)*COALESCE(sri.unit_cost,0))
+                 FROM sales_return_items sri),0) net_cost""")
     monthly=rows("""SELECT TO_CHAR(invoice_date,'YYYY-MM') month,
                     SUM(total) sales,COUNT(*) invoice_count
                     FROM invoices WHERE status='معتمدة'
@@ -4509,6 +4634,202 @@ def expense_post(expense_id):
     except Exception as exc: flash(str(exc),"danger")
     return redirect(url_for("expenses"))
 
+
+
+
+@app.route("/notifications")
+@login_required
+def notifications_center():
+    notifications=[]
+    for r in rows("""SELECT id,sku,name,quantity,reorder_level FROM inventory
+                     WHERE active=1 AND quantity<=reorder_level
+                     ORDER BY quantity,name LIMIT 100"""):
+        notifications.append({"level":"warning","title":"مخزون منخفض",
+          "message":f"{r['sku'] or ''} - {r['name']}، الرصيد {r['quantity']} وحد إعادة الطلب {r['reorder_level']}",
+          "url":url_for("inventory_item_view",item_id=r["id"])})
+
+    for r in rows("""SELECT i.id,i.invoice_no,c.name customer_name,
+      i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                        WHERE a.invoice_id=i.id),0) outstanding
+      FROM invoices i JOIN customers c ON c.id=i.customer_id
+      WHERE i.status='معتمدة' AND COALESCE(i.due_date,i.invoice_date)<CURRENT_DATE
+      AND i.total-COALESCE((SELECT SUM(a.allocated_amount)
+                           FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0)>0.005
+      ORDER BY COALESCE(i.due_date,i.invoice_date) LIMIT 100"""):
+        notifications.append({"level":"danger","title":"فاتورة عميل متأخرة",
+          "message":f"{r['invoice_no']} - {r['customer_name']}، المتبقي {float(r['outstanding']):.2f}",
+          "url":url_for("invoice_view",invoice_id=r["id"])})
+
+    for r in rows("""SELECT id,journal_no,description FROM journal_entries
+                     WHERE status<>'مرحّل' ORDER BY journal_date,id LIMIT 100"""):
+        notifications.append({"level":"info","title":"قيد غير مرحّل",
+          "message":f"{r['journal_no']} - {r['description'] or ''}",
+          "url":url_for("journal_view",journal_id=r["id"])})
+
+    return render_template("notifications_center.html",notifications=notifications)
+
+@app.route("/system-health")
+@login_required
+def system_health():
+    checks=[]
+    try:
+        db.session.execute(text("SELECT 1"))
+        checks.append({"name":"قاعدة البيانات","status":"سليم","ok":True})
+    except Exception as exc:
+        checks.append({"name":"قاعدة البيانات","status":str(exc),"ok":False})
+    checks += [
+        {"name":"إصدار النظام","status":APP_VERSION,"ok":True},
+        {"name":"المستخدمون","status":row("SELECT COUNT(*) c FROM users")["c"],"ok":True},
+        {"name":"القيود","status":row("SELECT COUNT(*) c FROM journal_entries")["c"],"ok":True},
+        {"name":"الفواتير","status":row("SELECT COUNT(*) c FROM invoices")["c"],"ok":True},
+        {"name":"الأصناف","status":row("SELECT COUNT(*) c FROM inventory")["c"],"ok":True},
+    ]
+    return render_template("system_health.html",checks=checks)
+
+
+
+@app.route("/fixed-assets")
+@login_required
+def fixed_assets_center():
+    stats={
+      "assets":row("SELECT COUNT(*) c FROM fixed_assets")["c"],
+      "active":row("SELECT COUNT(*) c FROM fixed_assets WHERE status='نشط'")["c"],
+      "cost":row("SELECT COALESCE(SUM(purchase_cost),0) v FROM fixed_assets")["v"],
+      "nbv":row("SELECT COALESCE(SUM(net_book_value),0) v FROM fixed_assets")["v"],
+    }
+    return render_template("fixed_assets_center.html",stats=stats)
+
+@app.route("/fixed-assets/categories",methods=["GET","POST"])
+@login_required
+def asset_categories():
+    if request.method=="POST":
+        execute("""INSERT INTO asset_categories(code,name,useful_life_months,depreciation_method,
+          asset_account_id,accumulated_depr_account_id,depreciation_expense_account_id,active)
+          VALUES(:code,:name,:life,:method,:asset,:accum,:expense,1)
+          ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name""",
+          {"code":request.form["code"],"name":request.form["name"],
+           "life":int(request.form.get("useful_life_months") or 60),
+           "method":request.form.get("depreciation_method","القسط الثابت"),
+           "asset":request.form.get("asset_account_id") or None,
+           "accum":request.form.get("accumulated_depr_account_id") or None,
+           "expense":request.form.get("depreciation_expense_account_id") or None})
+        flash("تم حفظ فئة الأصل","success")
+        return redirect(url_for("asset_categories"))
+    return render_template("asset_categories.html",
+      rows=rows("""SELECT ac.*,a1.account_name_ar asset_account,
+        a2.account_name_ar accumulated_account,a3.account_name_ar expense_account
+        FROM asset_categories ac
+        LEFT JOIN chart_of_accounts a1 ON a1.id=ac.asset_account_id
+        LEFT JOIN chart_of_accounts a2 ON a2.id=ac.accumulated_depr_account_id
+        LEFT JOIN chart_of_accounts a3 ON a3.id=ac.depreciation_expense_account_id
+        ORDER BY ac.code"""),
+      accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+                       WHERE active=1 AND accepts_entries=1 ORDER BY account_code"""))
+
+@app.route("/fixed-assets/assets",methods=["GET","POST"])
+@login_required
+def fixed_assets():
+    if request.method=="POST":
+        category=row("SELECT * FROM asset_categories WHERE id=:id",{"id":request.form["category_id"]})
+        no=next_asset_number()
+        cost=float(request.form.get("purchase_cost") or 0)
+        residual=float(request.form.get("residual_value") or 0)
+        execute("""INSERT INTO fixed_assets(asset_no,name,name_en,category_id,branch_id,cost_center_id,
+          supplier_id,purchase_date,capitalization_date,purchase_cost,residual_value,
+          useful_life_months,depreciation_method,accumulated_depreciation,net_book_value,
+          serial_number,location,status,notes,created_by,created_at)
+          VALUES(:no,:name,:name_en,:category,:branch,:cc,:supplier,:purchase_date,:cap_date,
+          :cost,:residual,:life,:method,0,:nbv,:serial,:location,'نشط',:notes,:uid,:created)""",
+          {"no":no,"name":request.form["name"],"name_en":request.form.get("name_en",""),
+           "category":category["id"],"branch":request.form.get("branch_id") or None,
+           "cc":request.form.get("cost_center_id") or None,
+           "supplier":request.form.get("supplier_id") or None,
+           "purchase_date":request.form["purchase_date"],
+           "cap_date":request.form["capitalization_date"],
+           "cost":cost,"residual":residual,
+           "life":int(request.form.get("useful_life_months") or category["useful_life_months"]),
+           "method":request.form.get("depreciation_method") or category["depreciation_method"],
+           "nbv":cost,"serial":request.form.get("serial_number",""),
+           "location":request.form.get("location",""),"notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        flash(f"تم إنشاء الأصل {no}","success")
+        return redirect(url_for("fixed_assets"))
+    return render_template("fixed_assets.html",
+      assets=rows("""SELECT fa.*,ac.name category_name,b.name branch_name,cc.name cost_center_name
+                     FROM fixed_assets fa JOIN asset_categories ac ON ac.id=fa.category_id
+                     LEFT JOIN branches b ON b.id=fa.branch_id
+                     LEFT JOIN cost_centers cc ON cc.id=fa.cost_center_id
+                     ORDER BY fa.id DESC"""),
+      categories=rows("SELECT * FROM asset_categories WHERE active=1 ORDER BY code"),
+      branches=rows("SELECT id,name FROM branches WHERE active=1 ORDER BY name"),
+      centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"),
+      suppliers=rows("SELECT id,name FROM suppliers ORDER BY name"))
+
+@app.route("/fixed-assets/depreciation",methods=["GET","POST"])
+@login_required
+def asset_depreciation():
+    if request.method=="POST":
+        period_date=request.form["period_date"]
+        no=next_asset_run_number(period_date)
+        execute("""INSERT INTO asset_depreciation_runs(run_no,period_date,status,notes,created_by,created_at)
+                   VALUES(:no,:dt,'مسودة',:notes,:uid,:created)""",
+                {"no":no,"dt":period_date,"notes":request.form.get("notes",""),
+                 "uid":session.get("user_id"),"created":datetime.now()})
+        run_id=row("SELECT id FROM asset_depreciation_runs WHERE run_no=:no",{"no":no})["id"]
+        total=0
+        for asset in rows("""SELECT * FROM fixed_assets
+                             WHERE status='نشط' AND capitalization_date<=:dt""",{"dt":period_date}):
+            amount=calculate_monthly_depreciation(asset)
+            if amount<=0: continue
+            before=float(asset["accumulated_depreciation"] or 0)
+            after=round(before+amount,2)
+            nbv=round(float(asset["purchase_cost"])-after,2)
+            execute("""INSERT INTO asset_depreciation_lines(run_id,asset_id,depreciation_amount,
+              accumulated_before,accumulated_after,net_book_value_after)
+              VALUES(:run,:asset,:amount,:before,:after,:nbv)""",
+              {"run":run_id,"asset":asset["id"],"amount":amount,
+               "before":before,"after":after,"nbv":nbv})
+            execute("""UPDATE fixed_assets SET accumulated_depreciation=:after,
+                       net_book_value=:nbv WHERE id=:id""",
+                    {"after":after,"nbv":nbv,"id":asset["id"]})
+            total+=amount
+        execute("UPDATE asset_depreciation_runs SET total_amount=:total WHERE id=:id",
+                {"total":round(total,2),"id":run_id})
+        try:
+            post_depreciation_run(run_id)
+            flash(f"تم تشغيل وترحيل الإهلاك {no}","success")
+        except Exception as exc:
+            db.session.rollback()
+            flash(str(exc),"danger")
+        return redirect(url_for("asset_depreciation"))
+    return render_template("asset_depreciation.html",
+      runs=rows("""SELECT r.*,j.journal_no FROM asset_depreciation_runs r
+                   LEFT JOIN journal_entries j ON j.id=r.journal_id
+                   ORDER BY r.period_date DESC,r.id DESC"""))
+
+@app.route("/fixed-assets/report")
+@login_required
+def fixed_assets_report():
+    data=rows("""SELECT fa.asset_no,fa.name,ac.name category_name,fa.purchase_date,
+      fa.purchase_cost,fa.accumulated_depreciation,fa.net_book_value,
+      fa.status,fa.location
+      FROM fixed_assets fa JOIN asset_categories ac ON ac.id=fa.category_id
+      ORDER BY ac.code,fa.asset_no""")
+    return render_template("fixed_assets_report.html",rows=data)
+
+@app.route("/fixed-assets/report.xlsx")
+@login_required
+def fixed_assets_report_export():
+    data=rows("""SELECT fa.asset_no,fa.name,ac.name category_name,fa.purchase_date,
+      fa.purchase_cost,fa.accumulated_depreciation,fa.net_book_value,
+      fa.status,fa.location
+      FROM fixed_assets fa JOIN asset_categories ac ON ac.id=fa.category_id
+      ORDER BY ac.code,fa.asset_no""")
+    return xlsx_response("fixed_assets.xlsx","الأصول الثابتة",
+      ["رقم الأصل","الأصل","الفئة","تاريخ الشراء","التكلفة","مجمع الإهلاك",
+       "صافي القيمة الدفترية","الحالة","الموقع"],
+      [[r["asset_no"],r["name"],r["category_name"],r["purchase_date"],r["purchase_cost"],
+        r["accumulated_depreciation"],r["net_book_value"],r["status"],r["location"]] for r in data])
 
 
 @app.route("/financial-statements")

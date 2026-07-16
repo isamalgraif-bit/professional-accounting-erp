@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>فئات الأصول</h3><small>Asset Categories</small></div></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-2"><label>الكود</label><input class="form-control" name="code" required></div>
+<div class="col-md-3"><label>اسم الفئة</label><input class="form-control" name="name" required></div>
+<div class="col-md-2"><label>العمر بالشهور</label><input class="form-control" type="number" name="useful_life_months" value="60"></div>
+<div class="col-md-2"><label>طريقة الإهلاك</label><select class="form-select" name="depreciation_method"><option>القسط الثابت</option></select></div>
+<div class="col-md-3"><label>حساب الأصل</label><select class="form-select" name="asset_account_id"><option value="">اختر</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-4"><label>حساب مجمع الإهلاك</label><select class="form-select" name="accumulated_depr_account_id"><option value="">اختر</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-4"><label>حساب مصروف الإهلاك</label><select class="form-select" name="depreciation_expense_account_id"><option value="">اختر</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-4 d-flex align-items-end"><button class="btn btn-primary w-100">حفظ الفئة</button></div>
+</div></form></div>
+<div class="form-card"><table class="table table-striped"><thead><tr><th>الكود</th><th>الفئة</th><th>العمر</th><th>حساب الأصل</th><th>مجمع الإهلاك</th><th>مصروف الإهلاك</th></tr></thead><tbody>{% for r in rows %}<tr><td>{{r.code}}</td><td>{{r.name}}</td><td>{{r.useful_life_months}}</td><td>{{r.asset_account or '-'}}</td><td>{{r.accumulated_account or '-'}}</td><td>{{r.expense_account or '-'}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

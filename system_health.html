@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>صحة النظام</h3><small>System Health</small></div><button class="btn btn-outline-primary" onclick="location.reload()">إعادة الفحص</button></div>
+<div class="form-card"><table class="table table-bordered"><thead><tr><th>الفحص</th><th>النتيجة</th><th>الحالة</th></tr></thead><tbody>
+{% for c in checks %}<tr><td>{{c.name}}</td><td>{{c.status}}</td><td><span class="badge bg-{{'success' if c.ok else 'danger'}}">{{'سليم' if c.ok else 'خطأ'}}</span></td></tr>{% endfor %}
+</tbody></table></div>{% endblock %}

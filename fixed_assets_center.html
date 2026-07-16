@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>الأصول الثابتة</h3><small>Fixed Assets Management</small></div></div>
+<div class="row g-3 mb-4">
+<div class="col-md-3"><div class="erp-kpi"><small>عدد الأصول</small><h4>{{stats.assets}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>الأصول النشطة</small><h4>{{stats.active}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>تكلفة الأصول</small><h4>{{stats.cost}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>صافي القيمة الدفترية</small><h4>{{stats.nbv}}</h4></div></div>
+</div>
+<div class="row g-3">
+{% for t,d,u in [('فئات الأصول','الحسابات والعمر الإنتاجي',url_for('asset_categories')),('بطاقات الأصول','تسجيل ومتابعة الأصول',url_for('fixed_assets')),('الإهلاك الشهري','تشغيل وترحيل الإهلاك',url_for('asset_depreciation')),('تقرير الأصول','التكلفة ومجمع الإهلاك وصافي القيمة',url_for('fixed_assets_report'))] %}
+<div class="col-md-3"><a class="form-card d-block text-decoration-none text-dark h-100" href="{{u}}"><h5>{{t}}</h5><p class="text-muted">{{d}}</p></a></div>{% endfor %}
+</div>{% endblock %}
