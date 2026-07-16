@@ -1,0 +1,20 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>تحصيل فواتير العملاء</h3><small>Invoice Allocation & Customer Receipts</small></div><button class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('receivables')}}">📄 جديد</button></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-4"><label>العميل</label><select class="form-select" name="customer_id" id="customerSelect" required><option value="">اختر العميل</option>{% for c in customers %}<option value="{{c.id}}">{{c.name}}{% if c.name_en %} / {{c.name_en}}{% endif %}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>تاريخ القبض</label><input class="form-control" type="date" name="receipt_date" id="receiptDate" required></div>
+<div class="col-md-3"><label>حساب الصندوق/البنك</label><select class="form-select" name="cash_bank_account_id" required>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>طريقة الدفع</label><select class="form-select" name="payment_method"><option>تحويل بنكي</option><option>نقدي</option><option>شيك</option></select></div>
+<div class="col-md-4"><label>المرجع</label><input class="form-control" name="reference"></div>
+<div class="col-md-8"><label>البيان</label><input class="form-control" name="description" value="تحصيل فواتير عميل"></div></div>
+<div id="invoiceArea" class="mt-3"></div>
+<div class="d-flex justify-content-between align-items-center mt-3"><h5>إجمالي التحصيل: <span id="receiptTotal">0.00</span></h5><button class="btn btn-primary">حفظ وترحيل وربط الفواتير</button></div></form></div>
+<div class="form-card"><h5>الفواتير المفتوحة لجميع العملاء</h5><div class="table-responsive"><table class="table table-striped"><thead><tr><th>العميل</th><th>الفاتورة</th><th>التاريخ</th><th>الاستحقاق</th><th>الإجمالي</th><th>المسدّد</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>{% for i in open_invoices %}<tr><td>{{i.customer_name}}</td><td><a href="{{url_for('invoice_view',invoice_id=i.id)}}">{{i.invoice_no}}</a></td><td>{{i.invoice_date}}</td><td>{{i.due_date}}</td><td>{{i.total}}</td><td>{{i.paid}}</td><td>{{i.outstanding}}</td><td>{{i.payment_status}}</td></tr>{% endfor %}</tbody></table></div></div>
+<script>
+receiptDate.value=new Date().toISOString().slice(0,10);
+function calcTotal(){let t=0;document.querySelectorAll('.allocation').forEach(x=>t+=Number(x.value||0));receiptTotal.textContent=t.toFixed(2)}
+customerSelect.onchange=async()=>{if(!customerSelect.value){invoiceArea.innerHTML='';return}
+const d=await(await fetch(`/receivables/customer/${customerSelect.value}/open-invoices`)).json();
+invoiceArea.innerHTML=`<table class="table table-bordered"><thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الاستحقاق</th><th>الإجمالي</th><th>المسدّد</th><th>المتبقي</th><th>المبلغ المحصل</th></tr></thead><tbody>${d.items.map(x=>`<tr><td>${x.invoice_no}<input type="hidden" name="invoice_id[]" value="${x.id}"></td><td>${x.invoice_date}</td><td>${x.due_date}</td><td>${x.total}</td><td>${x.paid}</td><td>${x.outstanding}</td><td><input class="form-control allocation" type="number" step=".01" min="0" max="${x.outstanding}" name="allocated_amount[]" value="0"></td></tr>`).join('')}</tbody></table>`;
+document.querySelectorAll('.allocation').forEach(x=>x.addEventListener('input',calcTotal));calcTotal()}
+</script>{% endblock %}

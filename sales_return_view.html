@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>إشعار دائن / مرتجع مبيعات</h3><small>{{doc.return_no}}</small></div><button class="btn btn-dark" onclick="window.print()">🖨️ طباعة / PDF</button></div>
+<div class="form-card mb-3"><div class="row"><div class="col-md-3"><b>التاريخ:</b> {{doc.return_date}}</div><div class="col-md-3"><b>الفاتورة:</b> {{doc.invoice_no}}</div><div class="col-md-3"><b>العميل:</b> {{doc.customer_name}} / {{doc.customer_name_en or ''}}</div><div class="col-md-3"><b>القيد:</b> {{doc.journal_no or '-'}}</div></div></div>
+<div class="form-card"><table class="table table-bordered"><thead><tr><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>سعر الوحدة</th><th>قبل الضريبة</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>
+{% for i in items %}<tr><td>{{i.item_name}}</td><td>{{i.quantity}}</td><td>{{i.unit}}</td><td>{{i.unit_price}}</td><td>{{i.line_subtotal}}</td><td>{{i.line_vat}}</td><td>{{i.line_total}}</td></tr>{% endfor %}
+<tr><th colspan="4">الإجمالي</th><th>{{doc.subtotal}}</th><th>{{doc.vat}}</th><th>{{doc.total}}</th></tr></tbody></table></div>{% endblock %}

@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "7.0.0"
+APP_VERSION = "7.2.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -209,6 +209,17 @@ def post_invoice_to_ledger(invoice_id):
           "tax_direction":"مخرجات","customer_id":inv["customer_id"],"party_type":"عميل",
           "tax_number":inv["customer_vat"] or "","invoice_number":inv["invoice_no"],
           "invoice_date":inv["invoice_date"],"line_description":"ضريبة المخرجات"})
+    cost_total = sales_invoice_cost(invoice_id)
+    if cost_total > 0:
+        stock_accounts = require_accounts(["inventory_account_id","cost_of_sales_account_id"])
+        lines.extend([
+            {"account_id":stock_accounts["cost_of_sales_account_id"],"debit":cost_total,
+             "invoice_number":inv["invoice_no"],"invoice_date":inv["invoice_date"],
+             "line_description":"تكلفة البضاعة المباعة"},
+            {"account_id":stock_accounts["inventory_account_id"],"credit":cost_total,
+             "invoice_number":inv["invoice_no"],"invoice_date":inv["invoice_date"],
+             "line_description":"إخراج المخزون المباع"},
+        ])
     jid = create_system_journal(inv["invoice_date"],f"فاتورة مبيعات {inv['invoice_no']}",
                                 inv["invoice_no"],"INVOICE",invoice_id,lines)
     execute("UPDATE invoices SET journal_id=:j,posting_status='مرحّل' WHERE id=:id",
@@ -506,6 +517,187 @@ def parse_sales_lines(form):
         subtotal+=base; discount_total+=disc; vat_total+=tax; total+=line_total
     if not lines: raise ValueError("أدخل صنفًا واحدًا على الأقل")
     return lines,round(subtotal,2),round(discount_total,2),round(vat_total,2),round(total,2)
+
+
+def create_invoice_from_sales_delivery(delivery_id):
+    delivery = row("""SELECT d.*,o.order_no,o.branch_id,o.cost_center_id,o.subtotal,o.discount,
+                             o.vat,o.total
+                      FROM sales_deliveries d
+                      JOIN sales_orders o ON o.id=d.order_id
+                      WHERE d.id=:id""", {"id":delivery_id})
+    if not delivery:
+        raise ValueError("إذن التسليم غير موجود.")
+    if delivery.get("invoice_id"):
+        return delivery["invoice_id"]
+
+    delivery_items = rows("""SELECT di.*,oi.item_name,oi.unit,oi.unit_price,oi.vat_rate,
+                                    oi.discount_rate
+                             FROM sales_delivery_items di
+                             JOIN sales_order_items oi ON oi.id=di.order_item_id
+                             WHERE di.delivery_id=:id ORDER BY di.id""", {"id":delivery_id})
+    if not delivery_items:
+        raise ValueError("لا توجد بنود في إذن التسليم.")
+
+    subtotal = vat_total = grand_total = 0.0
+    prepared = []
+    for x in delivery_items:
+        base = round(float(x["quantity"]) * float(x["unit_price"]), 2)
+        discount = round(base * float(x["discount_rate"] or 0) / 100, 2)
+        taxable = round(base - discount, 2)
+        tax = round(taxable * float(x["vat_rate"] or 0) / 100, 2)
+        total = round(taxable + tax, 2)
+        prepared.append({
+            "item_id": x["item_id"], "item_name": x["item_name"], "quantity": x["quantity"],
+            "unit": x["unit"], "unit_price": x["unit_price"], "vat_rate": x["vat_rate"],
+            "line_subtotal": taxable, "line_vat": tax, "line_total": total
+        })
+        subtotal += taxable
+        vat_total += tax
+        grand_total += total
+
+    invoice_no = next_invoice_number(delivery["delivery_date"])
+    invoice_uuid = str(uuid.uuid4())
+    execute("""INSERT INTO invoices(
+        invoice_no,invoice_uuid,customer_id,invoice_date,subtotal,vat,total,status,
+        branch_id,notes,created_at,sales_order_id,delivery_id,cost_center_id,warehouse_id
+        ) VALUES(
+        :no,:uuid,:customer,:dt,:sub,:vat,:total,'مسودة',:branch,:notes,:created,
+        :order_id,:delivery_id,:cc,:warehouse
+        )""", {
+        "no":invoice_no,"uuid":invoice_uuid,"customer":delivery["customer_id"],
+        "dt":delivery["delivery_date"],"sub":round(subtotal,2),"vat":round(vat_total,2),
+        "total":round(grand_total,2),"branch":delivery["branch_id"],
+        "notes":f"فاتورة ناتجة عن إذن التسليم {delivery['delivery_no']}",
+        "created":datetime.now(),"order_id":delivery["order_id"],"delivery_id":delivery_id,
+        "cc":delivery["cost_center_id"],"warehouse":delivery["warehouse_id"]
+    })
+    invoice_id = row("SELECT id FROM invoices WHERE invoice_no=:no",{"no":invoice_no})["id"]
+
+    for x in prepared:
+        execute("""INSERT INTO invoice_items(
+            invoice_id,item_id,item_name,quantity,unit,unit_price,vat_rate,
+            line_subtotal,line_vat,line_total
+            ) VALUES(
+            :invoice_id,:item_id,:item_name,:quantity,:unit,:unit_price,:vat_rate,
+            :line_subtotal,:line_vat,:line_total
+            )""", {"invoice_id":invoice_id, **x})
+
+    execute("UPDATE sales_deliveries SET invoice_id=:invoice WHERE id=:id",
+            {"invoice":invoice_id,"id":delivery_id})
+    audit("CREATE","INVOICE",f"إنشاء فاتورة {invoice_no} من إذن التسليم {delivery['delivery_no']}")
+    return invoice_id
+
+def sales_invoice_cost(invoice_id):
+    value = db.session.execute(text("""
+        SELECT COALESCE(SUM(di.quantity * di.unit_cost),0)
+        FROM sales_delivery_items di
+        JOIN sales_deliveries d ON d.id=di.delivery_id
+        JOIN invoices i ON i.delivery_id=d.id
+        WHERE i.id=:invoice_id
+    """), {"invoice_id":invoice_id}).scalar()
+    if value:
+        return float(value)
+    value = db.session.execute(text("""
+        SELECT COALESCE(SUM(ii.quantity * COALESCE(inv.cost,0)),0)
+        FROM invoice_items ii LEFT JOIN inventory inv ON inv.id=ii.item_id
+        WHERE ii.invoice_id=:invoice_id
+    """), {"invoice_id":invoice_id}).scalar()
+    return float(value or 0)
+
+def post_sales_return_to_ledger(return_id):
+    ret = row("""SELECT r.*,c.vat_number customer_vat
+                 FROM sales_returns r JOIN customers c ON c.id=r.customer_id
+                 WHERE r.id=:id""", {"id":return_id})
+    if not ret:
+        raise ValueError("مرتجع المبيعات غير موجود.")
+    if ret.get("journal_id"):
+        return ret["journal_id"]
+
+    acc = require_accounts(["customer_account_id","sales_account_id","vat_output_account_id",
+                            "inventory_account_id","cost_of_sales_account_id"])
+    common = {
+        "customer_id":ret["customer_id"],"party_type":"عميل",
+        "tax_number":ret["customer_vat"] or "","invoice_number":ret["return_no"],
+        "invoice_date":ret["return_date"],"line_description":"مرتجع مبيعات"
+    }
+    lines = [
+        {"account_id":acc["sales_account_id"],"debit":ret["subtotal"],**common},
+        {"account_id":acc["customer_account_id"],"credit":ret["total"],**common},
+    ]
+    if float(ret["vat"] or 0) > 0:
+        lines.append({"account_id":acc["vat_output_account_id"],"debit":ret["vat"],
+                      "taxable":1,"tax_direction":"مخرجات",**common})
+    if float(ret["cost_total"] or 0) > 0:
+        lines.extend([
+            {"account_id":acc["inventory_account_id"],"debit":ret["cost_total"],**common},
+            {"account_id":acc["cost_of_sales_account_id"],"credit":ret["cost_total"],**common},
+        ])
+
+    jid = create_system_journal(
+        ret["return_date"],f"مرتجع مبيعات {ret['return_no']}",
+        ret["return_no"],"SALES_RETURN",return_id,lines
+    )
+    execute("UPDATE sales_returns SET journal_id=:jid WHERE id=:id",
+            {"jid":jid,"id":return_id})
+    return jid
+
+
+
+def invoice_paid_amount(invoice_id):
+    value = db.session.execute(text("""
+        SELECT COALESCE(SUM(allocated_amount),0)
+        FROM invoice_payment_allocations WHERE invoice_id=:id
+    """), {"id":invoice_id}).scalar()
+    return round(float(value or 0),2)
+
+def refresh_invoice_payment_status(invoice_id):
+    inv = row("SELECT total FROM invoices WHERE id=:id",{"id":invoice_id})
+    if not inv:
+        return
+    paid = invoice_paid_amount(invoice_id)
+    total = round(float(inv["total"] or 0),2)
+    if paid <= 0:
+        status = "غير مسددة"
+    elif paid + 0.005 >= total:
+        status = "مسددة"
+    else:
+        status = "مسددة جزئيًا"
+    execute("UPDATE invoices SET payment_status=:status WHERE id=:id",
+            {"status":status,"id":invoice_id})
+
+def allocate_customer_receipt(voucher_id, allocations):
+    voucher = row("""SELECT * FROM treasury_vouchers
+                     WHERE id=:id AND voucher_type='قبض' AND customer_id IS NOT NULL""",
+                  {"id":voucher_id})
+    if not voucher:
+        raise ValueError("سند القبض غير صالح للربط بالفواتير.")
+    allocation_total = round(sum(float(x["amount"]) for x in allocations),2)
+    if allocation_total <= 0:
+        raise ValueError("يجب تخصيص مبلغ لفاتورة واحدة على الأقل.")
+    if allocation_total > round(float(voucher["amount"]),2) + 0.005:
+        raise ValueError("إجمالي التخصيص أكبر من مبلغ سند القبض.")
+
+    for allocation in allocations:
+        invoice_id = int(allocation["invoice_id"])
+        amount = round(float(allocation["amount"]),2)
+        if amount <= 0:
+            continue
+        inv = row("""SELECT id,total,customer_id FROM invoices
+                     WHERE id=:id AND customer_id=:customer""",
+                  {"id":invoice_id,"customer":voucher["customer_id"]})
+        if not inv:
+            raise ValueError("إحدى الفواتير لا تخص العميل المحدد.")
+        outstanding = round(float(inv["total"]) - invoice_paid_amount(invoice_id),2)
+        if amount > outstanding + 0.005:
+            raise ValueError(f"المبلغ المخصص أكبر من رصيد الفاتورة المتبقي {outstanding:.2f}.")
+        execute("""INSERT INTO invoice_payment_allocations(
+                    invoice_id,voucher_id,allocated_amount,allocation_date,created_by,created_at)
+                   VALUES(:invoice,:voucher,:amount,:dt,:uid,:created)""",
+                {"invoice":invoice_id,"voucher":voucher_id,"amount":amount,
+                 "dt":voucher["voucher_date"],"uid":session.get("user_id"),
+                 "created":datetime.now()})
+        refresh_invoice_payment_status(invoice_id)
+
 
 def init_db():
     statements = [
@@ -929,6 +1121,48 @@ def init_db():
             item_id INTEGER REFERENCES inventory(id), quantity NUMERIC(18,3) NOT NULL,
             unit_cost NUMERIC(18,4) DEFAULT 0
         )""",
+        """CREATE TABLE IF NOT EXISTS sales_returns(
+            id SERIAL PRIMARY KEY,
+            return_no VARCHAR(100) UNIQUE NOT NULL,
+            return_date DATE NOT NULL,
+            invoice_id INTEGER NOT NULL REFERENCES invoices(id),
+            customer_id INTEGER NOT NULL REFERENCES customers(id),
+            warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
+            subtotal NUMERIC(18,2) DEFAULT 0,
+            vat NUMERIC(18,2) DEFAULT 0,
+            total NUMERIC(18,2) DEFAULT 0,
+            cost_total NUMERIC(18,2) DEFAULT 0,
+            status VARCHAR(40) DEFAULT 'معتمد',
+            journal_id INTEGER,
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS sales_return_items(
+            id SERIAL PRIMARY KEY,
+            return_id INTEGER NOT NULL REFERENCES sales_returns(id) ON DELETE CASCADE,
+            invoice_item_id INTEGER REFERENCES invoice_items(id),
+            item_id INTEGER REFERENCES inventory(id),
+            item_name VARCHAR(255) NOT NULL,
+            quantity NUMERIC(18,3) NOT NULL,
+            unit VARCHAR(50) DEFAULT 'وحدة',
+            unit_price NUMERIC(18,2) NOT NULL,
+            vat_rate NUMERIC(5,2) DEFAULT 15,
+            unit_cost NUMERIC(18,4) DEFAULT 0,
+            line_subtotal NUMERIC(18,2) DEFAULT 0,
+            line_vat NUMERIC(18,2) DEFAULT 0,
+            line_total NUMERIC(18,2) DEFAULT 0
+        )""",
+        """CREATE TABLE IF NOT EXISTS invoice_payment_allocations(
+            id SERIAL PRIMARY KEY,
+            invoice_id INTEGER NOT NULL REFERENCES invoices(id),
+            voucher_id INTEGER NOT NULL REFERENCES treasury_vouchers(id),
+            allocated_amount NUMERIC(18,2) NOT NULL,
+            allocation_date DATE NOT NULL,
+            created_by INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(invoice_id,voucher_id)
+        )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
@@ -995,6 +1229,8 @@ def init_db():
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS warehouse_id INTEGER',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS due_date DATE',
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_status VARCHAR(30) DEFAULT 'غير مسددة'",
         "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
         "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS barcode VARCHAR(100) DEFAULT ''",
         "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS qr_code VARCHAR(255) DEFAULT ''",
@@ -3163,6 +3399,206 @@ def sales_delivery_view(delivery_id):
                   JOIN sales_order_items oi ON oi.id=di.order_item_id WHERE di.delivery_id=:id""",{"id":delivery_id})
     return render_template("sales_delivery_view.html",doc=doc,items=items)
 
+
+@app.route("/sales/deliveries/<int:delivery_id>/create-invoice",methods=["POST"])
+@login_required
+def sales_delivery_create_invoice(delivery_id):
+    try:
+        invoice_id = create_invoice_from_sales_delivery(delivery_id)
+        post_invoice_to_ledger(invoice_id)
+        execute("UPDATE invoices SET status='معتمدة' WHERE id=:id",{"id":invoice_id})
+        flash("تم إنشاء الفاتورة وترحيل قيد المبيعات وتكلفة البضاعة المباعة","success")
+        return redirect(url_for("invoice_view",invoice_id=invoice_id))
+    except Exception as exc:
+        db.session.rollback()
+        flash(str(exc),"danger")
+        return redirect(url_for("sales_delivery_view",delivery_id=delivery_id))
+
+@app.route("/sales/returns",methods=["GET","POST"])
+@login_required
+def sales_returns():
+    if request.method=="POST":
+        invoice_id=int(request.form["invoice_id"])
+        invoice=row("SELECT * FROM invoices WHERE id=:id",{"id":invoice_id})
+        if not invoice:
+            flash("الفاتورة غير موجودة","danger")
+            return redirect(url_for("sales_returns"))
+        warehouse_id=int(request.form["warehouse_id"])
+        ids=request.form.getlist("invoice_item_id[]")
+        quantities=request.form.getlist("return_qty[]")
+        prepared=[]; subtotal=vat_total=grand_total=cost_total=0.0
+        for index,item_id in enumerate(ids):
+            item=row("""SELECT ii.*,COALESCE(inv.cost,0) current_cost
+                        FROM invoice_items ii LEFT JOIN inventory inv ON inv.id=ii.item_id
+                        WHERE ii.id=:id AND ii.invoice_id=:invoice""",
+                     {"id":item_id,"invoice":invoice_id})
+            if not item:
+                continue
+            qty=float(quantities[index] or 0)
+            previous=db.session.execute(text("""SELECT COALESCE(SUM(sri.quantity),0)
+                FROM sales_return_items sri JOIN sales_returns sr ON sr.id=sri.return_id
+                WHERE sri.invoice_item_id=:item AND sr.invoice_id=:invoice"""),
+                {"item":item_id,"invoice":invoice_id}).scalar() or 0
+            available=float(item["quantity"])-float(previous)
+            if qty < 0 or qty > available + 0.0001:
+                flash(f"كمية المرتجع للصنف {item['item_name']} تتجاوز المتاح {available:.3f}","danger")
+                return redirect(url_for("sales_returns"))
+            if qty == 0:
+                continue
+            base=round(qty*float(item["unit_price"]),2)
+            tax=round(base*float(item["vat_rate"] or 0)/100,2)
+            cost=round(qty*float(item["current_cost"] or 0),2)
+            prepared.append((item,qty,base,tax,cost))
+            subtotal+=base;vat_total+=tax;grand_total+=base+tax;cost_total+=cost
+        if not prepared:
+            flash("أدخل كمية مرتجع واحدة على الأقل","danger")
+            return redirect(url_for("sales_returns"))
+
+        no=next_sales_no("sales_returns","return_date","SR",request.form["return_date"]) \
+           if "sales_returns" in {"sales_returns"} else ""
+        # next_sales_no does not originally include returns; generate safely.
+        year=datetime.strptime(request.form["return_date"],"%Y-%m-%d").year
+        seq=db.session.execute(text("SELECT COUNT(*) FROM sales_returns WHERE EXTRACT(YEAR FROM return_date)=:y"),
+                               {"y":year}).scalar() or 0
+        no=f"SR-{year}-{seq+1:06d}"
+
+        execute("""INSERT INTO sales_returns(
+          return_no,return_date,invoice_id,customer_id,warehouse_id,subtotal,vat,total,
+          cost_total,status,notes,created_by,created_at)
+          VALUES(:no,:dt,:invoice,:customer,:warehouse,:sub,:vat,:total,:cost,
+          'معتمد',:notes,:uid,:created)""",
+          {"no":no,"dt":request.form["return_date"],"invoice":invoice_id,
+           "customer":invoice["customer_id"],"warehouse":warehouse_id,
+           "sub":round(subtotal,2),"vat":round(vat_total,2),"total":round(grand_total,2),
+           "cost":round(cost_total,2),"notes":request.form.get("notes",""),
+           "uid":session.get("user_id"),"created":datetime.now()})
+        return_id=row("SELECT id FROM sales_returns WHERE return_no=:no",{"no":no})["id"]
+
+        for item,qty,base,tax,cost in prepared:
+            unit_cost=float(item["current_cost"] or 0)
+            execute("""INSERT INTO sales_return_items(
+              return_id,invoice_item_id,item_id,item_name,quantity,unit,unit_price,vat_rate,
+              unit_cost,line_subtotal,line_vat,line_total)
+              VALUES(:return_id,:invoice_item,:item_id,:name,:qty,:unit,:price,:rate,
+              :cost,:sub,:vat,:total)""",
+              {"return_id":return_id,"invoice_item":item["id"],"item_id":item["item_id"],
+               "name":item["item_name"],"qty":qty,"unit":item["unit"],
+               "price":item["unit_price"],"rate":item["vat_rate"],"cost":unit_cost,
+               "sub":base,"vat":tax,"total":round(base+tax,2)})
+            if item["item_id"]:
+                record_inventory_movement(
+                    request.form["return_date"],"مرتجع مبيعات",item["item_id"],warehouse_id,
+                    qty,unit_cost,reference_type="SALES_RETURN",reference_id=return_id,
+                    reference_no=no,notes=f"مرتجع للفاتورة {invoice['invoice_no']}"
+                )
+        post_sales_return_to_ledger(return_id)
+        audit("CREATE","SALES_RETURN",f"إنشاء مرتجع مبيعات {no}")
+        flash(f"تم إنشاء المرتجع {no} وإعادة المخزون وترحيل القيد","success")
+        return redirect(url_for("sales_return_view",return_id=return_id))
+
+    return render_template("sales_returns.html",
+      invoices=rows("""SELECT i.id,i.invoice_no,i.invoice_date,c.name customer_name
+                       FROM invoices i JOIN customers c ON c.id=i.customer_id
+                       WHERE i.status='معتمدة' ORDER BY i.id DESC"""),
+      warehouses=rows("SELECT id,code,name FROM warehouses WHERE active=1 ORDER BY code"),
+      docs=rows("""SELECT r.*,i.invoice_no,c.name customer_name,j.journal_no
+                   FROM sales_returns r JOIN invoices i ON i.id=r.invoice_id
+                   JOIN customers c ON c.id=r.customer_id
+                   LEFT JOIN journal_entries j ON j.id=r.journal_id ORDER BY r.id DESC"""))
+
+@app.route("/sales/invoices/<int:invoice_id>/return-items")
+@login_required
+def sales_invoice_return_items(invoice_id):
+    data=rows("""SELECT ii.id,ii.item_id,ii.item_name,ii.quantity,ii.unit,ii.unit_price,ii.vat_rate,
+      ii.quantity-COALESCE((SELECT SUM(sri.quantity) FROM sales_return_items sri
+      JOIN sales_returns sr ON sr.id=sri.return_id
+      WHERE sri.invoice_item_id=ii.id AND sr.invoice_id=:invoice),0) returnable_qty
+      FROM invoice_items ii WHERE ii.invoice_id=:invoice ORDER BY ii.id""",{"invoice":invoice_id})
+    return {"items":[dict(x) for x in data]}
+
+@app.route("/sales/returns/<int:return_id>")
+@login_required
+def sales_return_view(return_id):
+    doc=row("""SELECT r.*,i.invoice_no,c.name customer_name,c.name_en customer_name_en,
+                      w.name warehouse_name,j.journal_no
+               FROM sales_returns r JOIN invoices i ON i.id=r.invoice_id
+               JOIN customers c ON c.id=r.customer_id
+               JOIN warehouses w ON w.id=r.warehouse_id
+               LEFT JOIN journal_entries j ON j.id=r.journal_id
+               WHERE r.id=:id""",{"id":return_id})
+    if not doc:
+        return "مرتجع المبيعات غير موجود",404
+    items=rows("SELECT * FROM sales_return_items WHERE return_id=:id ORDER BY id",{"id":return_id})
+    return render_template("sales_return_view.html",doc=doc,items=items)
+
+@app.route("/sales/dashboard")
+@login_required
+def sales_dashboard():
+    summary=row("""SELECT
+      COALESCE(SUM(total),0) total_sales,
+      COALESCE(SUM(vat),0) total_vat,
+      COUNT(*) invoice_count
+      FROM invoices WHERE status='معتمدة'""")
+    return_summary=row("""SELECT COALESCE(SUM(total),0) total_returns,
+                                  COUNT(*) return_count FROM sales_returns""")
+    profit=row("""SELECT COALESCE(SUM(i.total),0)-COALESCE((SELECT SUM(r.total) FROM sales_returns r),0) net_sales,
+      COALESCE((SELECT SUM(di.quantity*di.unit_cost) FROM sales_delivery_items di),0)
+      -COALESCE((SELECT SUM(cost_total) FROM sales_returns),0) net_cost""")
+    monthly=rows("""SELECT TO_CHAR(invoice_date,'YYYY-MM') month,
+                    SUM(total) sales,COUNT(*) invoice_count
+                    FROM invoices WHERE status='معتمدة'
+                    GROUP BY TO_CHAR(invoice_date,'YYYY-MM') ORDER BY month DESC LIMIT 12""")
+    customers=rows("""SELECT c.name,SUM(i.total) total
+                      FROM invoices i JOIN customers c ON c.id=i.customer_id
+                      WHERE i.status='معتمدة' GROUP BY c.id,c.name
+                      ORDER BY total DESC LIMIT 10""")
+    items=rows("""SELECT ii.item_name,SUM(ii.quantity) quantity,SUM(ii.line_total) sales
+                  FROM invoice_items ii JOIN invoices i ON i.id=ii.invoice_id
+                  WHERE i.status='معتمدة' GROUP BY ii.item_name
+                  ORDER BY sales DESC LIMIT 10""")
+    return render_template("sales_dashboard.html",summary=summary,
+      return_summary=return_summary,profit=profit,monthly=monthly,
+      top_customers=customers,top_items=items)
+
+@app.route("/sales/reports")
+@login_required
+def sales_reports():
+    date_from=request.args.get("date_from","")
+    date_to=request.args.get("date_to","")
+    customer_id=request.args.get("customer_id","")
+    conditions=["i.status='معتمدة'"];params={}
+    if date_from:
+        conditions.append("i.invoice_date>=:date_from");params["date_from"]=date_from
+    if date_to:
+        conditions.append("i.invoice_date<=:date_to");params["date_to"]=date_to
+    if customer_id:
+        conditions.append("i.customer_id=:customer");params["customer"]=customer_id
+    where=" AND ".join(conditions)
+    data=rows(f"""SELECT i.*,c.name customer_name,
+      COALESCE((SELECT SUM(di.quantity*di.unit_cost) FROM sales_delivery_items di
+      JOIN sales_deliveries d ON d.id=di.delivery_id WHERE d.id=i.delivery_id),0) cost,
+      i.subtotal-COALESCE((SELECT SUM(di.quantity*di.unit_cost) FROM sales_delivery_items di
+      JOIN sales_deliveries d ON d.id=di.delivery_id WHERE d.id=i.delivery_id),0) gross_profit
+      FROM invoices i JOIN customers c ON c.id=i.customer_id
+      WHERE {where} ORDER BY i.invoice_date DESC,i.id DESC""",params)
+    return render_template("sales_reports.html",rows=data,
+      customers=rows("SELECT id,name FROM customers ORDER BY name"),
+      date_from=date_from,date_to=date_to,customer_id=customer_id)
+
+@app.route("/sales/reports.xlsx")
+@login_required
+def sales_reports_export():
+    data=rows("""SELECT i.invoice_no,i.invoice_date,c.name customer_name,i.subtotal,i.vat,i.total,
+      COALESCE((SELECT SUM(di.quantity*di.unit_cost) FROM sales_delivery_items di
+      JOIN sales_deliveries d ON d.id=di.delivery_id WHERE d.id=i.delivery_id),0) cost
+      FROM invoices i JOIN customers c ON c.id=i.customer_id
+      WHERE i.status='معتمدة' ORDER BY i.invoice_date DESC,i.id DESC""")
+    return xlsx_response("sales_profit_report.xlsx","المبيعات والأرباح",
+      ["رقم الفاتورة","التاريخ","العميل","قبل الضريبة","الضريبة","الإجمالي","التكلفة","مجمل الربح"],
+      [[r["invoice_no"],r["invoice_date"],r["customer_name"],r["subtotal"],r["vat"],
+        r["total"],r["cost"],float(r["subtotal"])-float(r["cost"])] for r in data])
+
+
 @app.route("/procurement")
 @login_required
 def procurement_center():
@@ -3528,6 +3964,144 @@ def supplier_invoice_post(invoice_id):
         flash("تم ترحيل فاتورة المورد","success")
     except Exception as exc:flash(str(exc),"danger")
     return redirect(url_for("supplier_invoice_view",invoice_id=invoice_id))
+
+
+
+@app.route("/receivables",methods=["GET","POST"])
+@login_required
+def receivables():
+    if request.method=="POST":
+        customer_id=int(request.form["customer_id"])
+        receipt_date=request.form["receipt_date"]
+        cash_account_id=int(request.form["cash_bank_account_id"])
+        invoice_ids=request.form.getlist("invoice_id[]")
+        amounts=request.form.getlist("allocated_amount[]")
+        allocations=[]
+        for idx,invoice_id in enumerate(invoice_ids):
+            amount=round(float(amounts[idx] or 0),2)
+            if amount>0:
+                allocations.append({"invoice_id":int(invoice_id),"amount":amount})
+        total=round(sum(x["amount"] for x in allocations),2)
+        if total<=0:
+            flash("أدخل مبلغ سداد لفاتورة واحدة على الأقل","danger")
+            return redirect(url_for("receivables"))
+
+        settings_row=row("SELECT customer_account_id FROM settings WHERE id=1")
+        if not settings_row or not settings_row["customer_account_id"]:
+            flash("حدد حساب العملاء الافتراضي من الإعدادات أولًا","danger")
+            return redirect(url_for("receivables"))
+
+        try:
+            ensure_open_period(receipt_date)
+            voucher_no=next_treasury_number("قبض",receipt_date)
+            execute("""INSERT INTO treasury_vouchers(
+                voucher_no,voucher_type,voucher_date,party_type,customer_id,
+                cash_bank_account_id,counter_account_id,amount,payment_method,
+                reference,description,status,posting_status,created_by,created_at)
+                VALUES(:no,'قبض',:dt,'عميل',:customer,:cash,:counter,:amount,:method,
+                :reference,:description,'معتمد','غير مرحّل',:uid,:created)""",
+                {"no":voucher_no,"dt":receipt_date,"customer":customer_id,
+                 "cash":cash_account_id,"counter":settings_row["customer_account_id"],
+                 "amount":total,"method":request.form.get("payment_method","تحويل بنكي"),
+                 "reference":request.form.get("reference",""),
+                 "description":request.form.get("description","تحصيل فواتير عميل"),
+                 "uid":session.get("user_id"),"created":datetime.now()})
+            voucher_id=row("SELECT id FROM treasury_vouchers WHERE voucher_no=:no",
+                           {"no":voucher_no})["id"]
+            post_treasury_voucher(voucher_id)
+            allocate_customer_receipt(voucher_id,allocations)
+            audit("CREATE","CUSTOMER_RECEIPT",f"تحصيل وربط الفواتير بسند {voucher_no}")
+            flash(f"تم إنشاء وترحيل سند القبض {voucher_no} وربطه بالفواتير","success")
+            return redirect(url_for("treasury_view",voucher_id=voucher_id))
+        except Exception as exc:
+            db.session.rollback()
+            flash(str(exc),"danger")
+            return redirect(url_for("receivables"))
+
+    open_invoices=rows("""SELECT i.id,i.invoice_no,i.invoice_date,
+      COALESCE(i.due_date,i.invoice_date) due_date,i.customer_id,c.name customer_name,
+      i.total,COALESCE((SELECT SUM(a.allocated_amount)
+        FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0) paid,
+      i.total-COALESCE((SELECT SUM(a.allocated_amount)
+        FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0) outstanding,
+      i.payment_status
+      FROM invoices i JOIN customers c ON c.id=i.customer_id
+      WHERE i.status='معتمدة'
+        AND i.total-COALESCE((SELECT SUM(a.allocated_amount)
+          FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0)>0.005
+      ORDER BY c.name,i.invoice_date,i.id""")
+    accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+                     WHERE active=1 AND accepts_entries=1
+                     AND account_type='أصل' ORDER BY account_code""")
+    return render_template("receivables.html",open_invoices=open_invoices,accounts=accounts,
+      customers=rows("SELECT id,name,name_en FROM customers ORDER BY name"))
+
+@app.route("/receivables/customer/<int:customer_id>/open-invoices")
+@login_required
+def customer_open_invoices(customer_id):
+    data=rows("""SELECT i.id,i.invoice_no,i.invoice_date,
+      COALESCE(i.due_date,i.invoice_date) due_date,i.total,
+      COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                WHERE a.invoice_id=i.id),0) paid,
+      i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                WHERE a.invoice_id=i.id),0) outstanding
+      FROM invoices i WHERE i.customer_id=:customer AND i.status='معتمدة'
+      AND i.total-COALESCE((SELECT SUM(a.allocated_amount)
+                FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0)>0.005
+      ORDER BY i.invoice_date,i.id""",{"customer":customer_id})
+    return {"items":[dict(x) for x in data]}
+
+@app.route("/receivables/aging")
+@login_required
+def receivables_aging():
+    data=rows("""SELECT c.id,c.name,
+      SUM(CASE WHEN CURRENT_DATE-COALESCE(i.due_date,i.invoice_date)<=30 THEN
+        i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                          WHERE a.invoice_id=i.id),0) ELSE 0 END) bucket_0_30,
+      SUM(CASE WHEN CURRENT_DATE-COALESCE(i.due_date,i.invoice_date) BETWEEN 31 AND 60 THEN
+        i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                          WHERE a.invoice_id=i.id),0) ELSE 0 END) bucket_31_60,
+      SUM(CASE WHEN CURRENT_DATE-COALESCE(i.due_date,i.invoice_date) BETWEEN 61 AND 90 THEN
+        i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                          WHERE a.invoice_id=i.id),0) ELSE 0 END) bucket_61_90,
+      SUM(CASE WHEN CURRENT_DATE-COALESCE(i.due_date,i.invoice_date)>90 THEN
+        i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                          WHERE a.invoice_id=i.id),0) ELSE 0 END) bucket_over_90,
+      SUM(i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                          WHERE a.invoice_id=i.id),0)) total_outstanding
+      FROM invoices i JOIN customers c ON c.id=i.customer_id
+      WHERE i.status='معتمدة'
+      AND i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                            WHERE a.invoice_id=i.id),0)>0.005
+      GROUP BY c.id,c.name ORDER BY total_outstanding DESC""")
+    return render_template("receivables_aging.html",rows=data)
+
+@app.route("/receivables/aging.xlsx")
+@login_required
+def receivables_aging_export():
+    data=rows("""SELECT c.name,
+      SUM(CASE WHEN CURRENT_DATE-COALESCE(i.due_date,i.invoice_date)<=30 THEN
+        i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                          WHERE a.invoice_id=i.id),0) ELSE 0 END) b1,
+      SUM(CASE WHEN CURRENT_DATE-COALESCE(i.due_date,i.invoice_date) BETWEEN 31 AND 60 THEN
+        i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                          WHERE a.invoice_id=i.id),0) ELSE 0 END) b2,
+      SUM(CASE WHEN CURRENT_DATE-COALESCE(i.due_date,i.invoice_date) BETWEEN 61 AND 90 THEN
+        i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                          WHERE a.invoice_id=i.id),0) ELSE 0 END) b3,
+      SUM(CASE WHEN CURRENT_DATE-COALESCE(i.due_date,i.invoice_date)>90 THEN
+        i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                          WHERE a.invoice_id=i.id),0) ELSE 0 END) b4,
+      SUM(i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                           WHERE a.invoice_id=i.id),0)) total
+      FROM invoices i JOIN customers c ON c.id=i.customer_id
+      WHERE i.status='معتمدة'
+      AND i.total-COALESCE((SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
+                            WHERE a.invoice_id=i.id),0)>0.005
+      GROUP BY c.id,c.name ORDER BY total DESC""")
+    return xlsx_response("receivables_aging.xlsx","أعمار ديون العملاء",
+      ["العميل","0-30 يوم","31-60 يوم","61-90 يوم","أكثر من 90 يوم","الإجمالي"],
+      [[r["name"],r["b1"],r["b2"],r["b3"],r["b4"],r["total"]] for r in data])
 
 
 @app.route("/treasury", methods=["GET","POST"])

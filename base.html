@@ -134,9 +134,14 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 <a href="{{ url_for('manage_module', module_name='customers') }}">العملاء</a>
 <a href="{{ url_for('manage_module', module_name='suppliers') }}">الموردون</a>
 <a href="{{ url_for('sales_center') }}">المبيعات</a>
+<a href="{{ url_for('sales_dashboard') }}">لوحة المبيعات</a>
+<a href="{{ url_for('sales_reports') }}">تقارير المبيعات</a>
+<a href="{{ url_for('sales_returns') }}">مرتجعات المبيعات</a>
 <a href="{{ url_for('invoices') }}">الفواتير</a>
 <a href="{{ url_for('expenses') }}">المصروفات</a>
 <a href="{{ url_for('treasury') }}">الخزينة والسندات</a>
+<a href="{{ url_for('receivables') }}">تحصيل فواتير العملاء</a>
+<a href="{{ url_for('receivables_aging') }}">أعمار ديون العملاء</a>
 <a href="{{ url_for('inventory') }}">المخزون</a>
 <a href="{{ url_for('inventory_movements') }}">حركات المخزون</a>
 <a href="{{ url_for('inventory_transfers') }}">تحويلات المستودعات</a>

@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>مرتجعات المبيعات</h3><small>Sales Returns / Credit Notes</small></div><button class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('sales_returns')}}">📄 جديد</button></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-4"><label>الفاتورة</label><select class="form-select" name="invoice_id" id="invoiceSelect" required><option value="">اختر الفاتورة</option>{% for i in invoices %}<option value="{{i.id}}">{{i.invoice_no}} - {{i.customer_name}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>تاريخ المرتجع</label><input class="form-control" type="date" name="return_date" id="returnDate" required></div>
+<div class="col-md-3"><label>المستودع</label><select class="form-select" name="warehouse_id" required>{% for w in warehouses %}<option value="{{w.id}}">{{w.code}} - {{w.name}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>ملاحظات</label><input class="form-control" name="notes"></div></div>
+<div id="returnItems" class="mt-3"></div><div class="text-end"><button class="btn btn-primary">حفظ وإعادة المخزون وترحيل القيد</button></div></form></div>
+<div class="form-card"><table class="table table-striped"><thead><tr><th>رقم المرتجع</th><th>التاريخ</th><th>الفاتورة</th><th>العميل</th><th>الإجمالي</th><th>القيد</th><th></th></tr></thead><tbody>
+{% for r in docs %}<tr><td>{{r.return_no}}</td><td>{{r.return_date}}</td><td>{{r.invoice_no}}</td><td>{{r.customer_name}}</td><td>{{r.total}}</td><td>{{r.journal_no or '-'}}</td><td><a class="btn btn-sm btn-primary" href="{{url_for('sales_return_view',return_id=r.id)}}">عرض</a></td></tr>{% endfor %}
+</tbody></table></div>
+<script>
+returnDate.value=new Date().toISOString().slice(0,10);
+invoiceSelect.onchange=async()=>{if(!invoiceSelect.value){returnItems.innerHTML='';return}
+const d=await(await fetch(`/sales/invoices/${invoiceSelect.value}/return-items`)).json();
+returnItems.innerHTML=`<table class="table table-bordered"><thead><tr><th>الصنف</th><th>المباع</th><th>المتاح للمرتجع</th><th>السعر</th><th>كمية المرتجع</th></tr></thead><tbody>${d.items.map(x=>`<tr><td>${x.item_name}<input type="hidden" name="invoice_item_id[]" value="${x.id}"></td><td>${x.quantity}</td><td>${x.returnable_qty}</td><td>${x.unit_price}</td><td><input class="form-control" type="number" step=".001" min="0" max="${x.returnable_qty}" name="return_qty[]" value="0"></td></tr>`).join('')}</tbody></table>`}
+</script>{% endblock %}
