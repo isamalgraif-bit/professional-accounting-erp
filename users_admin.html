@@ -1,0 +1,22 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>إدارة المستخدمين</h3><small>Users Administration</small></div></div>
+{% if can('users.create') %}
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-2"><label>اسم المستخدم</label><input class="form-control" name="username" required></div>
+<div class="col-md-3"><label>الاسم الكامل</label><input class="form-control" name="full_name"></div>
+<div class="col-md-3"><label>البريد الإلكتروني</label><input class="form-control" type="email" name="email"></div>
+<div class="col-md-2"><label>كلمة المرور المؤقتة</label><input class="form-control" type="password" name="password" minlength="8" required></div>
+<div class="col-md-2"><label>الأدوار</label><select class="form-select" name="role_ids" multiple>{% for r in roles %}<option value="{{r.id}}">{{r.name}}</option>{% endfor %}</select></div>
+<div class="col-12 text-end"><button class="btn btn-primary">إنشاء المستخدم</button></div>
+</div></form></div>{% endif %}
+<div class="form-card"><div class="table-responsive"><table class="table table-striped align-middle">
+<thead><tr><th>المستخدم</th><th>الاسم</th><th>البريد</th><th>الأدوار</th><th>آخر دخول</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody>
+{% for u in users %}<tr><td>{{u.username}}</td><td>{{u.full_name}}</td><td>{{u.email}}</td><td>{{u.role_names or u.role}}</td><td>{{u.last_login or '-'}}</td><td>{{'نشط' if u.active else 'موقوف'}}</td>
+<td>{% if can('users.edit') %}
+<form method="post" action="{{url_for('user_status_update',user_id=u.id)}}" class="d-inline"><button class="btn btn-sm btn-outline-warning">{{'إيقاف' if u.active else 'تفعيل'}}</button></form>
+<button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#user{{u.id}}">تعديل</button>{% endif %}</td></tr>
+<tr class="collapse" id="user{{u.id}}"><td colspan="7"><div class="row g-3">
+<form method="post" action="{{url_for('user_roles_update',user_id=u.id)}}" class="col-md-6"><label>تحديث الأدوار</label><select class="form-select mb-2" name="role_ids" multiple>{% for r in roles %}<option value="{{r.id}}">{{r.name}}</option>{% endfor %}</select><button class="btn btn-primary btn-sm">حفظ الأدوار</button></form>
+<form method="post" action="{{url_for('user_reset_password',user_id=u.id)}}" class="col-md-6"><label>كلمة مرور جديدة</label><input class="form-control mb-2" type="password" name="new_password" minlength="8" required><button class="btn btn-danger btn-sm">إعادة كلمة المرور</button></form>
+</div></td></tr>{% endfor %}
+</tbody></table></div></div>{% endblock %}

@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "11.0.0"
+APP_VERSION = "12.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1030,6 +1030,126 @@ def crm_pipeline_summary():
       WHEN 'تفاوض' THEN 3 WHEN 'فوز' THEN 4 WHEN 'خسارة' THEN 5 ELSE 9 END""")
 
 
+
+SECURITY_MODULES = {
+    "dashboard":"لوحة التحكم","accounting":"المحاسبة","sales":"المبيعات",
+    "purchases":"المشتريات","inventory":"المخزون","treasury":"الخزينة",
+    "reports":"التقارير","assets":"الأصول الثابتة","payroll":"الموارد البشرية والرواتب",
+    "projects":"المشاريع","crm":"إدارة علاقات العملاء","settings":"الإعدادات",
+    "users":"المستخدمون والصلاحيات"
+}
+SECURITY_ACTIONS = {
+    "view":"عرض","create":"إضافة","edit":"تعديل","delete":"حذف",
+    "approve":"اعتماد","post":"ترحيل","print":"طباعة","export":"تصدير"
+}
+
+ENDPOINT_MODULE_MAP = {
+    "dashboard":"dashboard",
+    "journal_entries":"accounting","journal_view":"accounting","multi_journal":"accounting",
+    "chart_of_accounts":"accounting","accounting_report":"accounting",
+    "sales_center":"sales","sales_dashboard":"sales","sales_quotations":"sales",
+    "sales_orders":"sales","sales_deliveries":"sales","invoices":"sales",
+    "sales_returns":"sales","sales_tracking":"sales",
+    "procurement_center":"purchases","purchase_requisitions":"purchases",
+    "purchase_orders":"purchases","goods_receipts":"purchases","supplier_invoices":"purchases",
+    "inventory":"inventory","inventory_item_view":"inventory","inventory_movements":"inventory",
+    "inventory_transfers":"inventory","inventory_counts":"inventory",
+    "treasury":"treasury","treasury_view":"treasury","receivables":"treasury",
+    "reports":"reports","reports_center":"reports","financial_statements_center":"reports",
+    "income_statement":"reports","balance_sheet":"reports","cash_flow_statement":"reports",
+    "fixed_assets_center":"assets","fixed_assets":"assets","asset_categories":"assets",
+    "asset_depreciation":"assets","fixed_assets_report":"assets",
+    "hr_payroll_center":"payroll","departments":"payroll","attendance":"payroll",
+    "salary_adjustments":"payroll","payroll_runs":"payroll","payroll_report":"payroll",
+    "projects_center":"projects","project_new":"projects","project_view":"projects",
+    "crm_center":"crm","crm_leads":"crm","crm_opportunities":"crm",
+    "crm_activities":"crm","crm_pipeline":"crm","crm_report":"crm",
+    "settings":"settings","branches":"settings","cost_centers":"settings",
+    "users_admin":"users","roles_admin":"users","security_audit":"users",
+}
+
+def seed_security_data():
+    for module_key,module_name in SECURITY_MODULES.items():
+        for action_key,action_name in SECURITY_ACTIONS.items():
+            permission_key=f"{module_key}.{action_key}"
+            db.session.execute(text("""INSERT INTO system_permissions(
+                permission_key,module_name,action_name,display_name)
+                VALUES(:key,:module,:action,:display)
+                ON CONFLICT(permission_key) DO NOTHING"""),
+                {"key":permission_key,"module":module_key,"action":action_key,
+                 "display":f"{action_name} - {module_name}"})
+    db.session.execute(text("""INSERT INTO system_roles(code,name,description,is_system,active)
+        VALUES('ADMIN','مدير النظام','صلاحيات كاملة',1,1)
+        ON CONFLICT(code) DO NOTHING"""))
+    admin_role=db.session.execute(text("SELECT id FROM system_roles WHERE code='ADMIN'")).scalar()
+    db.session.execute(text("""INSERT INTO role_permissions(role_id,permission_id,allowed)
+        SELECT :role,id,1 FROM system_permissions
+        ON CONFLICT(role_id,permission_id) DO UPDATE SET allowed=1"""),{"role":admin_role})
+    admin_user=db.session.execute(text("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1")).scalar()
+    if admin_user:
+        db.session.execute(text("""INSERT INTO user_role_assignments(user_id,role_id)
+            VALUES(:user,:role) ON CONFLICT DO NOTHING"""),
+            {"user":admin_user,"role":admin_role})
+    db.session.commit()
+
+def user_permission_keys(user_id):
+    if not user_id:
+        return set()
+    role_name=db.session.execute(text("SELECT role FROM users WHERE id=:id"),{"id":user_id}).scalar()
+    if role_name=="admin":
+        return {"*"}
+    result=db.session.execute(text("""SELECT DISTINCT p.permission_key
+      FROM user_role_assignments ura
+      JOIN system_roles r ON r.id=ura.role_id AND r.active=1
+      JOIN role_permissions rp ON rp.role_id=r.id AND rp.allowed=1
+      JOIN system_permissions p ON p.id=rp.permission_id
+      WHERE ura.user_id=:user"""),{"user":user_id}).scalars().all()
+    return set(result)
+
+def has_permission(permission_key):
+    permissions=session.get("permission_keys")
+    if permissions is None:
+        permissions=list(user_permission_keys(session.get("user_id")))
+        session["permission_keys"]=permissions
+    return "*" in permissions or permission_key in permissions
+
+def infer_security_action():
+    if request.method=="GET":
+        endpoint=request.endpoint or ""
+        if "export" in endpoint:
+            return "export"
+        if "print" in endpoint or "payslip" in endpoint:
+            return "print"
+        return "view"
+    endpoint=request.endpoint or ""
+    if any(x in endpoint for x in ("approve","post")):
+        return "approve" if "approve" in endpoint else "post"
+    if any(x in endpoint for x in ("delete","remove")):
+        return "delete"
+    if any(x in endpoint for x in ("edit","update")):
+        return "edit"
+    return "create"
+
+def permission_required(permission_key):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args,**kwargs):
+            if not has_permission(permission_key):
+                db.session.execute(text("""INSERT INTO access_denied_logs(
+                    user_id,username,endpoint,permission_key,ip_address,created_at)
+                    VALUES(:user,:username,:endpoint,:permission,:ip,:created)"""),
+                    {"user":session.get("user_id"),"username":session.get("username"),
+                     "endpoint":request.endpoint,"permission":permission_key,
+                     "ip":request.headers.get("X-Forwarded-For",request.remote_addr),
+                     "created":datetime.now()})
+                db.session.commit()
+                flash("ليس لديك صلاحية لتنفيذ هذه العملية","danger")
+                return redirect(url_for("dashboard"))
+            return fn(*args,**kwargs)
+        return wrapper
+    return decorator
+
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -1788,6 +1908,41 @@ def init_db():
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
+        """CREATE TABLE IF NOT EXISTS system_roles(
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(50) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            description TEXT DEFAULT '',
+            is_system INTEGER DEFAULT 0,
+            active INTEGER DEFAULT 1
+        )""",
+        """CREATE TABLE IF NOT EXISTS system_permissions(
+            id SERIAL PRIMARY KEY,
+            permission_key VARCHAR(150) UNIQUE NOT NULL,
+            module_name VARCHAR(100) NOT NULL,
+            action_name VARCHAR(50) NOT NULL,
+            display_name VARCHAR(255) NOT NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS role_permissions(
+            role_id INTEGER NOT NULL REFERENCES system_roles(id) ON DELETE CASCADE,
+            permission_id INTEGER NOT NULL REFERENCES system_permissions(id) ON DELETE CASCADE,
+            allowed INTEGER DEFAULT 1,
+            PRIMARY KEY(role_id,permission_id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS user_role_assignments(
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            role_id INTEGER NOT NULL REFERENCES system_roles(id) ON DELETE CASCADE,
+            PRIMARY KEY(user_id,role_id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS access_denied_logs(
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            username VARCHAR(100),
+            endpoint VARCHAR(255),
+            permission_key VARCHAR(150),
+            ip_address VARCHAR(100),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
@@ -1854,6 +2009,11 @@ def init_db():
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS warehouse_id INTEGER',
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT ''",
+        'ALTER TABLE users ADD COLUMN IF NOT EXISTS active INTEGER DEFAULT 1',
+        'ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP',
+        'ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password INTEGER DEFAULT 0',
         "ALTER TABLE employees ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
         'ALTER TABLE employees ADD COLUMN IF NOT EXISTS department_id INTEGER',
         'ALTER TABLE employees ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
@@ -2037,12 +2197,35 @@ def init_db():
 def ensure_database():
     if not getattr(app, "_db_initialized", False):
         init_db()
+        seed_security_data()
         app._db_initialized = True
+
+    if session.get("user_id") and request.endpoint not in (
+        "login","logout","static","health","change_password"
+    ):
+        module_key=ENDPOINT_MODULE_MAP.get(request.endpoint)
+        if module_key:
+            permission_key=f"{module_key}.{infer_security_action()}"
+            if not has_permission(permission_key):
+                try:
+                    db.session.execute(text("""INSERT INTO access_denied_logs(
+                        user_id,username,endpoint,permission_key,ip_address,created_at)
+                        VALUES(:user,:username,:endpoint,:permission,:ip,:created)"""),
+                        {"user":session.get("user_id"),"username":session.get("username"),
+                         "endpoint":request.endpoint,"permission":permission_key,
+                         "ip":request.headers.get("X-Forwarded-For",request.remote_addr),
+                         "created":datetime.now()})
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                flash("ليس لديك صلاحية للوصول إلى هذه الشاشة","danger")
+                return redirect(url_for("dashboard"))
 
 @app.context_processor
 def inject_settings():
     settings = row("SELECT * FROM settings WHERE id=1")
-    return {"app_settings": settings, "app_version": APP_VERSION}
+    return {"app_settings": settings, "app_version": APP_VERSION,
+            "can": has_permission, "current_username": session.get("username")}
 
 @app.route("/health")
 def health():
@@ -2071,8 +2254,14 @@ def login():
                     )
 
         if user and password_ok:
+            if not user.get("active",1):
+                flash("هذا المستخدم موقوف","danger")
+                return render_template("login.html")
             session["user_id"] = user["id"]
             session["username"] = user["username"]
+            session["permission_keys"] = list(user_permission_keys(user["id"]))
+            execute("UPDATE users SET last_login=:dt WHERE id=:id",
+                    {"dt":datetime.now(),"id":user["id"]})
             audit("LOGIN", "USER", f"تسجيل دخول المستخدم {username}")
             return redirect(url_for("dashboard"))
 
@@ -5068,6 +5257,140 @@ def system_health():
 
 
 
+
+
+
+@app.route("/admin/users",methods=["GET","POST"])
+@login_required
+@permission_required("users.view")
+def users_admin():
+    if request.method=="POST":
+        if not has_permission("users.create"):
+            flash("ليس لديك صلاحية إضافة مستخدم","danger")
+            return redirect(url_for("users_admin"))
+        username=request.form["username"].strip()
+        password=request.form["password"]
+        if len(password)<8:
+            flash("كلمة المرور يجب ألا تقل عن 8 أحرف","danger")
+            return redirect(url_for("users_admin"))
+        execute("""INSERT INTO users(username,password,role,full_name,email,active,
+          must_change_password) VALUES(:username,:password,'user',:full_name,:email,1,1)""",
+          {"username":username,"password":generate_password_hash(password),
+           "full_name":request.form.get("full_name",""),
+           "email":request.form.get("email","")})
+        user_id=row("SELECT id FROM users WHERE username=:u",{"u":username})["id"]
+        for role_id in request.form.getlist("role_ids"):
+            execute("""INSERT INTO user_role_assignments(user_id,role_id)
+                       VALUES(:user,:role) ON CONFLICT DO NOTHING""",
+                    {"user":user_id,"role":role_id})
+        audit("CREATE","USER",f"إنشاء المستخدم {username}")
+        flash("تم إنشاء المستخدم","success")
+        return redirect(url_for("users_admin"))
+    users=rows("""SELECT u.*,STRING_AGG(r.name,', ' ORDER BY r.name) role_names
+      FROM users u
+      LEFT JOIN user_role_assignments ura ON ura.user_id=u.id
+      LEFT JOIN system_roles r ON r.id=ura.role_id
+      GROUP BY u.id ORDER BY u.id""")
+    return render_template("users_admin.html",users=users,
+      roles=rows("SELECT id,code,name FROM system_roles WHERE active=1 ORDER BY name"))
+
+@app.route("/admin/users/<int:user_id>/status",methods=["POST"])
+@login_required
+@permission_required("users.edit")
+def user_status_update(user_id):
+    if user_id==session.get("user_id"):
+        flash("لا يمكنك إيقاف حسابك الحالي","danger")
+        return redirect(url_for("users_admin"))
+    execute("UPDATE users SET active=CASE WHEN active=1 THEN 0 ELSE 1 END WHERE id=:id",
+            {"id":user_id})
+    session.pop("permission_keys",None)
+    audit("UPDATE","USER",f"تغيير حالة المستخدم رقم {user_id}")
+    flash("تم تحديث حالة المستخدم","success")
+    return redirect(url_for("users_admin"))
+
+@app.route("/admin/users/<int:user_id>/reset-password",methods=["POST"])
+@login_required
+@permission_required("users.edit")
+def user_reset_password(user_id):
+    password=request.form["new_password"]
+    if len(password)<8:
+        flash("كلمة المرور يجب ألا تقل عن 8 أحرف","danger")
+        return redirect(url_for("users_admin"))
+    execute("""UPDATE users SET password=:password,must_change_password=1 WHERE id=:id""",
+            {"password":generate_password_hash(password),"id":user_id})
+    audit("RESET_PASSWORD","USER",f"إعادة كلمة مرور المستخدم رقم {user_id}")
+    flash("تمت إعادة كلمة المرور","success")
+    return redirect(url_for("users_admin"))
+
+@app.route("/admin/roles",methods=["GET","POST"])
+@login_required
+@permission_required("users.view")
+def roles_admin():
+    if request.method=="POST":
+        if not has_permission("users.create"):
+            flash("ليس لديك صلاحية إنشاء دور","danger")
+            return redirect(url_for("roles_admin"))
+        execute("""INSERT INTO system_roles(code,name,description,is_system,active)
+                   VALUES(:code,:name,:description,0,1)
+                   ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,
+                   description=EXCLUDED.description""",
+                {"code":request.form["code"].upper(),
+                 "name":request.form["name"],
+                 "description":request.form.get("description","")})
+        role_id=row("SELECT id FROM system_roles WHERE code=:code",
+                    {"code":request.form["code"].upper()})["id"]
+        execute("DELETE FROM role_permissions WHERE role_id=:id",{"id":role_id})
+        for permission_id in request.form.getlist("permission_ids"):
+            execute("""INSERT INTO role_permissions(role_id,permission_id,allowed)
+                       VALUES(:role,:permission,1)""",
+                    {"role":role_id,"permission":permission_id})
+        audit("CREATE","ROLE",f"حفظ الدور {request.form['code']}")
+        flash("تم حفظ الدور والصلاحيات","success")
+        return redirect(url_for("roles_admin"))
+    permission_rows=rows("""SELECT * FROM system_permissions
+                            ORDER BY module_name,action_name""")
+    grouped={}
+    for p in permission_rows:
+        grouped.setdefault(p["module_name"],[]).append(p)
+    roles=rows("""SELECT r.*,COUNT(rp.permission_id) permission_count
+                  FROM system_roles r LEFT JOIN role_permissions rp ON rp.role_id=r.id
+                  GROUP BY r.id ORDER BY r.is_system DESC,r.name""")
+    return render_template("roles_admin.html",roles=roles,permissions=grouped,
+                           module_names=SECURITY_MODULES)
+
+@app.route("/admin/roles/<int:role_id>/permissions")
+@login_required
+@permission_required("users.view")
+def role_permissions_api(role_id):
+    values=db.session.execute(text("""SELECT permission_id FROM role_permissions
+                                     WHERE role_id=:id AND allowed=1"""),
+                              {"id":role_id}).scalars().all()
+    return {"permission_ids":values}
+
+@app.route("/admin/users/<int:user_id>/roles",methods=["POST"])
+@login_required
+@permission_required("users.edit")
+def user_roles_update(user_id):
+    execute("DELETE FROM user_role_assignments WHERE user_id=:id",{"id":user_id})
+    for role_id in request.form.getlist("role_ids"):
+        execute("""INSERT INTO user_role_assignments(user_id,role_id)
+                   VALUES(:user,:role) ON CONFLICT DO NOTHING""",
+                {"user":user_id,"role":role_id})
+    if user_id==session.get("user_id"):
+        session["permission_keys"]=list(user_permission_keys(user_id))
+    audit("UPDATE","USER_ROLES",f"تحديث أدوار المستخدم رقم {user_id}")
+    flash("تم تحديث أدوار المستخدم","success")
+    return redirect(url_for("users_admin"))
+
+@app.route("/admin/security-audit")
+@login_required
+@permission_required("users.view")
+def security_audit():
+    denied=rows("""SELECT * FROM access_denied_logs
+                   ORDER BY created_at DESC,id DESC LIMIT 500""")
+    logins=rows("""SELECT * FROM audit_logs WHERE action='LOGIN'
+                   ORDER BY created_at DESC,id DESC LIMIT 200""")
+    return render_template("security_audit.html",denied=denied,logins=logins)
 
 
 @app.route("/crm")

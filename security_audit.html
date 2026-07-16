@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>سجل الأمان</h3><small>Security Audit</small></div><button class="btn btn-dark" onclick="window.print()">طباعة/PDF</button></div>
+<div class="form-card mb-4"><h5>محاولات الوصول المرفوضة</h5><div class="table-responsive"><table class="table table-striped"><thead><tr><th>الوقت</th><th>المستخدم</th><th>الشاشة</th><th>الصلاحية</th><th>IP</th></tr></thead><tbody>{% for r in denied %}<tr><td>{{r.created_at}}</td><td>{{r.username}}</td><td>{{r.endpoint}}</td><td>{{r.permission_key}}</td><td>{{r.ip_address}}</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="form-card"><h5>عمليات تسجيل الدخول</h5><table class="table table-striped"><thead><tr><th>الوقت</th><th>المستخدم</th><th>التفاصيل</th></tr></thead><tbody>{% for r in logins %}<tr><td>{{r.created_at}}</td><td>{{r.username}}</td><td>{{r.details}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}
