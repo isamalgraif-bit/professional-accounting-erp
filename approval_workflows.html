@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>مسارات الاعتماد</h3><small>Approval Workflows</small></div></div>
+<div class="form-card mb-4"><form method="post"><div class="row g-3">
+<div class="col-md-2"><label>الكود</label><input class="form-control" name="code" required></div>
+<div class="col-md-3"><label>اسم المسار</label><input class="form-control" name="name" required></div>
+<div class="col-md-3"><label>نوع المستند</label><select class="form-select" name="document_type">{% for d in document_types %}<option>{{d}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label>من مبلغ</label><input class="form-control" type="number" step=".01" name="min_amount" value="0"></div>
+<div class="col-md-2"><label>إلى مبلغ</label><input class="form-control" type="number" step=".01" name="max_amount"></div>
+<div class="col-12"><h5>خطوات الاعتماد</h5></div>
+{% for i in range(1,6) %}
+<div class="col-md-1"><label>الترتيب</label><input class="form-control" name="step_order[]" value="{{i}}"></div>
+<div class="col-md-4"><label>الدور</label><select class="form-select" name="role_id[]"><option value="">بدون</option>{% for r in roles %}<option value="{{r.id}}">{{r.name}}</option>{% endfor %}</select></div>
+<div class="col-md-4"><label>أو مستخدم محدد</label><select class="form-select" name="approver_username[]"><option value="">بدون</option>{% for u in users %}<option value="{{u.username}}">{{u.full_name or u.username}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>الإجراء</label><select class="form-select" name="action_name[]"><option>مراجعة</option><option selected>اعتماد</option><option>اعتماد نهائي</option></select></div>
+{% endfor %}
+<div class="col-12 text-end"><button class="btn btn-primary">حفظ المسار</button></div>
+</div></form></div>
+<div class="form-card"><table class="table table-striped"><thead><tr><th>الكود</th><th>المسار</th><th>المستند</th><th>النطاق</th><th>عدد الخطوات</th><th>الحالة</th></tr></thead><tbody>{% for w in workflows %}<tr><td>{{w.code}}</td><td>{{w.name}}</td><td>{{w.document_type}}</td><td>{{w.min_amount}} — {{w.max_amount or 'بدون حد'}}</td><td>{{w.steps_count}}</td><td>{{'نشط' if w.active else 'موقوف'}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

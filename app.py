@@ -13,7 +13,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "12.0.0"
+APP_VERSION = "13.0.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -1150,6 +1150,119 @@ def permission_required(permission_key):
     return decorator
 
 
+
+APPROVAL_DOCUMENT_TYPES = {
+    "طلب شراء":"purchase_requisition",
+    "أمر شراء":"purchase_order",
+    "فاتورة مورد":"supplier_invoice",
+    "مصروف":"expense",
+    "سند صرف":"treasury_payment",
+    "عرض سعر":"sales_quotation",
+    "أمر بيع":"sales_order",
+    "مستخلص مشروع":"progress_certificate",
+}
+
+def next_approval_request_no():
+    count=db.session.execute(text("SELECT COUNT(*) FROM approval_requests")).scalar() or 0
+    return f"APR-{count+1:07d}"
+
+def resolve_approval_workflow(document_type, amount):
+    return row("""SELECT * FROM approval_workflows
+                  WHERE document_type=:doc AND active=1
+                  AND min_amount<=:amount
+                  AND (max_amount IS NULL OR max_amount>=:amount)
+                  ORDER BY min_amount DESC,id DESC LIMIT 1""",
+               {"doc":document_type,"amount":float(amount or 0)})
+
+def submit_for_approval(document_type, document_id, document_no, amount, notes=""):
+    existing=row("""SELECT * FROM approval_requests
+                    WHERE document_type=:doc AND document_id=:id""",
+                 {"doc":document_type,"id":document_id})
+    if existing:
+        return existing["id"]
+    workflow=resolve_approval_workflow(document_type,amount)
+    if not workflow:
+        raise ValueError(f"لا يوجد مسار اعتماد نشط للمستند: {document_type}")
+    no=next_approval_request_no()
+    execute("""INSERT INTO approval_requests(request_no,workflow_id,document_type,
+      document_id,document_no,document_amount,requester_user_id,current_step_order,
+      status,submitted_at,notes)
+      VALUES(:no,:workflow,:doc,:doc_id,:doc_no,:amount,:user,1,'قيد الاعتماد',
+      :submitted,:notes)""",
+      {"no":no,"workflow":workflow["id"],"doc":document_type,
+       "doc_id":document_id,"doc_no":document_no,"amount":float(amount or 0),
+       "user":session.get("user_id"),"submitted":datetime.now(),"notes":notes})
+    request_id=row("SELECT id FROM approval_requests WHERE request_no=:no",{"no":no})["id"]
+    audit("SUBMIT_APPROVAL",document_type,f"إرسال {document_no} للاعتماد")
+    return request_id
+
+def approval_user_can_act(approval_request):
+    step=row("""SELECT s.*,r.code role_code FROM approval_workflow_steps s
+                LEFT JOIN system_roles r ON r.id=s.role_id
+                WHERE s.workflow_id=:workflow AND s.step_order=:step""",
+             {"workflow":approval_request["workflow_id"],
+              "step":approval_request["current_step_order"]})
+    if not step:
+        return False,None
+    username=session.get("username","")
+    if step["approver_username"] and step["approver_username"]==username:
+        return True,step
+    if step["role_id"]:
+        count=db.session.execute(text("""SELECT COUNT(*) FROM user_role_assignments
+          WHERE user_id=:user AND role_id=:role"""),
+          {"user":session.get("user_id"),"role":step["role_id"]}).scalar() or 0
+        if count:
+            return True,step
+    if "*" in session.get("permission_keys",[]):
+        return True,step
+    return False,step
+
+def apply_approval_action(request_id, action_type, notes=""):
+    req=row("SELECT * FROM approval_requests WHERE id=:id",{"id":request_id})
+    if not req:
+        raise ValueError("طلب الاعتماد غير موجود.")
+    if req["status"] not in ("قيد الاعتماد","معاد للتعديل"):
+        raise ValueError("طلب الاعتماد مغلق.")
+    allowed,step=approval_user_can_act(req)
+    if not allowed:
+        raise PermissionError("ليس لديك صلاحية تنفيذ خطوة الاعتماد الحالية.")
+    execute("""INSERT INTO approval_actions(request_id,step_id,action_by_user_id,
+      action_type,action_notes,action_at)
+      VALUES(:request,:step,:user,:action,:notes,:dt)""",
+      {"request":request_id,"step":step["id"] if step else None,
+       "user":session.get("user_id"),"action":action_type,
+       "notes":notes,"dt":datetime.now()})
+    if action_type=="رفض":
+        execute("""UPDATE approval_requests SET status='مرفوض',completed_at=:dt
+                   WHERE id=:id""",{"dt":datetime.now(),"id":request_id})
+    elif action_type=="إعادة":
+        execute("""UPDATE approval_requests SET status='معاد للتعديل'
+                   WHERE id=:id""",{"id":request_id})
+    else:
+        next_step=row("""SELECT * FROM approval_workflow_steps
+                         WHERE workflow_id=:workflow AND step_order>:step
+                         ORDER BY step_order LIMIT 1""",
+                      {"workflow":req["workflow_id"],
+                       "step":req["current_step_order"]})
+        if next_step:
+            execute("""UPDATE approval_requests SET current_step_order=:next,
+                       status='قيد الاعتماد' WHERE id=:id""",
+                    {"next":next_step["step_order"],"id":request_id})
+        else:
+            execute("""UPDATE approval_requests SET status='معتمد',completed_at=:dt
+                       WHERE id=:id""",{"dt":datetime.now(),"id":request_id})
+    audit("APPROVAL_ACTION",req["document_type"],
+          f"{action_type} على {req['document_no']}")
+    return req["document_type"],req["document_id"]
+
+def approval_request_for(document_type,document_id):
+    return row("""SELECT ar.*,aw.name workflow_name
+                  FROM approval_requests ar
+                  JOIN approval_workflows aw ON aw.id=ar.workflow_id
+                  WHERE ar.document_type=:doc AND ar.document_id=:id""",
+               {"doc":document_type,"id":document_id})
+
+
 def init_db():
     statements = [
         """CREATE TABLE IF NOT EXISTS users(
@@ -1942,6 +2055,52 @@ def init_db():
             permission_key VARCHAR(150),
             ip_address VARCHAR(100),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS approval_workflows(
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(100) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            document_type VARCHAR(100) NOT NULL,
+            min_amount NUMERIC(18,2) DEFAULT 0,
+            max_amount NUMERIC(18,2),
+            active INTEGER DEFAULT 1,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS approval_workflow_steps(
+            id SERIAL PRIMARY KEY,
+            workflow_id INTEGER NOT NULL REFERENCES approval_workflows(id) ON DELETE CASCADE,
+            step_order INTEGER NOT NULL,
+            role_id INTEGER REFERENCES system_roles(id),
+            approver_username VARCHAR(100) DEFAULT '',
+            action_name VARCHAR(50) DEFAULT 'اعتماد',
+            is_final INTEGER DEFAULT 0,
+            UNIQUE(workflow_id,step_order)
+        )""",
+        """CREATE TABLE IF NOT EXISTS approval_requests(
+            id SERIAL PRIMARY KEY,
+            request_no VARCHAR(100) UNIQUE NOT NULL,
+            workflow_id INTEGER NOT NULL REFERENCES approval_workflows(id),
+            document_type VARCHAR(100) NOT NULL,
+            document_id INTEGER NOT NULL,
+            document_no VARCHAR(100) DEFAULT '',
+            document_amount NUMERIC(18,2) DEFAULT 0,
+            requester_user_id INTEGER REFERENCES users(id),
+            current_step_order INTEGER DEFAULT 1,
+            status VARCHAR(50) DEFAULT 'قيد الاعتماد',
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            notes TEXT DEFAULT '',
+            UNIQUE(document_type,document_id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS approval_actions(
+            id SERIAL PRIMARY KEY,
+            request_id INTEGER NOT NULL REFERENCES approval_requests(id) ON DELETE CASCADE,
+            step_id INTEGER REFERENCES approval_workflow_steps(id),
+            action_by_user_id INTEGER REFERENCES users(id),
+            action_type VARCHAR(50) NOT NULL,
+            action_notes TEXT DEFAULT '',
+            action_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
@@ -5258,6 +5417,157 @@ def system_health():
 
 
 
+
+
+
+@app.route("/approvals")
+@login_required
+def approvals_inbox():
+    requests=rows("""SELECT ar.*,aw.name workflow_name,u.username requester,
+      s.step_order,s.approver_username,r.name role_name
+      FROM approval_requests ar
+      JOIN approval_workflows aw ON aw.id=ar.workflow_id
+      LEFT JOIN users u ON u.id=ar.requester_user_id
+      LEFT JOIN approval_workflow_steps s ON s.workflow_id=ar.workflow_id
+        AND s.step_order=ar.current_step_order
+      LEFT JOIN system_roles r ON r.id=s.role_id
+      WHERE ar.status IN ('قيد الاعتماد','معاد للتعديل')
+      ORDER BY ar.submitted_at DESC,ar.id DESC""")
+    visible=[]
+    for req in requests:
+        allowed,_=approval_user_can_act(req)
+        if allowed or req["requester_user_id"]==session.get("user_id"):
+            visible.append(req)
+    history=rows("""SELECT ar.*,u.username requester
+                    FROM approval_requests ar
+                    LEFT JOIN users u ON u.id=ar.requester_user_id
+                    WHERE ar.status IN ('معتمد','مرفوض')
+                    ORDER BY ar.completed_at DESC,ar.id DESC LIMIT 200""")
+    return render_template("approvals_inbox.html",requests=visible,history=history)
+
+@app.route("/approvals/workflows",methods=["GET","POST"])
+@login_required
+@permission_required("settings.view")
+def approval_workflows():
+    if request.method=="POST":
+        code=request.form["code"].upper().strip()
+        execute("""INSERT INTO approval_workflows(code,name,document_type,min_amount,
+          max_amount,active,created_by,created_at)
+          VALUES(:code,:name,:doc,:min,:max,1,:user,:dt)
+          ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,
+          document_type=EXCLUDED.document_type,min_amount=EXCLUDED.min_amount,
+          max_amount=EXCLUDED.max_amount,active=1""",
+          {"code":code,"name":request.form["name"],
+           "doc":request.form["document_type"],
+           "min":float(request.form.get("min_amount") or 0),
+           "max":float(request.form["max_amount"]) if request.form.get("max_amount") else None,
+           "user":session.get("user_id"),"dt":datetime.now()})
+        workflow_id=row("SELECT id FROM approval_workflows WHERE code=:code",{"code":code})["id"]
+        execute("DELETE FROM approval_workflow_steps WHERE workflow_id=:id",
+                {"id":workflow_id})
+        orders=request.form.getlist("step_order[]")
+        roles=request.form.getlist("role_id[]")
+        usernames=request.form.getlist("approver_username[]")
+        actions=request.form.getlist("action_name[]")
+        for idx,order_value in enumerate(orders):
+            if not order_value:
+                continue
+            execute("""INSERT INTO approval_workflow_steps(workflow_id,step_order,
+              role_id,approver_username,action_name,is_final)
+              VALUES(:workflow,:order,:role,:username,:action,:final)""",
+              {"workflow":workflow_id,"order":int(order_value),
+               "role":roles[idx] or None,"username":usernames[idx].strip(),
+               "action":actions[idx] or "اعتماد",
+               "final":1 if idx==len(orders)-1 else 0})
+        flash("تم حفظ مسار الاعتماد","success")
+        return redirect(url_for("approval_workflows"))
+    workflows=rows("""SELECT w.*,COUNT(s.id) steps_count
+                      FROM approval_workflows w
+                      LEFT JOIN approval_workflow_steps s ON s.workflow_id=w.id
+                      GROUP BY w.id ORDER BY w.document_type,w.min_amount""")
+    return render_template("approval_workflows.html",workflows=workflows,
+      document_types=APPROVAL_DOCUMENT_TYPES.keys(),
+      roles=rows("SELECT id,name FROM system_roles WHERE active=1 ORDER BY name"),
+      users=rows("SELECT username,full_name FROM users WHERE active=1 ORDER BY username"))
+
+@app.route("/approvals/submit",methods=["POST"])
+@login_required
+def approval_submit():
+    document_type=request.form["document_type"]
+    document_id=int(request.form["document_id"])
+    document_no=request.form.get("document_no","")
+    amount=float(request.form.get("document_amount") or 0)
+    try:
+        request_id=submit_for_approval(document_type,document_id,document_no,amount,
+                                       request.form.get("notes",""))
+        flash("تم إرسال المستند للاعتماد","success")
+        return redirect(url_for("approval_request_view",request_id=request_id))
+    except Exception as exc:
+        db.session.rollback()
+        flash(str(exc),"danger")
+        return redirect(request.referrer or url_for("approvals_inbox"))
+
+@app.route("/approvals/<int:request_id>")
+@login_required
+def approval_request_view(request_id):
+    req=row("""SELECT ar.*,aw.name workflow_name,u.username requester
+               FROM approval_requests ar
+               JOIN approval_workflows aw ON aw.id=ar.workflow_id
+               LEFT JOIN users u ON u.id=ar.requester_user_id
+               WHERE ar.id=:id""",{"id":request_id})
+    if not req:
+        return "طلب الاعتماد غير موجود",404
+    actions=rows("""SELECT aa.*,u.username,s.step_order,r.name role_name
+                    FROM approval_actions aa
+                    LEFT JOIN users u ON u.id=aa.action_by_user_id
+                    LEFT JOIN approval_workflow_steps s ON s.id=aa.step_id
+                    LEFT JOIN system_roles r ON r.id=s.role_id
+                    WHERE aa.request_id=:id ORDER BY aa.action_at,aa.id""",
+                 {"id":request_id})
+    allowed,step=approval_user_can_act(req)
+    return render_template("approval_request_view.html",request=req,
+                           actions=actions,can_act=allowed,current_step=step)
+
+@app.route("/approvals/<int:request_id>/action",methods=["POST"])
+@login_required
+def approval_action(request_id):
+    try:
+        apply_approval_action(request_id,request.form["action_type"],
+                              request.form.get("action_notes",""))
+        flash("تم تسجيل إجراء الاعتماد","success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(str(exc),"danger")
+    return redirect(url_for("approval_request_view",request_id=request_id))
+
+@app.route("/approvals/report")
+@login_required
+def approvals_report():
+    data=rows("""SELECT ar.request_no,ar.document_type,ar.document_no,
+      ar.document_amount,ar.status,ar.submitted_at,ar.completed_at,
+      aw.name workflow_name,u.username requester
+      FROM approval_requests ar
+      JOIN approval_workflows aw ON aw.id=ar.workflow_id
+      LEFT JOIN users u ON u.id=ar.requester_user_id
+      ORDER BY ar.submitted_at DESC""")
+    return render_template("approvals_report.html",rows=data)
+
+@app.route("/approvals/report.xlsx")
+@login_required
+def approvals_report_export():
+    data=rows("""SELECT ar.request_no,ar.document_type,ar.document_no,
+      ar.document_amount,ar.status,ar.submitted_at,ar.completed_at,
+      aw.name workflow_name,u.username requester
+      FROM approval_requests ar
+      JOIN approval_workflows aw ON aw.id=ar.workflow_id
+      LEFT JOIN users u ON u.id=ar.requester_user_id
+      ORDER BY ar.submitted_at DESC""")
+    return xlsx_response("approvals_report.xlsx","طلبات الاعتماد",
+      ["رقم الطلب","نوع المستند","رقم المستند","القيمة","المسار",
+       "مقدم الطلب","الحالة","تاريخ الإرسال","تاريخ الإكمال"],
+      [[r["request_no"],r["document_type"],r["document_no"],r["document_amount"],
+        r["workflow_name"],r["requester"],r["status"],r["submitted_at"],
+        r["completed_at"]] for r in data])
 
 
 @app.route("/admin/users",methods=["GET","POST"])

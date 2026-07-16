@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>طلب اعتماد {{request.request_no}}</h3><small>{{request.document_type}} - {{request.document_no}}</small></div><button class="btn btn-dark" onclick="window.print()">طباعة/PDF</button></div>
+<div class="row g-3 mb-4">
+<div class="col-md-3"><div class="erp-kpi"><small>القيمة</small><h4>{{request.document_amount}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>المسار</small><h4>{{request.workflow_name}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>الخطوة</small><h4>{{request.current_step_order}}</h4></div></div>
+<div class="col-md-3"><div class="erp-kpi"><small>الحالة</small><h4>{{request.status}}</h4></div></div>
+</div>
+<div class="form-card mb-4"><h5>سجل الإجراءات</h5><table class="table table-striped"><thead><tr><th>الخطوة</th><th>المعتمد</th><th>الإجراء</th><th>الملاحظات</th><th>التاريخ</th></tr></thead><tbody>{% for a in actions %}<tr><td>{{a.step_order or '-'}}</td><td>{{a.username or '-'}}</td><td>{{a.action_type}}</td><td>{{a.action_notes}}</td><td>{{a.action_at}}</td></tr>{% endfor %}</tbody></table></div>
+{% if can_act and request.status in ['قيد الاعتماد','معاد للتعديل'] %}
+<div class="form-card"><form method="post" action="{{url_for('approval_action',request_id=request.id)}}"><div class="row g-3"><div class="col-md-3"><label>الإجراء</label><select class="form-select" name="action_type"><option>اعتماد</option><option>رفض</option><option>إعادة</option></select></div><div class="col-md-7"><label>الملاحظات</label><input class="form-control" name="action_notes"></div><div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">تنفيذ</button></div></div></form></div>{% endif %}{% endblock %}
