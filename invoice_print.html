@@ -35,6 +35,8 @@ th{background:#174ea6;color:white}
 .notes{margin-top:24px;border:1px dashed #cbd5e1;padding:13px;border-radius:8px}
 .footer{text-align:center;margin-top:34px;padding-top:15px;border-top:1px solid #e2e8f0;font-size:12px;color:#64748b}
 .uuid{font-size:11px;word-break:break-all;color:#64748b}
+.draft-watermark{position:fixed;z-index:1;top:42%;left:18%;font-size:90px;font-weight:bold;color:rgba(180,0,0,.10);transform:rotate(-28deg);pointer-events:none}
+.status-label{display:inline-block;padding:5px 10px;border-radius:12px;background:#eef2ff;font-weight:bold}
 @media print{
  body{background:#fff}
  .toolbar{display:none}
@@ -44,6 +46,7 @@ th{background:#174ea6;color:white}
 </style>
 </head>
 <body class="lang-{{print_lang}}">
+{% if invoice.status != 'معتمدة' %}<div class="draft-watermark">مسودة / DRAFT</div>{% endif %}
 <div class="toolbar">
 <a class="btn secondary" href="{{url_for('invoice_view',invoice_id=invoice.id,lang='ar')}}">العربية</a>
 <a class="btn secondary" href="{{url_for('invoice_view',invoice_id=invoice.id,lang='en')}}">English</a>
@@ -80,6 +83,7 @@ th{background:#174ea6;color:white}
 <div><strong>TAX INVOICE</strong></div>
 <div class="line"><strong>{% if print_lang=="en" %}Invoice No.{% elif print_lang=="bi" %}رقم الفاتورة / Invoice No.{% else %}رقم الفاتورة{% endif %}:</strong> {{ invoice.invoice_no }}</div>
 <div class="line"><strong>التاريخ:</strong> {{ invoice.invoice_date }}</div>
+<div class="line"><strong>الحالة:</strong> <span class="status-label">{{invoice.status}}</span></div>
 </div>
 </div>
 

@@ -14,7 +14,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "19.2.0"
+APP_VERSION = "RC2-1.0"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -64,78 +64,6 @@ def audit(action, entity, details=""):
         db.session.commit()
     except Exception:
         db.session.rollback()
-
-
-
-def next_invoice_draft_number():
-    """
-    Create the same date/time based number used in the original invoice model.
-    No DR, DRAFT, TEMP or other word is included.
-    Example: 20260716145837
-    """
-    current = datetime.now()
-    base_number = current.strftime("%Y%m%d%H%M%S")
-    candidate = base_number
-    suffix = 0
-
-    # Protect against two invoices created during the same second.
-    while row("""SELECT id FROM invoices
-                 WHERE invoice_no=:number OR draft_number=:number
-                 LIMIT 1""", {"number": candidate}):
-        suffix += 1
-        candidate = f"{base_number}{suffix:02d}"
-
-    return candidate
-
-
-def invoice_approval_preflight(invoice_id):
-    """
-    Validate the accounting requirements before consuming the official sequence.
-    """
-    invoice = row("""SELECT * FROM invoices WHERE id=:id""", {"id": invoice_id})
-    if not invoice:
-        raise ValueError("الفاتورة غير موجودة.")
-
-    ensure_open_period(invoice["invoice_date"])
-    require_accounts([
-        "customer_account_id",
-        "sales_account_id",
-        "vat_output_account_id",
-    ])
-
-    if sales_invoice_cost(invoice_id) > 0:
-        require_accounts([
-            "inventory_account_id",
-            "cost_of_sales_account_id",
-        ])
-
-    return invoice
-
-
-def assign_official_invoice_number(invoice_id):
-    """
-    Replace only the visible serial number at final approval.
-    All other invoice data remains unchanged.
-    """
-    invoice = invoice_approval_preflight(invoice_id)
-
-    original_number = invoice.get("draft_number") or invoice["invoice_no"]
-    official_number = next_invoice_number(invoice["invoice_date"])
-
-    execute("""UPDATE invoices
-               SET draft_number=COALESCE(draft_number,:draft_number),
-                   official_invoice_no=:official_number,
-                   invoice_no=:official_number,
-                   updated_at=:updated_at
-               WHERE id=:id""",
-            {
-                "draft_number": original_number,
-                "official_number": official_number,
-                "updated_at": datetime.now(),
-                "id": invoice_id,
-            })
-
-    return original_number, official_number
 
 
 def next_invoice_number(invoice_date_value):
@@ -1153,7 +1081,6 @@ ENDPOINT_MODULE_MAP = {
     "crm_activities":"crm","crm_pipeline":"crm","crm_report":"crm",
     "documents_center":"settings","document_categories":"settings","document_new":"settings","document_view":"settings","document_add_version":"settings","document_status_update":"settings","documents_report":"reports","documents_report_export":"reports",
     "data_import_center":"settings","data_import_template":"settings","data_import_upload":"settings","data_import_confirm":"settings",
-    "global_search":"dashboard","smart_lookup":"dashboard","smart_entity_details":"dashboard","quick_create":"dashboard",
     "settings":"settings","branches":"settings","cost_centers":"settings",
     "users_admin":"users","roles_admin":"users","security_audit":"users",
 }
@@ -1900,7 +1827,7 @@ def import_excel_row(module_name, data, import_mode):
                         ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]})
         if existing:
             if import_mode=="إضافة وتحديث":
-                execute("""UPDATE customers SET name=:name,name_en=:name_en,vat_number=:vat,
+                execute("""UPDATE customers SET name=:name,name_en=:name_en,vat_no=:vat,
                   phone=:phone,email=:email,address=:address,credit_limit=:limit
                   WHERE id=:id""",
                   {"name":data["name"],"name_en":data.get("name_en",""),
@@ -1911,7 +1838,7 @@ def import_excel_row(module_name, data, import_mode):
             else:
                 raise ValueError("العميل موجود مسبقًا.")
         else:
-            execute("""INSERT INTO customers(code,name,name_en,vat_number,phone,email,
+            execute("""INSERT INTO customers(code,name,name_en,vat_no,phone,email,
               address,credit_limit,active,created_at)
               VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,:limit,1,:dt)""",
               {"code":code,"name":data["name"],"name_en":data.get("name_en",""),
@@ -1926,7 +1853,7 @@ def import_excel_row(module_name, data, import_mode):
                         ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]})
         if existing:
             if import_mode=="إضافة وتحديث":
-                execute("""UPDATE suppliers SET name=:name,name_en=:name_en,vat_number=:vat,
+                execute("""UPDATE suppliers SET name=:name,name_en=:name_en,vat_no=:vat,
                   phone=:phone,email=:email,address=:address WHERE id=:id""",
                   {"name":data["name"],"name_en":data.get("name_en",""),
                    "vat":data.get("vat_no",""),"phone":data.get("phone",""),
@@ -1936,7 +1863,7 @@ def import_excel_row(module_name, data, import_mode):
             else:
                 raise ValueError("المورد موجود مسبقًا.")
         else:
-            execute("""INSERT INTO suppliers(code,name,name_en,vat_number,phone,email,
+            execute("""INSERT INTO suppliers(code,name,name_en,vat_no,phone,email,
               address,active,created_at)
               VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,1,:dt)""",
               {"code":code,"name":data["name"],"name_en":data.get("name_en",""),
@@ -2045,113 +1972,6 @@ def import_excel_row(module_name, data, import_mode):
             execute("""INSERT INTO cost_centers(code,name,parent_id,active)
                        VALUES(:code,:name,:parent,:active)""",payload)
     return updated
-
-
-
-SMART_ENTITY_CONFIG = {
-    "customers": {
-        "table": "customers", "label": "العملاء",
-        "display": "name", "code": "code", "tax": "vat_number",
-        "account": "receivable_account_id"
-    },
-    "suppliers": {
-        "table": "suppliers", "label": "الموردون",
-        "display": "name", "code": "code", "tax": "vat_number",
-        "account": "payable_account_id"
-    },
-    "items": {
-        "table": "inventory", "label": "المواد",
-        "display": "name", "code": "code", "tax": None,
-        "account": None
-    },
-    "accounts": {
-        "table": "chart_of_accounts", "label": "الحسابات",
-        "display": "account_name_ar", "code": "account_code", "tax": None,
-        "account": None
-    },
-    "cost_centers": {
-        "table": "cost_centers", "label": "مراكز التكلفة",
-        "display": "name", "code": "code", "tax": None,
-        "account": None
-    },
-    "projects": {
-        "table": "projects", "label": "المشاريع",
-        "display": "name", "code": "project_no", "tax": None,
-        "account": None
-    },
-}
-
-def next_entity_code(table_name, prefix):
-    count=db.session.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar() or 0
-    return f"{prefix}-{count+1:06d}"
-
-def smart_entity_row(entity, entity_id):
-    cfg=SMART_ENTITY_CONFIG.get(entity)
-    if not cfg:
-        return None
-    fields=["id", f"{cfg['display']} AS name"]
-    if cfg.get("code"):
-        fields.append(f"{cfg['code']} AS code")
-    if cfg.get("tax"):
-        fields.append(f"{cfg['tax']} AS tax_number")
-    if cfg.get("account"):
-        fields.append(f"{cfg['account']} AS account_id")
-    if entity=="items":
-        fields.extend(["unit","unit_cost","quantity"])
-    return row(f"SELECT {','.join(fields)} FROM {cfg['table']} WHERE id=:id",{"id":entity_id})
-
-def create_quick_entity(entity, payload):
-    name=(payload.get("name") or "").strip()
-    if not name:
-        raise ValueError("الاسم مطلوب.")
-    if entity=="customer":
-        code=(payload.get("code") or next_entity_code("customers","CUS")).strip()
-        existing=row("SELECT id FROM customers WHERE code=:code OR name=:name",
-                     {"code":code,"name":name})
-        if existing:
-            raise ValueError("العميل موجود مسبقًا.")
-        execute("""INSERT INTO customers(code,name,name_en,vat_number,phone,email,address,
-          credit_limit,receivable_account_id)
-          VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,:limit,:account)""",
-          {"code":code,"name":name,"name_en":payload.get("name_en",""),
-           "vat":payload.get("vat_number",""),"phone":payload.get("phone",""),
-           "email":payload.get("email",""),"address":payload.get("address",""),
-           "limit":float(payload.get("credit_limit") or 0),
-           "account":payload.get("account_id") or None})
-        new_id=row("SELECT id FROM customers WHERE code=:code",{"code":code})["id"]
-        return "customers",smart_entity_row("customers",new_id)
-    if entity=="supplier":
-        code=(payload.get("code") or next_entity_code("suppliers","SUP")).strip()
-        existing=row("SELECT id FROM suppliers WHERE code=:code OR name=:name",
-                     {"code":code,"name":name})
-        if existing:
-            raise ValueError("المورد موجود مسبقًا.")
-        execute("""INSERT INTO suppliers(code,name,name_en,vat_number,phone,email,address,
-          payable_account_id)
-          VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,:account)""",
-          {"code":code,"name":name,"name_en":payload.get("name_en",""),
-           "vat":payload.get("vat_number",""),"phone":payload.get("phone",""),
-           "email":payload.get("email",""),"address":payload.get("address",""),
-           "account":payload.get("account_id") or None})
-        new_id=row("SELECT id FROM suppliers WHERE code=:code",{"code":code})["id"]
-        return "suppliers",smart_entity_row("suppliers",new_id)
-    if entity=="item":
-        code=(payload.get("code") or next_entity_code("inventory","ITM")).strip()
-        existing=row("SELECT id FROM inventory WHERE code=:code OR name=:name",
-                     {"code":code,"name":name})
-        if existing:
-            raise ValueError("المادة موجودة مسبقًا.")
-        execute("""INSERT INTO inventory(code,name,description,unit,quantity,unit_cost,
-          reorder_level,active)
-          VALUES(:code,:name,:description,:unit,:quantity,:cost,:reorder,1)""",
-          {"code":code,"name":name,"description":payload.get("description",""),
-           "unit":payload.get("unit","وحدة"),
-           "quantity":float(payload.get("quantity") or 0),
-           "cost":float(payload.get("unit_cost") or 0),
-           "reorder":float(payload.get("reorder_level") or 0)})
-        new_id=row("SELECT id FROM inventory WHERE code=:code",{"code":code})["id"]
-        return "items",smart_entity_row("items",new_id)
-    raise ValueError("نوع السجل غير مدعوم.")
 
 
 def init_db():
@@ -3374,22 +3194,6 @@ def init_db():
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS warehouse_id INTEGER',
-        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS draft_number VARCHAR(100)',
-        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS official_invoice_no VARCHAR(100)',
-        'CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_draft_number ON invoices(draft_number) WHERE draft_number IS NOT NULL',
-        'CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_official_no ON invoices(official_invoice_no) WHERE official_invoice_no IS NOT NULL',
-        'ALTER TABLE customers ADD COLUMN IF NOT EXISTS code VARCHAR(100)',
-        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS address TEXT DEFAULT ''",
-        'ALTER TABLE customers ADD COLUMN IF NOT EXISTS credit_limit NUMERIC(18,2) DEFAULT 0',
-        'ALTER TABLE customers ADD COLUMN IF NOT EXISTS receivable_account_id INTEGER',
-        'ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS code VARCHAR(100)',
-        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS address TEXT DEFAULT ''",
-        'ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS payable_account_id INTEGER',
-        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS code VARCHAR(100)',
-        "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''",
-        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(18,2) DEFAULT 0',
-        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS reorder_level NUMERIC(18,3) DEFAULT 0',
-        'ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS party_account_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS project_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_by INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP',
@@ -3854,40 +3658,25 @@ def invoices():
     if request.method=="POST":
         try:
             prepared_items,gross_subtotal,discount_total,net_subtotal,invoice_vat,invoice_total = prepare_invoice_items_from_form(request.form)
-
-            customer_id=request.form.get("customer_id")
-            invoice_date=request.form.get("invoice_date")
-            if not customer_id:
-                raise ValueError("اختر العميل قبل حفظ الفاتورة.")
-            if not invoice_date:
-                raise ValueError("أدخل تاريخ الفاتورة.")
-
-            customer=row("SELECT id FROM customers WHERE id=:id",{"id":customer_id})
-            if not customer:
-                raise ValueError("العميل المحدد غير موجود.")
-
-            requested_status=request.form.get("status","مسودة")
-            if requested_status not in ("مسودة","معتمدة"):
-                requested_status="مسودة"
-
-            invoice_no=next_invoice_draft_number()
+            invoice_date=request.form["invoice_date"]
+            invoice_no=next_invoice_number(invoice_date)
             invoice_uuid=str(uuid.uuid4())
+            requested_status=request.form.get("status","مسودة")
+            initial_status="مسودة" if requested_status not in ("مسودة","معتمدة") else requested_status
 
-            # One database transaction: invoice + items.
-            db.session.execute(text("""INSERT INTO invoices(
-              invoice_no,draft_number,invoice_uuid,customer_id,invoice_date,due_date,
+            execute("""INSERT INTO invoices(
+              invoice_no,invoice_uuid,customer_id,invoice_date,due_date,
               subtotal,discount,vat,total,status,branch_id,cost_center_id,project_id,
               payment_terms,payment_method,sales_person,customer_reference,
-              notes,created_at,updated_at,posting_status)
-              VALUES(:no,:draft_number,:uuid,:customer,:invoice_date,:due_date,:subtotal,:discount,
-              :vat,:total,'مسودة',:branch,:cost_center,:project,:payment_terms,
-              :payment_method,:sales_person,:customer_reference,:notes,:created,:updated,
-              'غير مرحّل')"""),
-              {"no":invoice_no,"draft_number":invoice_no,"uuid":invoice_uuid,"customer":customer_id,
-               "invoice_date":invoice_date,
+              notes,created_at,updated_at)
+              VALUES(:no,:uuid,:customer,:invoice_date,:due_date,:subtotal,:discount,
+              :vat,:total,:status,:branch,:cost_center,:project,:payment_terms,
+              :payment_method,:sales_person,:customer_reference,:notes,:created,:updated)""",
+              {"no":invoice_no,"uuid":invoice_uuid,
+               "customer":request.form["customer_id"],"invoice_date":invoice_date,
                "due_date":request.form.get("due_date") or None,
                "subtotal":net_subtotal,"discount":discount_total,
-               "vat":invoice_vat,"total":invoice_total,
+               "vat":invoice_vat,"total":invoice_total,"status":initial_status,
                "branch":request.form.get("branch_id") or None,
                "cost_center":request.form.get("cost_center_id") or None,
                "project":request.form.get("project_id") or None,
@@ -3897,61 +3686,29 @@ def invoices():
                "customer_reference":request.form.get("customer_reference",""),
                "notes":request.form.get("notes",""),
                "created":datetime.now(),"updated":datetime.now()})
-
-            invoice_id=db.session.execute(
-                text("SELECT id FROM invoices WHERE invoice_no=:no"),
-                {"no":invoice_no}
-            ).scalar()
-
-            for item in prepared_items:
-                db.session.execute(text("""INSERT INTO invoice_items(
-                  invoice_id,item_name,description,quantity,unit,unit_price,
-                  discount_rate,vat_rate,line_subtotal,line_discount,line_vat,line_total)
-                  VALUES(:invoice_id,:item_name,:description,:quantity,:unit,:unit_price,
-                  :discount_rate,:vat_rate,:line_subtotal,:line_discount,:line_vat,:line_total)"""),
-                  {"invoice_id":invoice_id,**item})
-
-            db.session.commit()
+            invoice_id=row("SELECT id FROM invoices WHERE invoice_no=:no",{"no":invoice_no})["id"]
+            replace_invoice_items(invoice_id,prepared_items)
             audit("CREATE","INVOICE",f"إنشاء فاتورة {invoice_no}")
 
             if requested_status=="معتمدة":
                 try:
-                    draft_number,official_number=assign_official_invoice_number(invoice_id)
                     post_invoice_to_ledger(invoice_id)
-                    execute("""UPDATE invoices
-                               SET status='معتمدة',approved_by=:user,
-                                   approved_at=:dt,updated_at=:dt
-                               WHERE id=:id""",
-                            {"user":session.get("user_id"),
-                             "dt":datetime.now(),"id":invoice_id})
-                    audit("APPROVE","INVOICE",
-                          f"اعتماد الفاتورة وتغيير الرقم من {draft_number} إلى {official_number}")
-                    flash(f"تم الحفظ والاعتماد. الرقم النهائي: {official_number}.","success")
+                    execute("""UPDATE invoices SET status='معتمدة',approved_by=:user,
+                      approved_at=:dt WHERE id=:id""",
+                      {"user":session.get("user_id"),"dt":datetime.now(),"id":invoice_id})
+                    flash("تم إنشاء الفاتورة واعتمادها وترحيلها محاسبيًا.","success")
                 except Exception as exc:
                     db.session.rollback()
-                    try:
-                        execute("""UPDATE invoices
-                                   SET invoice_no=COALESCE(draft_number,:draft_number),
-                                       official_invoice_no=NULL,
-                                       status='مسودة',posting_status='خطأ'
-                                   WHERE id=:id""",
-                                {"draft_number":invoice_no,"id":invoice_id})
-                    except Exception:
-                        db.session.rollback()
-                    flash(f"تم حفظ الفاتورة برقمها الأولي، لكن تعذر اعتمادها: {exc}","warning")
+                    execute("""UPDATE invoices SET status='مسودة',posting_status='خطأ'
+                               WHERE id=:id""",{"id":invoice_id})
+                    flash(f"حُفظت الفاتورة كمسودة ولم تُرحّل: {exc}","danger")
             else:
-                flash(f"تم حفظ الفاتورة برقم {invoice_no}.","success")
-
-            return redirect(url_for(
-                "invoice_view",
-                invoice_id=invoice_id,
-                print=1 if request.form.get("print_after_save")=="1" else None
-            ))
-
+                flash("تم إنشاء الفاتورة كمسودة قابلة للتعديل.","success")
+            return redirect(url_for("invoice_view",invoice_id=invoice_id,
+                                    print=1 if request.form.get("print_after_save")=="1" else None))
         except Exception as exc:
             db.session.rollback()
-            app.logger.exception("Invoice save failed")
-            flash(f"تعذر حفظ الفاتورة: {exc}","danger")
+            flash(str(exc),"danger")
             return redirect(url_for("invoices"))
 
     invoice_rows=rows("""SELECT i.*,c.name customer_name,b.name branch_name
@@ -3963,7 +3720,6 @@ def invoices():
       inventory_items=rows("SELECT * FROM inventory ORDER BY name"),
       centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"),
       projects=rows("SELECT id,project_no,name FROM projects ORDER BY project_no"))
-
 
 @app.route("/expenses", methods=["GET","POST"])
 @login_required
@@ -4618,7 +4374,6 @@ def journal_entries():
         tax_numbers=request.form.getlist("tax_number[]")
         invoice_numbers=request.form.getlist("invoice_number[]")
         invoice_dates=request.form.getlist("invoice_date[]")
-        party_account_ids=request.form.getlist("party_account_id[]")
         descriptions=request.form.getlist("line_description[]")
         cost_center_ids=request.form.getlist("cost_center_id[]")
         lines=[]; total_debit=0.0; total_credit=0.0
@@ -4643,18 +4398,15 @@ def journal_entries():
             tax_number = tax_numbers[i].strip() if i < len(tax_numbers) else ""
             invoice_number = invoice_numbers[i].strip() if i < len(invoice_numbers) else ""
             invoice_date = invoice_dates[i] if i < len(invoice_dates) and invoice_dates[i] else None
-            party_account_id = (party_account_ids[i] or None) if i < len(party_account_ids) else None
 
             if party_type == "مورد":
                 customer_id = None
-                party = row("SELECT vat_number,payable_account_id FROM suppliers WHERE id=:id", {"id": supplier_id}) if supplier_id else None
+                party = row("SELECT vat_number FROM suppliers WHERE id=:id", {"id": supplier_id}) if supplier_id else None
                 tax_number = (party["vat_number"] or "") if party else ""
-                party_account_id = party.get("payable_account_id") if party else party_account_id
             elif party_type == "عميل":
                 supplier_id = None
-                party = row("SELECT vat_number,receivable_account_id FROM customers WHERE id=:id", {"id": customer_id}) if customer_id else None
+                party = row("SELECT vat_number FROM customers WHERE id=:id", {"id": customer_id}) if customer_id else None
                 tax_number = (party["vat_number"] or "") if party else ""
-                party_account_id = party.get("receivable_account_id") if party else party_account_id
             else:
                 supplier_id = None
                 customer_id = None
@@ -4691,7 +4443,6 @@ def journal_entries():
                           "tax_number":tax_number,
                           "invoice_number":invoice_number,
                           "invoice_date":invoice_date,
-                          "party_account_id":party_account_id,
                           "line_description":descriptions[i] if i<len(descriptions) else "",
                           "cost_center_id":(cost_center_ids[i] or None) if i<len(cost_center_ids) else None})
             total_debit+=debit; total_credit+=credit
@@ -4719,10 +4470,10 @@ def journal_entries():
         for line in lines:
             execute("""INSERT INTO journal_entry_lines(
                 journal_id,account_id,debit,credit,taxable,tax_direction,supplier_id,customer_id,
-                party_type,tax_number,invoice_number,invoice_date,party_account_id,line_description,cost_center_id)
+                party_type,tax_number,invoice_number,invoice_date,line_description,cost_center_id)
                 VALUES(:journal_id,:account_id,:debit,:credit,:taxable,:tax_direction,
                 :supplier_id,:customer_id,:party_type,:tax_number,:invoice_number,:invoice_date,
-                :party_account_id,:line_description,:cost_center_id)""",
+                :line_description,:cost_center_id)""",
                 {"journal_id":journal_id,**line})
         flash(f"تم حفظ القيد {journal_no}","success")
         if request.form.get("print_after_save") == "1":
@@ -5022,62 +4773,18 @@ def invoice_approve(invoice_id):
     if invoice["status"] not in ("مسودة","معاد للتعديل","بانتظار الاعتماد"):
         flash("حالة الفاتورة لا تسمح بالاعتماد.","danger")
         return redirect(url_for("invoice_view",invoice_id=invoice_id))
-
-    old_number = invoice["invoice_no"]
-    official_number = None
-
     try:
-        draft_number,official_number=assign_official_invoice_number(invoice_id)
         post_invoice_to_ledger(invoice_id)
-
-        execute("""UPDATE invoices
-                   SET status='معتمدة',
-                       approved_by=:user,
-                       approved_at=:dt,
-                       updated_at=:dt
-                   WHERE id=:id""",
-                {
-                    "user":session.get("user_id"),
-                    "dt":datetime.now(),
-                    "id":invoice_id,
-                })
-
-        audit(
-            "APPROVE",
-            "INVOICE",
-            f"اعتماد الفاتورة وتغيير الرقم من {draft_number} إلى {official_number}"
-        )
-        flash(
-            f"تم اعتماد الفاتورة. تغير الرقم فقط من {draft_number} إلى {official_number}.",
-            "success"
-        )
-
+        execute("""UPDATE invoices SET status='معتمدة',approved_by=:user,
+          approved_at=:dt,updated_at=:dt WHERE id=:id""",
+          {"user":session.get("user_id"),"dt":datetime.now(),"id":invoice_id})
+        audit("APPROVE","INVOICE",f"اعتماد وترحيل الفاتورة {invoice['invoice_no']}")
+        flash("تم اعتماد الفاتورة وترحيلها محاسبيًا. أصبحت مقفلة ضد التعديل والحذف.","success")
     except Exception as exc:
         db.session.rollback()
-
-        # Restore the date/time number if posting did not complete.
-        current=row("SELECT journal_id FROM invoices WHERE id=:id",{"id":invoice_id})
-        if not current or not current.get("journal_id"):
-            try:
-                execute("""UPDATE invoices
-                           SET invoice_no=COALESCE(draft_number,:old_number),
-                               official_invoice_no=NULL,
-                               posting_status='خطأ',
-                               updated_at=:dt
-                           WHERE id=:id""",
-                        {
-                            "old_number":old_number,
-                            "dt":datetime.now(),
-                            "id":invoice_id,
-                        })
-            except Exception:
-                db.session.rollback()
-
-        app.logger.exception("Final invoice approval failed")
+        execute("""UPDATE invoices SET posting_status='خطأ' WHERE id=:id""",{"id":invoice_id})
         flash(f"تعذر اعتماد وترحيل الفاتورة: {exc}","danger")
-
     return redirect(url_for("invoice_view",invoice_id=invoice_id))
-
 
 
 @app.route("/invoices/<int:invoice_id>/copy",methods=["POST"])
@@ -5087,15 +4794,15 @@ def invoice_copy(invoice_id):
     if not source:
         return "الفاتورة غير موجودة",404
     new_date=request.form.get("invoice_date") or datetime.now().date()
-    new_no=next_invoice_draft_number()
-    execute("""INSERT INTO invoices(invoice_no,draft_number,invoice_uuid,customer_id,invoice_date,
+    new_no=next_invoice_number(new_date)
+    execute("""INSERT INTO invoices(invoice_no,invoice_uuid,customer_id,invoice_date,
       due_date,subtotal,discount,vat,total,status,branch_id,cost_center_id,project_id,
       payment_terms,payment_method,sales_person,customer_reference,notes,created_at,
       updated_at,copied_from_id)
-      VALUES(:no,:draft_number,:uuid,:customer,:invoice_date,:due_date,:subtotal,:discount,:vat,
+      VALUES(:no,:uuid,:customer,:invoice_date,:due_date,:subtotal,:discount,:vat,
       :total,'مسودة',:branch,:cost_center,:project,:payment_terms,:payment_method,
       :sales_person,:customer_reference,:notes,:created,:updated,:source)""",
-      {"no":new_no,"draft_number":new_no,"uuid":str(uuid.uuid4()),"customer":source["customer_id"],
+      {"no":new_no,"uuid":str(uuid.uuid4()),"customer":source["customer_id"],
        "invoice_date":new_date,"due_date":source.get("due_date"),
        "subtotal":source["subtotal"],"discount":source.get("discount") or 0,
        "vat":source["vat"],"total":source["total"],"branch":source.get("branch_id"),
@@ -9146,76 +8853,6 @@ def fixed_assets_report_export():
       [[r["asset_no"],r["name"],r["category_name"],r["purchase_date"],r["purchase_cost"],
         r["accumulated_depreciation"],r["net_book_value"],r["status"],r["location"]] for r in data])
 
-
-
-
-@app.route("/api/smart-lookup/<entity>")
-@login_required
-def smart_lookup(entity):
-    cfg=SMART_ENTITY_CONFIG.get(entity)
-    if not cfg:
-        return {"ok":False,"error":"نوع البحث غير مدعوم"},404
-    q=request.args.get("q","").strip()
-    params={"q":f"%{q}%"}
-    display=cfg["display"]; code=cfg.get("code")
-    select_fields=["id",f"{display} AS name"]
-    if code: select_fields.append(f"{code} AS code")
-    if cfg.get("tax"): select_fields.append(f"{cfg['tax']} AS tax_number")
-    if cfg.get("account"): select_fields.append(f"{cfg['account']} AS account_id")
-    if entity=="items": select_fields.extend(["unit","unit_cost","quantity"])
-    conditions=[f"{display} ILIKE :q"]
-    if code: conditions.append(f"COALESCE({code},'') ILIKE :q")
-    result=rows(f"""SELECT {','.join(select_fields)} FROM {cfg['table']}
-                    WHERE {' OR '.join(conditions)}
-                    ORDER BY {display} LIMIT 30""",params)
-    return {"ok":True,"results":result}
-
-@app.route("/api/smart-entity/<entity>/<int:entity_id>")
-@login_required
-def smart_entity_details(entity,entity_id):
-    result=smart_entity_row(entity,entity_id)
-    if not result:
-        return {"ok":False,"error":"السجل غير موجود"},404
-    return {"ok":True,"result":result}
-
-@app.route("/api/quick-create/<entity>",methods=["POST"])
-@login_required
-def quick_create(entity):
-    try:
-        payload=request.get_json(silent=True) or request.form.to_dict()
-        lookup_entity,result=create_quick_entity(entity,payload)
-        audit("QUICK_CREATE",entity,f"إنشاء سريع: {result['name']}")
-        return {"ok":True,"lookup_entity":lookup_entity,"result":result}
-    except Exception as exc:
-        db.session.rollback()
-        return {"ok":False,"error":str(exc)},400
-
-@app.route("/global-search")
-@login_required
-def global_search():
-    q=request.args.get("q","").strip()
-    grouped={}
-    if q:
-        grouped["العملاء"]=rows("""SELECT id,code,name,'customer' result_type
-          FROM customers WHERE name ILIKE :q OR COALESCE(code,'') ILIKE :q
-          ORDER BY name LIMIT 20""",{"q":f"%{q}%"})
-        grouped["الموردون"]=rows("""SELECT id,code,name,'supplier' result_type
-          FROM suppliers WHERE name ILIKE :q OR COALESCE(code,'') ILIKE :q
-          ORDER BY name LIMIT 20""",{"q":f"%{q}%"})
-        grouped["المواد"]=rows("""SELECT id,code,name,'item' result_type
-          FROM inventory WHERE name ILIKE :q OR COALESCE(code,'') ILIKE :q
-          ORDER BY name LIMIT 20""",{"q":f"%{q}%"})
-        grouped["الفواتير"]=rows("""SELECT i.id,i.invoice_no code,c.name,
-          'invoice' result_type FROM invoices i JOIN customers c ON c.id=i.customer_id
-          WHERE i.invoice_no ILIKE :q OR c.name ILIKE :q
-          ORDER BY i.id DESC LIMIT 20""",{"q":f"%{q}%"})
-        grouped["المشاريع"]=rows("""SELECT id,project_no code,name,'project' result_type
-          FROM projects WHERE project_no ILIKE :q OR name ILIKE :q
-          ORDER BY project_no LIMIT 20""",{"q":f"%{q}%"})
-        grouped["الموظفون"]=rows("""SELECT id,employee_no code,name,'employee' result_type
-          FROM employees WHERE name ILIKE :q OR COALESCE(employee_no,'') ILIKE :q
-          ORDER BY name LIMIT 20""",{"q":f"%{q}%"})
-    return render_template("global_search.html",q=q,grouped=grouped)
 
 
 @app.route("/data-import")

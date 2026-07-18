@@ -7,7 +7,7 @@
 <div class="form-card">
 <form method="post" id="editInvoiceForm">
 <div class="row g-3 mb-4">
-<div class="col-md-3"><label>العميل</label><select class="form-select" name="customer_id" required>{% for c in customers %}<option value="{{c.id}}" {% if c.id==invoice.customer_id %}selected{% endif %}>{{c.name}}</option>{% endfor %}</select> <button type="button" class="btn btn-sm btn-outline-primary" data-quick-create="customer" data-target='select[name="customer_id"]'>+ عميل</button></div>
+<div class="col-md-3"><label>العميل</label><select class="form-select" name="customer_id" required>{% for c in customers %}<option value="{{c.id}}" {% if c.id==invoice.customer_id %}selected{% endif %}>{{c.name}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>تاريخ الفاتورة</label><input class="form-control" type="date" name="invoice_date" value="{{invoice.invoice_date}}" required></div>
 <div class="col-md-2"><label>تاريخ الاستحقاق</label><input class="form-control" type="date" name="due_date" value="{{invoice.due_date or ''}}"></div>
 <div class="col-md-2"><label>الفرع</label><select class="form-select" name="branch_id"><option value="">بدون</option>{% for b in branches %}<option value="{{b.id}}" {% if b.id==invoice.branch_id %}selected{% endif %}>{{b.name}}</option>{% endfor %}</select></div>
@@ -18,7 +18,7 @@
 <div class="col-md-3"><label>طريقة الدفع</label><input class="form-control" name="payment_method" value="{{invoice.payment_method or ''}}"></div>
 <div class="col-md-6"><label>شروط الدفع</label><input class="form-control" name="payment_terms" value="{{invoice.payment_terms or ''}}"></div>
 </div>
-<div class="mb-2"><button type="button" class="btn btn-sm btn-outline-primary" data-quick-create="item">+ إضافة مادة جديدة</button></div><table class="table table-bordered align-middle"><thead><tr><th>م</th><th>المادة</th><th>الوصف</th><th>الكمية</th><th>الوحدة</th><th>السعر</th><th>خصم %</th><th>ضريبة %</th><th>الإجمالي</th><th></th></tr></thead>
+<table class="table table-bordered align-middle"><thead><tr><th>م</th><th>المادة</th><th>الوصف</th><th>الكمية</th><th>الوحدة</th><th>السعر</th><th>خصم %</th><th>ضريبة %</th><th>الإجمالي</th><th></th></tr></thead>
 <tbody id="editItemsBody">
 {% for item in items %}
 <tr class="edit-item-row"><td class="row-no">{{loop.index}}</td>

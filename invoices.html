@@ -1,117 +1,88 @@
 {% extends "base.html" %}
 {% block content %}
+
 <div class="erp-sticky-header">
-  <div><h3 class="mb-1">فواتير المبيعات</h3><small class="text-muted">Sales Invoices</small></div>
+  <div>
+    <h3 class="mb-1">فواتير المبيعات</h3>
+    <small class="text-muted">Sales Invoices</small>
+  </div>
   <div class="erp-toolbar no-print">
-    <button type="button" class="erp-tool-btn" data-new-document="1" data-new-url="{{url_for('invoices')}}">📄 <span>مستند جديد</span></button>
-    <button type="button" class="erp-tool-btn primary" id="saveInvoiceTop">💾 <span>حفظ كمسودة</span></button>
+    <button type="button" class="erp-tool-btn" data-new-document="1" data-new-url="{{ url_for('invoices') }}">📄 <span>مستند جديد</span></button>
+    <button type="button" class="erp-tool-btn primary" id="saveInvoiceTop">💾 <span>حفظ</span></button>
     <button type="button" class="erp-tool-btn dark" id="savePrintInvoice">🖨️ <span>حفظ وطباعة</span></button>
-    <button type="button" class="erp-tool-btn" id="previewInvoice">👁️ <span>معاينة</span></button>
+    <button type="button" class="erp-tool-btn" id="previewInvoice">👁️ <span>معاينة المسودة</span></button>
     <button type="button" class="erp-tool-btn" id="addInvoiceRowTop">➕ <span>إضافة مادة</span></button>
-    <a class="erp-tool-btn success" href="{{url_for('export_invoices')}}">📊 <span>Excel</span></a>
+    <a class="erp-tool-btn success" href="{{ url_for('export_invoices') }}">📊 <span>Excel</span></a>
+    <span class="shortcut-hint">Ctrl+S حفظ</span>
+    <span class="shortcut-hint">F2 مادة جديدة</span>
   </div>
 </div>
 
-<div class="form-card mb-4">
-<form method="post" id="invoiceForm">
-<input type="hidden" name="print_after_save" id="invoicePrintAfterSave" value="0">
-
-<div class="row g-3 mb-4">
-  <div class="col-md-4">
-    <label class="form-label">العميل *</label>
-    <div class="input-group">
-      <select class="form-select" name="customer_id" id="invoiceCustomer" required>
-        <option value="">اختر العميل</option>
-        {% for c in customers %}<option value="{{c.id}}">{{c.code or ''}} - {{c.name}}</option>{% endfor %}
-      </select>
-      <button type="button" class="btn btn-outline-primary" data-quick-create="customer" data-target="#invoiceCustomer">+ عميل</button>
-    </div>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label">تاريخ الفاتورة *</label>
-    <input class="form-control" type="date" name="invoice_date" id="invoiceDate" required>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label">تاريخ الاستحقاق</label>
-    <input class="form-control" type="date" name="due_date">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label">طريقة الحفظ</label>
-    <select class="form-select" name="status">
-      <option value="مسودة" selected>حفظ كمسودة</option>
-      <option value="معتمدة">حفظ واعتماد وترحيل</option>
-    </select>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label">الفرع</label>
-    <select class="form-select" name="branch_id">
-      <option value="">بدون</option>
-      {% for b in branches %}<option value="{{b.id}}">{{b.name}}</option>{% endfor %}
-    </select>
-  </div>
-  <div class="col-md-3">
-    <label class="form-label">مركز التكلفة</label>
-    <select class="form-select" name="cost_center_id">
-      <option value="">بدون</option>
-      {% for c in centers %}<option value="{{c.id}}">{{c.code}} - {{c.name}}</option>{% endfor %}
-    </select>
-  </div>
-  <div class="col-md-3">
-    <label class="form-label">المشروع</label>
-    <select class="form-select" name="project_id">
-      <option value="">بدون</option>
-      {% for p in projects %}<option value="{{p.id}}">{{p.project_no}} - {{p.name}}</option>{% endfor %}
-    </select>
-  </div>
-  <div class="col-md-2"><label class="form-label">مندوب المبيعات</label><input class="form-control" name="sales_person"></div>
-  <div class="col-md-2"><label class="form-label">طريقة الدفع</label><select class="form-select" name="payment_method"><option value="">اختر</option><option>نقدي</option><option>تحويل بنكي</option><option>آجل</option><option>شيك</option></select></div>
-  <div class="col-md-2"><label class="form-label">مرجع العميل</label><input class="form-control" name="customer_reference"></div>
-  <div class="col-md-6"><label class="form-label">شروط الدفع</label><input class="form-control" name="payment_terms"></div>
-</div>
-
-<div class="mb-2"><button type="button" class="btn btn-sm btn-outline-primary" data-quick-create="item">+ إضافة مادة جديدة للنظام</button></div>
 <div class="table-responsive">
 <table class="table table-bordered align-middle" id="itemsTable">
-<thead class="table-light"><tr>
-<th>م</th><th>المادة</th><th>وصف العملية</th><th>الكمية</th><th>الوحدة</th>
-<th>سعر الوحدة</th><th>خصم %</th><th>ضريبة القيمة المضافة {{app_settings.vat_rate or 15}}%</th>
-<th>الإجمالي</th><th></th>
-</tr></thead>
+<thead class="table-light">
+<tr>
+  <th>م</th>
+  <th>المادة</th>
+  <th>وصف العملية</th>
+  <th>الكمية</th>
+  <th>الوحدة</th>
+  <th>سعر الوحدة</th>
+  <th>خصم %</th>
+  <th>ضريبة القيمة المضافة {{ app_settings.vat_rate or 15 }}%</th>
+  <th>الإجمالي</th>
+  <th></th>
+</tr>
+</thead>
 <tbody id="itemsBody">
 <tr class="item-row">
-<td class="row-number text-center">1</td>
-<td><input class="form-control" name="item_name[]" list="inventoryList" placeholder="اكتب أو اختر المادة" required></td>
-<td><input class="form-control" name="description[]" placeholder="وصف العملية أو المشروع"></td>
-<td><input class="form-control quantity" type="number" name="quantity[]" min="0.001" step="0.001" value="1" required></td>
-<td><select class="form-select" name="unit[]"><option>وحدة</option><option>متر</option><option>كجم</option><option>طن</option><option>قطعة</option><option>رول</option><option>بكرة</option><option>صندوق</option><option>ساعة</option><option>يوم</option><option>شهر</option><option>خدمة</option><option>مقطوعية</option></select></td>
-<td><input class="form-control unit-price" type="number" name="unit_price[]" min="0" step="0.01" value="0" required></td>
-<td><input class="form-control discount-rate" type="number" name="discount_rate[]" min="0" max="100" step="0.01" value="0"></td>
-<td><input type="hidden" name="vat_rate[]" value="{{app_settings.vat_rate or 15}}"><input class="form-control line-vat" value="0.00" readonly></td>
-<td><input class="form-control line-total" value="0.00" readonly></td>
-<td><button type="button" class="btn btn-sm btn-outline-danger remove-row">×</button></td>
+  <td class="row-number text-center">1</td>
+  <td><input class="form-control" name="item_name[]" list="inventoryList" placeholder="اكتب أو اختر المادة" required></td>
+  <td><input class="form-control" name="description[]" placeholder="وصف العملية أو المشروع"></td>
+  <td><input class="form-control quantity" type="number" name="quantity[]" min="0.001" step="0.001" value="1" required></td>
+  <td>
+    <select class="form-select" name="unit[]">
+      <option>وحدة</option><option>متر</option><option>كجم</option><option>طن</option>
+      <option>قطعة</option><option>رول</option><option>بكرة</option><option>صندوق</option>
+      <option>ساعة</option><option>يوم</option><option>شهر</option><option>خدمة</option><option>مقطوعية</option>
+    </select>
+  </td>
+  <td><input class="form-control unit-price" type="number" name="unit_price[]" min="0" step="0.01" value="0" required></td>
+  <td><input class="form-control discount-rate" type="number" name="discount_rate[]" min="0" max="100" step="0.01" value="0"></td>
+  <input type="hidden" name="vat_rate[]" value="{{app_settings.vat_rate or 15}}">
+  <td><input class="form-control line-vat" value="0.00" readonly></td>
+  <td><input class="form-control line-total" value="0.00" readonly></td>
+  <td><button type="button" class="btn btn-sm btn-outline-danger remove-row">×</button></td>
 </tr>
 </tbody>
 </table>
 </div>
-<datalist id="inventoryList">{% for item in inventory_items %}<option value="{{item.name}}">{% endfor %}</datalist>
+
+<datalist id="inventoryList">
+{% for item in inventory_items %}<option value="{{ item.name }}">{% endfor %}
+</datalist>
 
 <div class="d-flex justify-content-between flex-wrap gap-3 mt-3">
-<button type="button" class="btn btn-outline-primary" id="addRow">+ إضافة مادة</button>
-<div class="summary-box">
-<div><span>الإجمالي قبل الخصم</span><strong id="grossDisplay">0.00</strong></div>
-<div><span>إجمالي الخصم</span><strong id="discountDisplay">0.00</strong></div>
-<div><span>الإجمالي قبل الضريبة</span><strong id="subtotalDisplay">0.00</strong></div>
-<div><span>ضريبة القيمة المضافة</span><strong id="vatDisplay">0.00</strong></div>
-<div class="grand"><span>الإجمالي المستحق</span><strong id="totalDisplay">0.00</strong></div>
-</div>
+  <button type="button" class="btn btn-outline-primary" id="addRow">+ إضافة مادة</button>
+  <div class="summary-box">
+    <div><span>الإجمالي قبل الضريبة</span><strong id="subtotalDisplay">0.00</strong></div>
+    <div><span>ضريبة القيمة المضافة {{ app_settings.vat_rate or 15 }}%</span><strong id="vatDisplay">0.00</strong></div>
+    <div class="grand"><span>الإجمالي المستحق</span><strong id="totalDisplay">0.00</strong></div>
+  </div>
 </div>
 
 <div class="row g-3 mt-2">
-<div class="col-md-8"><label class="form-label">ملاحظات عامة</label><textarea class="form-control" name="notes" rows="2"></textarea></div>
-<div class="col-md-4 d-flex align-items-end"><button type="submit" class="btn btn-primary btn-lg w-100" id="saveInvoiceBottom">💾 حفظ الفاتورة</button></div>
+  <div class="col-md-8">
+    <label class="form-label">ملاحظات عامة على الفاتورة</label>
+    <textarea class="form-control" name="notes" rows="2"></textarea>
+  </div>
+  <div class="col-md-4 d-flex align-items-end">
+    <button class="btn btn-primary btn-lg w-100" id="saveInvoiceBottom">💾 إنشاء الفاتورة</button>
+  </div>
 </div>
 </form>
 </div>
+
 <div class="form-card">
 <h5 class="mb-3">الفواتير السابقة</h5>
 <div class="table-responsive">
@@ -143,64 +114,138 @@
 </div>
 </div>
 
-
 <style>
 .summary-box{min-width:380px;background:#f8fafc;border:1px solid #dbe3ec;border-radius:12px;padding:14px 18px}
 .summary-box div{display:flex;justify-content:space-between;gap:30px;padding:7px 0}
 .summary-box .grand{font-size:18px;border-top:2px solid #dbe3ec;margin-top:5px;padding-top:12px}
 #itemsTable th{text-align:center;vertical-align:middle}
-.erp-sticky-header{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:16px;margin:-8px -4px 18px;padding:12px 14px;background:rgba(241,245,249,.96);border-bottom:1px solid #dbe3ec}
-.erp-toolbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.erp-tool-btn{border:1px solid #cbd5e1;background:#fff;color:#172033;border-radius:9px;min-height:38px;padding:7px 11px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;text-decoration:none}.erp-tool-btn.primary{background:#1769e0;color:#fff}.erp-tool-btn.dark{background:#172033;color:#fff}.erp-tool-btn.success{background:#16803b;color:#fff}
 </style>
+
+
+<style>
+.erp-sticky-header{
+  position:sticky;top:0;z-index:50;
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  margin:-8px -4px 18px;padding:12px 14px;
+  background:rgba(241,245,249,.96);backdrop-filter:blur(8px);
+  border-bottom:1px solid #dbe3ec;
+}
+.erp-toolbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.erp-tool-btn{
+  border:1px solid #cbd5e1;background:#fff;color:#172033;border-radius:9px;
+  min-height:38px;padding:7px 11px;display:inline-flex;align-items:center;
+  gap:6px;cursor:pointer;text-decoration:none;transition:.18s ease
+}
+.erp-tool-btn:hover{background:#eef4ff;border-color:#7aa2e3;transform:translateY(-1px)}
+.erp-tool-btn.primary{background:#1769e0;color:#fff;border-color:#1769e0}
+.erp-tool-btn.dark{background:#172033;color:#fff;border-color:#172033}
+.erp-tool-btn.success{background:#16803b;color:#fff;border-color:#16803b}
+@media(max-width:1000px){.erp-sticky-header{position:relative;align-items:flex-start;flex-direction:column}}
+@media print{.erp-sticky-header{display:none!important}}
+</style>
+
 <script>
-const vatRate=Number({{app_settings.vat_rate or 15}});
+const vatRate = Number({{ app_settings.vat_rate or 15 }});
 function calculateInvoice(){
- let gross=0,discountTotal=0,vatTotal=0,grandTotal=0;
- document.querySelectorAll('.item-row').forEach((row,index)=>{
-  row.querySelector('.row-number').textContent=index+1;
-  const q=Number(row.querySelector('.quantity').value||0);
-  const p=Number(row.querySelector('.unit-price').value||0);
-  const d=Number(row.querySelector('.discount-rate').value||0);
-  const lineGross=q*p,discount=lineGross*d/100,taxable=lineGross-discount;
-  const vat=taxable*vatRate/100,total=taxable+vat;
-  row.querySelector('.line-vat').value=vat.toFixed(2);
-  row.querySelector('.line-total').value=total.toFixed(2);
-  gross+=lineGross;discountTotal+=discount;vatTotal+=vat;grandTotal+=total;
- });
- document.getElementById('grossDisplay').textContent=gross.toFixed(2);
- document.getElementById('discountDisplay').textContent=discountTotal.toFixed(2);
- document.getElementById('subtotalDisplay').textContent=(gross-discountTotal).toFixed(2);
- document.getElementById('vatDisplay').textContent=vatTotal.toFixed(2);
- document.getElementById('totalDisplay').textContent=grandTotal.toFixed(2);
+  let subtotal=0, vatTotal=0, grandTotal=0;
+  document.querySelectorAll('.item-row').forEach((row,index)=>{
+    row.querySelector('.row-number').textContent=index+1;
+    const q=Number(row.querySelector('.quantity').value||0);
+    const p=Number(row.querySelector('.unit-price').value||0);
+    const d=Number(row.querySelector('.discount-rate').value||0);
+    const s=q*p, discount=s*d/100, taxable=s-discount, v=taxable*vatRate/100, t=taxable+v;
+    row.querySelector('.line-vat').value=v.toFixed(2);
+    row.querySelector('.line-total').value=t.toFixed(2);
+    subtotal+=s; vatTotal+=v; grandTotal+=t;
+  });
+  document.getElementById('subtotalDisplay').textContent=subtotal.toFixed(2);
+  document.getElementById('vatDisplay').textContent=vatTotal.toFixed(2);
+  document.getElementById('totalDisplay').textContent=grandTotal.toFixed(2);
 }
 function bindRow(row){
- row.querySelectorAll('.quantity,.unit-price,.discount-rate').forEach(x=>x.addEventListener('input',calculateInvoice));
- row.querySelector('.remove-row').addEventListener('click',()=>{
-  if(document.querySelectorAll('.item-row').length>1)row.remove();
-  calculateInvoice();
- });
+  row.querySelectorAll('.quantity,.unit-price,.discount-rate').forEach(i=>i.addEventListener('input',calculateInvoice));
+  row.querySelector('.remove-row').addEventListener('click',()=>{
+    const all=document.querySelectorAll('.item-row');
+    if(all.length===1){
+      row.querySelectorAll('input').forEach(i=>{if(!i.readOnly)i.value=i.classList.contains('quantity')?'1':'';});
+      row.querySelector('.unit-price').value='0';
+    } else row.remove();
+    calculateInvoice();
+  });
 }
-document.querySelectorAll('.item-row').forEach(bindRow);
 document.getElementById('addRow').addEventListener('click',()=>{
- const row=document.querySelector('.item-row').cloneNode(true);
- row.querySelectorAll('input').forEach(input=>{
-  if(input.classList.contains('quantity'))input.value='1';
-  else if(input.classList.contains('unit-price')||input.classList.contains('discount-rate'))input.value='0';
-  else if(input.classList.contains('line-vat')||input.classList.contains('line-total'))input.value='0.00';
-  else if(input.type!=='hidden')input.value='';
- });
- row.querySelector('select[name="unit[]"]').value='وحدة';
- document.getElementById('itemsBody').appendChild(row);bindRow(row);calculateInvoice();
+  const row=document.querySelector('.item-row').cloneNode(true);
+  row.querySelectorAll('input').forEach(i=>{
+    if(i.classList.contains('quantity'))i.value='1';
+    else if(i.classList.contains('unit-price')||i.classList.contains('discount-rate'))i.value='0';
+    else if(i.classList.contains('line-vat')||i.classList.contains('line-total'))i.value='0.00';
+    else i.value='';
+  });
+  row.querySelector('select[name="unit[]"]').value='وحدة';
+  document.getElementById('itemsBody').appendChild(row);
+  bindRow(row); calculateInvoice();
 });
+document.querySelectorAll('.item-row').forEach(bindRow);
 document.getElementById('invoiceDate').value=new Date().toISOString().slice(0,10);
-function submitInvoice(printAfter){
- document.getElementById('invoicePrintAfterSave').value=printAfter?'1':'0';
- document.getElementById('invoiceForm').requestSubmit();
-}
-document.getElementById('saveInvoiceTop').addEventListener('click',()=>submitInvoice(false));
-document.getElementById('savePrintInvoice').addEventListener('click',()=>submitInvoice(true));
-document.getElementById('addInvoiceRowTop').addEventListener('click',()=>document.getElementById('addRow').click());
-document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();submitInvoice(false)}});
 calculateInvoice();
+
+function submitInvoice(printAfter=false){
+  document.getElementById('invoicePrintAfterSave').value=printAfter?'1':'0';
+  document.getElementById('invoiceForm').requestSubmit();
+}
+document.getElementById('saveInvoiceTop')?.addEventListener('click',()=>submitInvoice(false));
+document.getElementById('savePrintInvoice')?.addEventListener('click',()=>submitInvoice(true));
+document.getElementById('addInvoiceRowTop')?.addEventListener('click',()=>document.getElementById('addRow')?.click());
+
+function invoiceEsc(v){
+  return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+}
+function invoiceSelectedText(selector){
+  const e=document.querySelector(selector);
+  return e?.selectedOptions?.[0]?.textContent?.trim()||'';
+}
+function previewInvoiceDraft(){
+  const customer=invoiceSelectedText('[name="customer_id"]');
+  const invoiceDate=document.getElementById('invoiceDate')?.value||'';
+  const status=invoiceSelectedText('[name="status"]');
+  const branch=invoiceSelectedText('[name="branch_id"]');
+  const notes=document.querySelector('[name="notes"]')?.value||'';
+  const rows=[...document.querySelectorAll('.item-row')].map((r,i)=>({
+    no:i+1,
+    item:r.querySelector('[name="item_name[]"]')?.value||'',
+    description:r.querySelector('[name="description[]"]')?.value||'',
+    quantity:Number(r.querySelector('.quantity')?.value||0),
+    unit:r.querySelector('[name="unit[]"]')?.value||'',
+    price:Number(r.querySelector('.unit-price')?.value||0),
+    vat:Number(r.querySelector('.line-vat')?.value||0),
+    total:Number(r.querySelector('.line-total')?.value||0)
+  })).filter(x=>x.item);
+  if(!rows.length){alert('أدخل مادة واحدة على الأقل قبل المعاينة.');return;}
+  const subtotal=Number(document.getElementById('subtotalDisplay')?.textContent||0);
+  const vat=Number(document.getElementById('vatDisplay')?.textContent||0);
+  const total=Number(document.getElementById('totalDisplay')?.textContent||0);
+  const win=window.open('','_blank');
+  win.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>معاينة فاتورة</title>
+  <style>body{font-family:Tahoma;margin:20px;color:#172033}.tools{margin-bottom:15px}.tools button{padding:9px 14px;background:#174ea6;color:#fff;border:0;border-radius:7px}
+  .head{display:flex;justify-content:space-between;border-bottom:3px solid #174ea6;padding-bottom:12px;margin-bottom:15px}
+  table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:7px;font-size:12px}th{background:#edf2f7}.total{font-weight:bold;background:#f8fafc}
+  @media print{.tools{display:none}@page{size:A4 portrait;margin:10mm}}</style></head><body>
+  <div class="tools"><button onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div>
+  <div class="head"><div><h2>فاتورة ضريبية - مسودة</h2><div>لم يتم حفظها بعد</div></div>
+  <div><b>العميل:</b> ${invoiceEsc(customer)}<br><b>التاريخ:</b> ${invoiceEsc(invoiceDate)}<br><b>الحالة:</b> ${invoiceEsc(status)}<br><b>الفرع:</b> ${invoiceEsc(branch)}</div></div>
+  <table><thead><tr><th>م</th><th>المادة</th><th>وصف العملية</th><th>الكمية</th><th>الوحدة</th><th>سعر الوحدة</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>
+  ${rows.map(x=>`<tr><td>${x.no}</td><td>${invoiceEsc(x.item)}</td><td>${invoiceEsc(x.description)}</td><td>${x.quantity.toFixed(3)}</td><td>${invoiceEsc(x.unit)}</td><td>${x.price.toFixed(2)}</td><td>${x.vat.toFixed(2)}</td><td>${x.total.toFixed(2)}</td></tr>`).join('')}
+  <tr class="total"><td colspan="6">الإجمالي قبل الضريبة</td><td colspan="2">${subtotal.toFixed(2)}</td></tr>
+  <tr class="total"><td colspan="6">ضريبة القيمة المضافة</td><td colspan="2">${vat.toFixed(2)}</td></tr>
+  <tr class="total"><td colspan="6">الإجمالي المستحق</td><td colspan="2">${total.toFixed(2)}</td></tr>
+  </tbody></table><p><b>ملاحظات:</b> ${invoiceEsc(notes)||'-'}</p></body></html>`);
+  win.document.close();
+}
+document.getElementById('previewInvoice')?.addEventListener('click',previewInvoiceDraft);
+document.addEventListener('keydown',e=>{
+  if(e.ctrlKey&&e.key.toLowerCase()==='s'){e.preventDefault();submitInvoice(false);}
+  if(e.key==='F2'){e.preventDefault();document.getElementById('addRow')?.click();}
+});
+
 </script>
 {% endblock %}

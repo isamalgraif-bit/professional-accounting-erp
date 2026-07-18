@@ -119,18 +119,15 @@
     <select class="form-select supplier-select" name="supplier_id[]">
       <option value="">اختر المورد</option>
       {% for s in suppliers %}
-      <option value="{{s.id}}" data-vat="{{s.vat_number or ''}}" data-account="{{s.payable_account_id or ''}}">{{s.name}}</option>
+      <option value="{{s.id}}" data-vat="{{s.vat_number or ''}}">{{s.name}}</option>
       {% endfor %}
     </select>
-    <button type="button" class="btn btn-sm btn-outline-primary quick-supplier" data-quick-create="supplier">+ مورد</button>
     <select class="form-select customer-select" name="customer_id[]" style="display:none">
       <option value="">اختر العميل</option>
       {% for c in customers %}
-      <option value="{{c.id}}" data-vat="{{c.vat_number or ''}}" data-account="{{c.receivable_account_id or ''}}">{{c.name}}</option>
+      <option value="{{c.id}}" data-vat="{{c.vat_number or ''}}">{{c.name}}</option>
       {% endfor %}
     </select>
-    <button type="button" class="btn btn-sm btn-outline-primary quick-customer" data-quick-create="customer" style="display:none">+ عميل</button>
-    <input type="hidden" class="party-account-id" name="party_account_id[]">
   </td>
 
   <td><input class="form-control tax-number" name="tax_number[]" readonly></td>
@@ -337,9 +334,6 @@ function updateTaxFields(row){
   const supplier=row.querySelector('.supplier-select');
   const customer=row.querySelector('.customer-select');
   const taxNumber=row.querySelector('.tax-number');
-  const partyAccount=row.querySelector('.party-account-id');
-  const quickSupplier=row.querySelector('.quick-supplier');
-  const quickCustomer=row.querySelector('.quick-customer');
   const invoiceNo=row.querySelector('.invoice-number');
   const invoiceDate=row.querySelector('.invoice-date');
 
@@ -353,8 +347,6 @@ function updateTaxFields(row){
 
   supplier.style.display=partyType.value==='مورد' ? '' : 'none';
   customer.style.display=partyType.value==='عميل' ? '' : 'none';
-  quickSupplier.style.display=partyType.value==='مورد' ? '' : 'none';
-  quickCustomer.style.display=partyType.value==='عميل' ? '' : 'none';
 
   if(!taxable){
     direction.value='غير مطبق';
@@ -363,16 +355,13 @@ function updateTaxFields(row){
   if(partyType.value==='مورد'){
     customer.value='';
     taxNumber.value=supplier.selectedOptions[0]?.dataset.vat || '';
-    partyAccount.value=supplier.selectedOptions[0]?.dataset.account || '';
   }else if(partyType.value==='عميل'){
     supplier.value='';
     taxNumber.value=customer.selectedOptions[0]?.dataset.vat || '';
-    partyAccount.value=customer.selectedOptions[0]?.dataset.account || '';
   }else{
     supplier.value='';
     customer.value='';
     taxNumber.value='';
-    partyAccount.value='';
   }
 }
 
@@ -558,12 +547,3 @@ document.getElementById('previewJournal')?.addEventListener('click',previewJourn
 
 </script>
 {% endblock %}
-
-<script>
-document.addEventListener('click',e=>{
- const b=e.target.closest('.quick-supplier,.quick-customer');
- if(!b)return;
- const row=b.closest('.journal-row');
- quickTarget=b.classList.contains('quick-supplier')?row.querySelector('.supplier-select'):row.querySelector('.customer-select');
-});
-</script>
