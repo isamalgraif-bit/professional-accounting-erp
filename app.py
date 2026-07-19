@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.8.0"
+APP_VERSION = "20.8.1"
 
 ITEM_UNITS = [
     "وحدة", "قطعة", "متر", "متر مربع", "متر مكعب", "كجم", "طن",
@@ -2334,9 +2334,11 @@ def next_inventory_sku():
     """Generate one shared sequential item code for every item-creation screen."""
     if db.engine.dialect.name == "postgresql":
         db.session.execute(text("SELECT pg_advisory_xact_lock(2080001)"))
-    values=rows("""SELECT COALESCE(sku,code,'') value FROM inventory
-                   WHERE COALESCE(sku,code,'') ~ '^ITM-[0-9]+$'""") if db.engine.dialect.name=="postgresql" else rows(
-                  "SELECT COALESCE(sku,code,'') value FROM inventory")
+    # SKU is part of the original inventory table, so generation remains safe
+    # even before optional compatibility columns are upgraded.
+    values=rows("""SELECT COALESCE(sku,'') value FROM inventory
+                   WHERE COALESCE(sku,'') ~ '^ITM-[0-9]+$'""") if db.engine.dialect.name=="postgresql" else rows(
+                  "SELECT COALESCE(sku,'') value FROM inventory")
     highest=0
     for value in values:
         match=re.fullmatch(r"ITM-(\d+)",value["value"] or "")
@@ -4536,24 +4538,30 @@ def warehouse_quick_create():
 @app.route("/api/inventory/quick-create", methods=["POST"])
 @login_required
 def inventory_quick_create():
-    data=request.get_json(silent=True) or {}
-    name=(data.get("name") or "").strip()
-    sku=next_inventory_sku()
-    if not name:
-        return {"error":"اسم الصنف مطلوب"},400
-    existing=row("""SELECT id,sku,name,unit,cost FROM inventory
-                    WHERE (:sku IS NOT NULL AND LOWER(sku)=LOWER(:sku)) OR LOWER(name)=LOWER(:name)
-                    ORDER BY CASE WHEN :sku IS NOT NULL AND LOWER(sku)=LOWER(:sku) THEN 0 ELSE 1 END LIMIT 1""",
-                 {"sku":sku,"name":name})
-    if existing:
-        return {"item":dict(existing),"created":False}
-    execute("""INSERT INTO inventory(sku,code,name,quantity,unit,cost,unit_cost,sale_price,reorder_level,active)
-               VALUES(:sku,:sku,:name,0,:unit,:cost,:cost,0,0,1)""",
-            {"sku":sku,"name":name,"unit":normalize_item_unit(data.get("unit")),
-             "cost":float(data.get("cost") or 0)})
-    item=row("SELECT id,sku,name,unit,cost FROM inventory WHERE name=:name ORDER BY id DESC LIMIT 1",{"name":name})
-    audit("CREATE","INVENTORY_ITEM",f"إضافة صنف سريعة من أمر الشراء: {name}")
-    return {"item":dict(item),"created":True},201
+    try:
+        data=request.get_json(silent=True) or {}
+        name=(data.get("name") or "").strip()
+        if not name:
+            return {"ok":False,"error":"اسم الصنف مطلوب"},400
+        unit=normalize_item_unit(data.get("unit"))
+        cost=float(data.get("cost") or 0)
+        existing=row("""SELECT id,sku,name,unit,cost FROM inventory
+                        WHERE LOWER(name)=LOWER(:name) LIMIT 1""",{"name":name})
+        if existing:
+            return {"ok":True,"item":dict(existing),"created":False}
+        sku=next_inventory_sku()
+        result=db.session.execute(text("""INSERT INTO inventory(
+          sku,code,name,quantity,unit,cost,unit_cost,sale_price,reorder_level,active)
+          VALUES(:sku,:sku,:name,0,:unit,:cost,:cost,0,0,1)
+          RETURNING id,sku,name,unit,cost"""),
+          {"sku":sku,"name":name,"unit":unit,"cost":cost}).mappings().first()
+        db.session.commit()
+        audit("CREATE","INVENTORY_ITEM",f"إضافة صنف سريعة: {sku} - {name}")
+        return {"ok":True,"item":dict(result),"created":True},201
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.exception("Quick inventory item creation failed")
+        return {"ok":False,"error":f"تعذر حفظ الصنف: {exc}"},400
 
 @app.route("/inventory/export.xlsx")
 @login_required
