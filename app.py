@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.10.7"
+APP_VERSION = "20.10.8"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -2172,12 +2172,12 @@ def import_excel_row(module_name, data, import_mode):
                 raise ValueError("العميل موجود مسبقًا.")
         else:
             execute("""INSERT INTO customers(code,name,name_en,vat_number,phone,email,
-              address,credit_limit,active,created_at)
-              VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,:limit,1,:dt)""",
+              address,credit_limit)
+              VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,:limit)""",
               {"code":code,"name":data["name"],"name_en":data.get("name_en",""),
                "vat":data.get("vat_no",""),"phone":data.get("phone",""),
                "email":data.get("email",""),"address":data.get("address",""),
-               "limit":float(data.get("credit_limit") or 0),"dt":datetime.now()})
+               "limit":float(data.get("credit_limit") or 0)})
 
     elif module_name=="suppliers":
         code=data.get("code") or None
@@ -2197,12 +2197,11 @@ def import_excel_row(module_name, data, import_mode):
                 raise ValueError("المورد موجود مسبقًا.")
         else:
             execute("""INSERT INTO suppliers(code,name,name_en,vat_number,phone,email,
-              address,active,created_at)
-              VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,1,:dt)""",
+              address)
+              VALUES(:code,:name,:name_en,:vat,:phone,:email,:address)""",
               {"code":code,"name":data["name"],"name_en":data.get("name_en",""),
                "vat":data.get("vat_no",""),"phone":data.get("phone",""),
-               "email":data.get("email",""),"address":data.get("address",""),
-               "dt":datetime.now()})
+               "email":data.get("email",""),"address":data.get("address","")})
 
     elif module_name=="inventory":
         code=(data.get("code") or "").strip() or next_inventory_sku()
