@@ -9,6 +9,7 @@
   <div class="erp-toolbar no-print">
     <button type="button" class="erp-tool-btn" data-new-document="1" data-new-url="{{ url_for('journal_entries') }}">📄 <span>مستند جديد</span></button>
     <button type="button" class="erp-tool-btn primary" id="saveJournalTop">💾 <span>حفظ</span></button>
+    <button type="button" class="erp-tool-btn success" id="postJournalTop">✅ <span>حفظ وترحيل</span></button>
     <button type="button" class="erp-tool-btn dark" id="savePrintJournal">🖨️ <span>حفظ وطباعة</span></button>
     <button type="button" class="erp-tool-btn" id="previewJournal">👁️ <span>معاينة المسودة</span></button>
     <button type="button" class="erp-tool-btn" id="addJournalRowTop">➕ <span>إضافة سطر</span></button>
@@ -43,7 +44,7 @@
   </div>
   <div class="col-md-2">
     <label class="form-label">الحالة</label>
-    <select class="form-select" name="status"><option>مسودة</option><option>مرحّل</option></select>
+    <select class="form-select" name="status" id="journalStatus"><option>مسودة</option><option>مرحّل</option></select>
   </div>
   <div class="col-md-3">
     <label class="form-label">المرجع</label>
@@ -179,6 +180,7 @@
 
 <div class="mt-4 text-end">
   <button class="btn btn-primary btn-lg" id="saveJournalBottom">💾 حفظ القيد</button>
+  <button type="button" class="btn btn-success btn-lg" id="postJournalBottom">✅ حفظ وترحيل</button>
 </div>
 </form>
 </div>
@@ -204,6 +206,7 @@
   <td>{{j.status}}</td>
   <td class="text-nowrap">
     <a class="btn btn-sm btn-outline-primary" href="{{url_for('journal_view', journal_id=j.id)}}">عرض / طباعة</a>
+    {% if j.status!='مرحّل' %}<form class="d-inline" method="post" action="{{url_for('journal_post',journal_id=j.id)}}" onsubmit="return confirm('تأكيد ترحيل القيد؟ لا يمكن حذفه بعد الترحيل.')"><button class="btn btn-sm btn-success">✅ ترحيل</button></form>{% endif %}
     <form class="d-inline" method="post" action="{{url_for('journal_delete',journal_id=j.id)}}" onsubmit="return confirm('تأكيد الحذف؟')">
       <button class="btn btn-sm btn-outline-danger">حذف</button>
     </form>
@@ -507,12 +510,15 @@ document.addEventListener('keydown',e=>{
   }
 });
 
-function submitJournal(printAfter=false){
+function submitJournal(printAfter=false,postNow=false){
   document.getElementById('journalPrintAfterSave').value=printAfter?'1':'0';
+  if(postNow)document.getElementById('journalStatus').value='مرحّل';
   document.getElementById('journalForm').requestSubmit();
 }
 document.getElementById('saveJournalTop')?.addEventListener('click',()=>submitJournal(false));
 document.getElementById('savePrintJournal')?.addEventListener('click',()=>submitJournal(true));
+document.getElementById('postJournalTop')?.addEventListener('click',()=>submitJournal(false,true));
+document.getElementById('postJournalBottom')?.addEventListener('click',()=>submitJournal(false,true));
 document.getElementById('addJournalRowTop')?.addEventListener('click',()=>document.getElementById('addRow')?.click());
 
 function journalEsc(v){

@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.10.5"
+APP_VERSION = "20.10.6"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -5264,14 +5264,19 @@ def journal_entries():
         except Exception as exc:
             flash(str(exc),"danger")
             return redirect(url_for("journal_entries"))
+        journal_status=request.form.get("status","مسودة")
+        if journal_status not in ("مسودة","مرحّل"):
+            flash("حالة القيد غير صحيحة","danger")
+            return redirect(url_for("journal_entries"))
+        posted_at=datetime.now() if journal_status=="مرحّل" else None
         journal_no=next_journal_number(request.form["journal_date"])
         execute("""INSERT INTO journal_entries(
-            journal_no,journal_date,reference,description,status,total_debit,total_credit,created_by,created_at)
-            VALUES(:no,:date,:ref,:desc,:status,:debit,:credit,:user,:created)""",
+            journal_no,journal_date,reference,description,status,total_debit,total_credit,created_by,created_at,posted_at)
+            VALUES(:no,:date,:ref,:desc,:status,:debit,:credit,:user,:created,:posted_at)""",
             {"no":journal_no,"date":request.form["journal_date"],
              "ref":request.form.get("reference",""),"desc":request.form.get("description",""),
-             "status":request.form["status"],"debit":total_debit,"credit":total_credit,
-             "user":session.get("user_id"),"created":datetime.now()})
+             "status":journal_status,"debit":total_debit,"credit":total_credit,
+             "user":session.get("user_id"),"created":datetime.now(),"posted_at":posted_at})
         journal_id=row("SELECT id FROM journal_entries WHERE journal_no=:no",{"no":journal_no})["id"]
         for line in lines:
             execute("""INSERT INTO journal_entry_lines(
@@ -5281,7 +5286,8 @@ def journal_entries():
                 :supplier_id,:customer_id,:party_type,:tax_number,:invoice_number,:invoice_date,
                 :party_account_id,:entity_id,:line_description,:cost_center_id)""",
                 {"journal_id":journal_id,**line})
-        flash(f"تم حفظ القيد {journal_no}","success")
+        audit("POST" if journal_status=="مرحّل" else "CREATE","JOURNAL",f"{'ترحيل' if journal_status=='مرحّل' else 'حفظ'} القيد {journal_no}")
+        flash(f"تم {'حفظ وترحيل' if journal_status=='مرحّل' else 'حفظ'} القيد {journal_no}","success")
         if request.form.get("print_after_save") == "1":
             return redirect(url_for("journal_view", journal_id=journal_id, print=1))
         return redirect(url_for("journal_entries"))
@@ -5300,6 +5306,33 @@ def journal_entries():
         customers=rows("SELECT id,name,vat_number FROM customers ORDER BY name"),
         employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"),
         centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"))
+
+@app.route("/journal-entries/<int:journal_id>/post",methods=["POST"])
+@login_required
+def journal_post(journal_id):
+    journal=row("SELECT * FROM journal_entries WHERE id=:id",{"id":journal_id})
+    if not journal:
+        return "القيد غير موجود",404
+    if journal["status"]=="مرحّل":
+        flash("القيد مرحّل مسبقًا","info")
+        return redirect(url_for("journal_entries"))
+    totals=row("""SELECT COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit,
+      COUNT(*) line_count FROM journal_entry_lines WHERE journal_id=:id""",{"id":journal_id})
+    debit=round(float(totals["debit"] or 0),2);credit=round(float(totals["credit"] or 0),2)
+    if totals["line_count"]<2 or debit<=0 or debit!=credit:
+        flash("لا يمكن ترحيل القيد: يجب أن يحتوي على سطرين متوازنين على الأقل","danger")
+        return redirect(url_for("journal_entries"))
+    try:
+        ensure_open_period(journal["journal_date"])
+    except Exception as exc:
+        flash(str(exc),"danger")
+        return redirect(url_for("journal_entries"))
+    execute("""UPDATE journal_entries SET status='مرحّل',posted_at=:posted,
+      total_debit=:debit,total_credit=:credit WHERE id=:id AND status<>'مرحّل'""",
+      {"posted":datetime.now(),"debit":debit,"credit":credit,"id":journal_id})
+    audit("POST","JOURNAL",f"ترحيل القيد {journal['journal_no']}")
+    flash(f"تم ترحيل القيد {journal['journal_no']} وظهر في الأستاذ والتقارير","success")
+    return redirect(url_for("journal_entries"))
 
 
 
