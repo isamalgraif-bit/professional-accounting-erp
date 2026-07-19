@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.10.0"
+APP_VERSION = "20.10.2"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",

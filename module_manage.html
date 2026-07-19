@@ -15,6 +15,7 @@
 <tbody>{% for r in data %}<tr>
 {% for f in cfg.fields %}<td>{{ r[f] }}</td>{% endfor %}
 <td class="text-nowrap">
+{% if module_name in ['customers','suppliers'] %}<a class="btn btn-sm btn-outline-success" href="{{url_for('party_statements',party_type='customer' if module_name=='customers' else 'supplier',party_id=r.id)}}">📄 كشف حساب</a>{% endif %}
 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('module_view', module_name=module_name, record_id=r.id) }}">عرض</a>
 <a class="btn btn-sm btn-outline-warning" href="{{ url_for('module_edit', module_name=module_name, record_id=r.id) }}">تعديل</a>
 <form method="post" action="{{ url_for('module_delete', module_name=module_name, record_id=r.id) }}" class="d-inline" onsubmit="return confirm('تأكيد الحذف؟')">

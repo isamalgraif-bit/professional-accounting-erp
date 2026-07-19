@@ -2,6 +2,7 @@
 <div class="d-flex justify-content-between mb-4">
 <h3>{{cfg.title}} — عرض السجل</h3>
 <div><button class="btn btn-dark" onclick="window.print()">طباعة</button>
+{% if module_name in ['customers','suppliers'] %}<a class="btn btn-success" href="{{url_for('party_statements',party_type='customer' if module_name=='customers' else 'supplier',party_id=record.id)}}">📄 كشف حساب</a>{% endif %}
 <a class="btn btn-warning" href="{{ url_for('module_edit', module_name=module_name, record_id=record.id) }}">تعديل</a></div></div>
 <div class="form-card"><table class="table table-bordered">
 {% for f in cfg.fields %}<tr><th style="width:30%">{{cfg.labels[loop.index0]}}</th><td>{{record[f]}}</td></tr>{% endfor %}

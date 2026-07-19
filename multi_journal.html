@@ -44,15 +44,15 @@
 <table class="table table-bordered table-sm align-middle" style="min-width:2400px">
 <thead class="table-light" style="position:sticky;top:0">
 <tr>
-<th>المجموعة</th><th>الكود</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th>
+<th>الجهة</th><th>الكود</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th>
 <th>خاضع للضريبة</th><th>مدخلات / مخرجات</th><th>نوع الحساب</th>
-<th>الجهة المرتبطة</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th>
+<th>الرقم الضريبي</th><th>رقم الفاتورة</th>
 <th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th><th></th>
 </tr>
 </thead>
 <tbody id="batchBody">
 <tr class="batch-row">
-<td><input class="form-control group-no" type="number" min="1" name="group_no[]" value="1" required></td>
+<td class="entity-cell"><input class="group-no" type="hidden" name="group_no[]" value="1"><select class="form-select supplier" name="supplier_id[]"><option value="">اختر المورد</option>{% for s in suppliers %}<option value="{{s.id}}" data-vat="{{s.vat_number or ''}}">{{s.name}}</option>{% endfor %}</select><select class="form-select customer" name="customer_id[]" style="display:none"><option value="">اختر العميل</option>{% for c in customers %}<option value="{{c.id}}" data-vat="{{c.vat_number or ''}}">{{c.name}}</option>{% endfor %}</select><select class="form-select employee" name="entity_id[]" style="display:none"><option value="">اختر الموظف / المندوب</option>{% for e in employees %}<option value="{{e.id}}">{{e.employee_no or ''}} - {{e.name}}</option>{% endfor %}</select><span class="entity-placeholder text-muted">حدد نوع الحساب</span></td>
 <td><input class="form-control account-code" list="accountCodeList" placeholder="الكود"></td>
 <td><input class="form-control account-name" list="accountNameList" placeholder="اسم الحساب"><input type="hidden" class="account-id" name="account_id[]"></td>
 <td><input class="form-control debit" type="number" step="0.01" min="0" name="debit[]" value="0"></td>
@@ -60,11 +60,6 @@
 <td><select class="form-select taxable" name="taxable[]"><option value="0">لا</option><option value="1">نعم</option></select></td>
 <td><select class="form-select direction" name="tax_direction[]"><option>غير مطبق</option><option>مدخلات</option><option>مخرجات</option></select></td>
 <td><select class="form-select party-type" name="party_type[]">{% for type in journal_account_types %}<option value="{{type}}">{{type or 'بدون'}}</option>{% endfor %}</select></td>
-<td>
-<select class="form-select supplier" name="supplier_id[]"><option value="">اختر المورد</option>{% for s in suppliers %}<option value="{{s.id}}" data-vat="{{s.vat_number or ''}}">{{s.name}}</option>{% endfor %}</select>
-<select class="form-select customer" name="customer_id[]" style="display:none"><option value="">اختر العميل</option>{% for c in customers %}<option value="{{c.id}}" data-vat="{{c.vat_number or ''}}">{{c.name}}</option>{% endfor %}</select>
-<select class="form-select employee" name="entity_id[]" style="display:none"><option value="">اختر الموظف / المندوب</option>{% for e in employees %}<option value="{{e.id}}">{{e.employee_no or ''}} - {{e.name}}</option>{% endfor %}</select>
-</td>
 <td><input class="form-control tax-number" name="tax_number[]" readonly></td>
 <td><input class="form-control" name="invoice_number[]"></td>
 <td><input class="form-control" type="date" name="invoice_date[]"></td>
@@ -157,9 +152,10 @@ function sync(row,mode){
  if(a){id.value=a.id;code.value=a.code;name.value=a.name}else{id.value=''}
 }
 function party(row){
- const type=row.querySelector('.party-type').value,s=row.querySelector('.supplier'),c=row.querySelector('.customer'),employee=row.querySelector('.employee'),tax=row.querySelector('.tax-number');
+ const type=row.querySelector('.party-type').value,s=row.querySelector('.supplier'),c=row.querySelector('.customer'),employee=row.querySelector('.employee'),placeholder=row.querySelector('.entity-placeholder'),tax=row.querySelector('.tax-number');
  s.style.display=type==='مورد'?'':'none';c.style.display=type==='عميل'?'':'none';
  employee.style.display=['موظف','مندوب مبيعات'].includes(type)?'':'none';employee.required=['موظف','مندوب مبيعات'].includes(type);
+ placeholder.style.display=['مورد','عميل','موظف','مندوب مبيعات'].includes(type)?'none':'';
  if(type==='مورد'){c.value='';tax.value=s.selectedOptions[0]?.dataset.vat||''}
  else if(type==='عميل'){s.value='';tax.value=c.selectedOptions[0]?.dataset.vat||''}
  else{s.value='';c.value='';tax.value=''}
@@ -266,7 +262,6 @@ function previewCurrentDraft(){
   const description=document.querySelector('[name="description"]')?.value || '';
   const rows=[...document.querySelectorAll('.batch-row')].map((r,index)=>({
     no:index+1,
-    group:r.querySelector('.group-no')?.value || '',
     code:r.querySelector('.account-code')?.value || '',
     account:r.querySelector('.account-name')?.value || '',
     debit:Number(r.querySelector('.debit')?.value || 0).toFixed(2),
@@ -276,7 +271,11 @@ function previewCurrentDraft(){
     partyType:selectedText(r.querySelector('.party-type')),
     party:r.querySelector('.party-type')?.value==='مورد'
       ? selectedText(r.querySelector('.supplier'))
-      : selectedText(r.querySelector('.customer')),
+      : r.querySelector('.party-type')?.value==='عميل'
+        ? selectedText(r.querySelector('.customer'))
+        : ['موظف','مندوب مبيعات'].includes(r.querySelector('.party-type')?.value)
+          ? selectedText(r.querySelector('.employee'))
+          : selectedText(r.querySelector('.party-type')),
     taxNumber:r.querySelector('.tax-number')?.value || '',
     invoiceNo:r.querySelector('[name="invoice_number[]"]')?.value || '',
     invoiceDate:r.querySelector('[name="invoice_date[]"]')?.value || '',
@@ -307,14 +306,14 @@ function previewCurrentDraft(){
   <div class="head"><div><h2>معاينة دفعة قيود يومية متعددة</h2><div>مسودة غير محفوظة</div></div>
   <div><b>التاريخ:</b> ${esc(batchDate)}<br><b>الحالة:</b> ${esc(status)}<br><b>البيان:</b> ${esc(description)}</div></div>
   <table><thead><tr>
-  <th>م</th><th>المجموعة</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th>
-  <th>الضريبة</th><th>الطرف</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th>
+  <th>م</th><th>الجهة</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th>
+  <th>الضريبة</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th>
   </tr></thead><tbody>
-  ${rows.map(x=>`<tr><td>${x.no}</td><td>${esc(x.group)}</td><td>${esc(x.code)}</td><td>${esc(x.account)}</td>
-  <td>${x.debit}</td><td>${x.credit}</td><td>${esc(x.direction)}</td><td>${esc(x.party)}</td>
+  ${rows.map(x=>`<tr><td>${x.no}</td><td>${esc(x.party)}</td><td>${esc(x.code)}</td><td>${esc(x.account)}</td>
+  <td>${x.debit}</td><td>${x.credit}</td><td>${esc(x.direction)}</td>
   <td>${esc(x.taxNumber)}</td><td>${esc(x.invoiceNo)}</td><td>${esc(x.invoiceDate)}</td>
   <td>${esc(x.description)}</td><td>${esc(x.center)}</td></tr>`).join('')}
-  <tr class="total"><td colspan="4">الإجمالي</td><td>${totalDebit.toFixed(2)}</td><td>${totalCredit.toFixed(2)}</td><td colspan="7"></td></tr>
+  <tr class="total"><td colspan="4">الإجمالي</td><td>${totalDebit.toFixed(2)}</td><td>${totalCredit.toFixed(2)}</td><td colspan="6"></td></tr>
   </tbody></table></body></html>`);
   win.document.close();
 }
