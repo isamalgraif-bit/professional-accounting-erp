@@ -6,10 +6,12 @@
 <div class="col-md-4"><label>الرقم الضريبي</label><input class="form-control" name="vat_number" value="{{party.vat_number or ''}}"></div>
 <div class="col-md-4"><label>الجوال</label><input class="form-control" name="phone" value="{{party.phone or ''}}"></div>
 <div class="col-md-4"><label>البريد الإلكتروني</label><input class="form-control" type="email" name="email" value="{{party.email or ''}}"></div>
+<div class="col-md-6"><label>الحساب المرتبط في دليل الحسابات *</label><select class="form-select party-account-selector" name="party_account_id" required><option value="">اختر الحساب</option>{% for a in party_accounts %}<option value="{{a.id}}" data-account-name="{{a.account_name_ar}}" {% if party.party_account_id==a.id %}selected{% endif %}>{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select><small class="text-muted">اسم الجهة والحساب موحدان تلقائياً.</small></div>
 <div class="col-12 d-flex justify-content-between"><button class="btn btn-primary">💾 حفظ التعديل</button><button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModal">🗑️ حذف</button></div>
 </div></form></div>
 <div class="modal fade" id="deleteModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5>تأكيد الحذف</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body">هل تريد حذف <strong>{{party.name}}</strong>؟ لن يسمح النظام بالحذف إذا كانت هناك حركات مالية مرتبطة.</div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button><form method="post" action="{{url_for('party_delete',party_type=party_type,party_id=party.id)}}"><button class="btn btn-danger">تأكيد الحذف</button></form></div></div></div></div>
 <script>
 document.getElementById('generateEnglish').addEventListener('click',async()=>{const name=document.getElementById('partyNameAr').value.trim();if(!name)return;const response=await fetch('{{url_for("transliterate_name_api")}}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});const data=await response.json();document.getElementById('partyNameEn').value=data.english_name||''});
+document.querySelector('.party-account-selector')?.addEventListener('change',e=>{const name=e.target.selectedOptions[0]?.dataset.accountName;if(name){document.getElementById('partyNameAr').value=name;document.getElementById('partyNameAr').readOnly=true}});
 </script>
 {% endblock %}

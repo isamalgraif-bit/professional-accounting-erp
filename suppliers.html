@@ -15,6 +15,7 @@
 <div class="col-md-2"><label>الرقم الضريبي</label><input class="form-control" name="vat_number"></div>
 <div class="col-md-2"><label>الجوال</label><input class="form-control" name="phone"></div>
 <div class="col-md-4"><label>البريد</label><input class="form-control" name="email"></div>
+<div class="col-md-6"><label>حساب المورد في دليل الحسابات *</label><select class="form-select party-account-selector" name="payable_account_id" required><option value="">اختر حساب الموردين / الذمم الدائنة</option>{% for a in party_accounts %}<option value="{{a.id}}" data-account-name="{{a.account_name_ar}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select><small class="text-muted">اختيار الحساب يوحّد اسم المورد مع اسم الحساب تلقائياً.</small></div>
 <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">💾 حفظ</button></div>
 </div></form></div>
 <div class="form-card"><div class="table-responsive"><table class="table table-striped align-middle">
@@ -35,5 +36,6 @@ document.getElementById('generateEnglish').addEventListener('click',generateEngl
 document.getElementById('partyNameAr').addEventListener('blur',()=>{
  if(!document.getElementById('partyNameEn').value.trim()) generateEnglishName();
 });
+document.querySelector('.party-account-selector')?.addEventListener('change',e=>{const name=e.target.selectedOptions[0]?.dataset.accountName;if(name){document.getElementById('partyNameAr').value=name;document.getElementById('partyNameAr').readOnly=true}else document.getElementById('partyNameAr').readOnly=false});
 </script>
 {% endblock %}

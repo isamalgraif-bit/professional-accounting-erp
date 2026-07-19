@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.10.4"
+APP_VERSION = "20.10.5"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -4155,13 +4155,28 @@ def customers():
     if request.method == "POST":
         name_ar = request.form["name"].strip()
         name_en = request.form.get("name_en","").strip() or transliterate_arabic_name(name_ar)
-        execute("""INSERT INTO customers(name,name_en,vat_number,phone,email)
-                   VALUES(:n,:ne,:v,:p,:e)""",
+        party_account=row("""SELECT id,account_name_ar FROM chart_of_accounts WHERE id=:id AND active=1
+          AND accepts_entries=1 AND account_type='أصل'""",{"id":request.form.get("receivable_account_id")})
+        if not party_account:
+            flash("اختر حساب عميل صحيحًا من دليل الحسابات","danger")
+            return redirect(url_for("customers"))
+        if row("SELECT id FROM customers WHERE receivable_account_id=:id",{"id":party_account["id"]}):
+            flash("هذا الحساب مرتبط بعميل آخر مسبقًا","danger")
+            return redirect(url_for("customers"))
+        name_ar=party_account["account_name_ar"]
+        name_en=request.form.get("name_en","").strip() or transliterate_arabic_name(name_ar)
+        execute("""INSERT INTO customers(name,name_en,vat_number,phone,email,receivable_account_id)
+                   VALUES(:n,:ne,:v,:p,:e,:account)""",
                 {"n":name_ar,"ne":name_en,"v":request.form["vat_number"],
-                 "p":request.form["phone"],"e":request.form["email"]})
+                 "p":request.form["phone"],"e":request.form["email"],
+                 "account":request.form.get("receivable_account_id") or None})
         audit("CREATE","CUSTOMER",f"إضافة عميل: {name_ar} / {name_en}")
         flash("تمت إضافة العميل", "success")
-    return render_template("customers.html", rows=rows("SELECT * FROM customers ORDER BY id DESC"))
+    return render_template("customers.html", rows=rows("SELECT * FROM customers ORDER BY id DESC"),
+      party_accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+        WHERE active=1 AND accepts_entries=1 AND account_type='أصل'
+        AND NOT EXISTS (SELECT 1 FROM customers c WHERE c.receivable_account_id=chart_of_accounts.id)
+        ORDER BY account_code"""))
 
 @app.route("/suppliers", methods=["GET","POST"])
 @login_required
@@ -4169,19 +4184,34 @@ def suppliers():
     if request.method == "POST":
         name_ar = request.form["name"].strip()
         name_en = request.form.get("name_en","").strip() or transliterate_arabic_name(name_ar)
-        execute("""INSERT INTO suppliers(name,name_en,vat_number,phone,email)
-                   VALUES(:n,:ne,:v,:p,:e)""",
+        party_account=row("""SELECT id,account_name_ar FROM chart_of_accounts WHERE id=:id AND active=1
+          AND accepts_entries=1 AND account_type IN ('خصم','التزام')""",{"id":request.form.get("payable_account_id")})
+        if not party_account:
+            flash("اختر حساب مورد صحيحًا من دليل الحسابات","danger")
+            return redirect(url_for("suppliers"))
+        if row("SELECT id FROM suppliers WHERE payable_account_id=:id",{"id":party_account["id"]}):
+            flash("هذا الحساب مرتبط بمورد آخر مسبقًا","danger")
+            return redirect(url_for("suppliers"))
+        name_ar=party_account["account_name_ar"]
+        name_en=request.form.get("name_en","").strip() or transliterate_arabic_name(name_ar)
+        execute("""INSERT INTO suppliers(name,name_en,vat_number,phone,email,payable_account_id)
+                   VALUES(:n,:ne,:v,:p,:e,:account)""",
                 {"n":name_ar,"ne":name_en,"v":request.form["vat_number"],
-                 "p":request.form["phone"],"e":request.form["email"]})
+                 "p":request.form["phone"],"e":request.form["email"],
+                 "account":request.form.get("payable_account_id") or None})
         audit("CREATE","SUPPLIER",f"إضافة مورد: {name_ar} / {name_en}")
         flash("تمت إضافة المورد", "success")
-    return render_template("suppliers.html", rows=rows("SELECT * FROM suppliers ORDER BY id DESC"))
+    return render_template("suppliers.html", rows=rows("SELECT * FROM suppliers ORDER BY id DESC"),
+      party_accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+        WHERE active=1 AND accepts_entries=1 AND account_type IN ('خصم','التزام')
+        AND NOT EXISTS (SELECT 1 FROM suppliers s WHERE s.payable_account_id=chart_of_accounts.id)
+        ORDER BY account_code"""))
 
 def party_crud_config(party_type):
     if party_type=="customer":
-        return {"table":"customers","label":"العميل","list_endpoint":"customers","statement_type":"customer"}
+        return {"table":"customers","label":"العميل","list_endpoint":"customers","statement_type":"customer","account_field":"receivable_account_id","account_types":("أصل",)}
     if party_type=="supplier":
-        return {"table":"suppliers","label":"المورد","list_endpoint":"suppliers","statement_type":"supplier"}
+        return {"table":"suppliers","label":"المورد","list_endpoint":"suppliers","statement_type":"supplier","account_field":"payable_account_id","account_types":("خصم","التزام")}
     return None
 
 @app.route("/parties/<party_type>/<int:party_id>/edit",methods=["GET","POST"])
@@ -4190,7 +4220,7 @@ def party_edit(party_type,party_id):
     cfg=party_crud_config(party_type)
     if not cfg:
         return "نوع السجل غير صحيح",404
-    party=row(f"SELECT id,name,name_en,vat_number,phone,email FROM {cfg['table']} WHERE id=:id",{"id":party_id})
+    party=row(f"SELECT id,name,name_en,vat_number,phone,email,{cfg['account_field']} AS party_account_id FROM {cfg['table']} WHERE id=:id",{"id":party_id})
     if not party:
         return f"{cfg['label']} غير موجود",404
     if request.method=="POST":
@@ -4203,16 +4233,41 @@ def party_edit(party_type,party_id):
         if duplicate:
             flash(f"يوجد {cfg['label']} آخر بالاسم نفسه","danger")
             return redirect(request.url)
+        requested_account=request.form.get("party_account_id")
+        account_types=cfg["account_types"]
+        placeholders=",".join(f":type{i}" for i in range(len(account_types)))
+        account_params={f"type{i}":value for i,value in enumerate(account_types)}
+        valid_account=row(f"""SELECT id,account_name_ar FROM chart_of_accounts WHERE id=:account_id AND active=1
+          AND accepts_entries=1 AND account_type IN ({placeholders})""",
+          {**account_params,"account_id":requested_account})
+        if not valid_account:
+            flash(f"اختر حساب {cfg['label']} صحيحًا من دليل الحسابات","danger")
+            return redirect(request.url)
+        linked_elsewhere=row(f"SELECT id FROM {cfg['table']} WHERE {cfg['account_field']}=:account AND id<>:id",{"account":requested_account,"id":party_id})
+        if linked_elsewhere:
+            flash("هذا الحساب مرتبط بجهة أخرى مسبقًا","danger")
+            return redirect(request.url)
+        name=valid_account["account_name_ar"]
+        duplicate=row(f"SELECT id FROM {cfg['table']} WHERE LOWER(name)=LOWER(:name) AND id<>:id",{"name":name,"id":party_id})
+        if duplicate:
+            flash(f"يوجد {cfg['label']} آخر بالاسم نفسه","danger")
+            return redirect(request.url)
         name_en=(request.form.get("name_en") or "").strip() or transliterate_arabic_name(name)
         execute(f"""UPDATE {cfg['table']} SET name=:name,name_en=:name_en,
-          vat_number=:vat,phone=:phone,email=:email WHERE id=:id""",
+          vat_number=:vat,phone=:phone,email=:email,{cfg['account_field']}=:party_account_id WHERE id=:id""",
           {"name":name,"name_en":name_en,"vat":(request.form.get("vat_number") or "").strip(),
            "phone":(request.form.get("phone") or "").strip(),"email":(request.form.get("email") or "").strip(),
+           "party_account_id":requested_account,
            "id":party_id})
         audit("UPDATE",party_type.upper(),f"تعديل {cfg['label']}: {name}")
         flash(f"تم تعديل بيانات {cfg['label']}","success")
         return redirect(url_for(cfg["list_endpoint"]))
-    return render_template("party_edit.html",party=party,party_type=party_type,cfg=cfg)
+    account_types=cfg["account_types"]
+    placeholders=",".join(f":type{i}" for i in range(len(account_types)))
+    params={f"type{i}":value for i,value in enumerate(account_types)}
+    party_accounts=rows(f"""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+      WHERE active=1 AND accepts_entries=1 AND account_type IN ({placeholders}) ORDER BY account_code""",params)
+    return render_template("party_edit.html",party=party,party_type=party_type,cfg=cfg,party_accounts=party_accounts)
 
 @app.route("/parties/<party_type>/<int:party_id>/delete",methods=["POST"])
 @login_required
@@ -4760,26 +4815,60 @@ def invoice_view(invoice_id):
 @login_required
 def chart_of_accounts():
     if request.method == "POST":
+        linked_party=(request.form.get("linked_party") or "").strip()
+        linked_type=None; linked_id=None; linked_record=None
+        if linked_party:
+            try:
+                linked_type,raw_id=linked_party.split(":",1); linked_id=int(raw_id)
+            except (ValueError,TypeError):
+                flash("الجهة المرتبطة غير صحيحة","danger")
+                return redirect(url_for("chart_of_accounts"))
+            if linked_type=="customer":
+                linked_record=row("SELECT id,name,name_en,receivable_account_id linked_account_id FROM customers WHERE id=:id",{"id":linked_id})
+                linked_account_type="أصل"
+            elif linked_type=="supplier":
+                linked_record=row("SELECT id,name,name_en,payable_account_id linked_account_id FROM suppliers WHERE id=:id",{"id":linked_id})
+                linked_account_type="خصم"
+            else:
+                linked_record=None
+            if not linked_record or linked_record["linked_account_id"]:
+                flash("العميل أو المورد غير موجود أو مرتبط بحساب مسبقًا","danger")
+                return redirect(url_for("chart_of_accounts"))
         parent_id = request.form.get("parent_id") or None
         parent_level = 0
         if parent_id:
-            parent = row("SELECT level FROM chart_of_accounts WHERE id=:id", {"id": parent_id})
+            parent = row("SELECT level,account_type FROM chart_of_accounts WHERE id=:id", {"id": parent_id})
             parent_level = parent["level"] if parent else 0
+
+        account_type = linked_account_type if linked_record else (parent["account_type"] if parent_id and parent else request.form["account_type"])
+        if linked_record and parent_id and parent and parent["account_type"] != account_type:
+            flash("نوع الحساب الأب لا يتوافق مع نوع الجهة المختارة","danger")
+            return redirect(url_for("chart_of_accounts"))
+        normal_balance = "مدين" if account_type in ("أصل", "مصروف") else "دائن"
+        statement_type = "قائمة الدخل" if account_type in ("إيراد", "مصروف") else "الميزانية العمومية"
+        account_name_ar=linked_record["name"] if linked_record else request.form["account_name_ar"].strip()
+        account_name_en=(linked_record["name_en"] or "") if linked_record else request.form.get("account_name_en","").strip()
 
         execute("""INSERT INTO chart_of_accounts(
             account_code,account_name_ar,account_name_en,account_type,
             parent_id,level,accepts_entries,normal_balance,statement_type,active)
             VALUES(:code,:ar,:en,:type,:parent,:level,:accepts,:normal_balance,:statement_type,:active)""",
             {"code":request.form["account_code"].strip(),
-             "ar":request.form["account_name_ar"].strip(),
-             "en":request.form.get("account_name_en","").strip(),
-             "type":request.form["account_type"],
+             "ar":account_name_ar,
+             "en":account_name_en,
+             "type":account_type,
              "parent":parent_id,
              "level":parent_level+1,
              "accepts":1 if request.form.get("accepts_entries")=="1" else 0,
-             "normal_balance":request.form.get("normal_balance","مدين"),
-             "statement_type":request.form.get("statement_type","الميزانية العمومية"),
+             "normal_balance":normal_balance,
+             "statement_type":statement_type,
              "active":1 if request.form.get("active")=="1" else 0})
+        if linked_record:
+            created_account=row("SELECT id FROM chart_of_accounts WHERE account_code=:code",{"code":request.form["account_code"].strip()})
+            if linked_type=="customer":
+                execute("UPDATE customers SET receivable_account_id=:account WHERE id=:id",{"account":created_account["id"],"id":linked_id})
+            else:
+                execute("UPDATE suppliers SET payable_account_id=:account WHERE id=:id",{"account":created_account["id"],"id":linked_id})
         audit("CREATE", "ACCOUNT", f"إضافة حساب {request.form['account_code']}")
         flash("تمت إضافة الحساب", "success")
         return redirect(url_for("chart_of_accounts"))
@@ -4828,7 +4917,7 @@ def chart_of_accounts():
     """, params)
 
     parents = rows("""
-        SELECT id,account_code,account_name_ar,level
+        SELECT id,account_code,account_name_ar,level,account_type
         FROM chart_of_accounts
         ORDER BY account_code
     """)
@@ -4839,7 +4928,9 @@ def chart_of_accounts():
         parents=parents,
         q=q,
         selected_type=account_type,
-        selected_active=active
+        selected_active=active,
+        customers_for_accounts=rows("SELECT id,name,name_en,receivable_account_id FROM customers ORDER BY name"),
+        suppliers_for_accounts=rows("SELECT id,name,name_en,payable_account_id FROM suppliers ORDER BY name")
     )
 
 

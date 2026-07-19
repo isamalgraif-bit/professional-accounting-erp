@@ -52,13 +52,14 @@
 <input class="form-control" id="accountCode" name="account_code" required>
 <small class="text-muted" id="codeHint">اختر الحساب الأب ليُقترح الكود تلقائيًا.</small>
 </div>
+<div class="col-md-3"><label>الربط بعميل أو مورد</label><select class="form-select" id="linkedParty" name="linked_party"><option value="">حساب عام بدون جهة</option><optgroup label="العملاء">{% for c in customers_for_accounts %}<option value="customer:{{c.id}}" data-type="أصل" data-name="{{c.name}}" data-name-en="{{c.name_en or ''}}" {% if c.receivable_account_id %}disabled{% endif %}>{{c.name}}{% if c.receivable_account_id %} — مرتبط مسبقاً{% endif %}</option>{% endfor %}</optgroup><optgroup label="الموردون">{% for s in suppliers_for_accounts %}<option value="supplier:{{s.id}}" data-type="خصم" data-name="{{s.name}}" data-name-en="{{s.name_en or ''}}" {% if s.payable_account_id %}disabled{% endif %}>{{s.name}}{% if s.payable_account_id %} — مرتبط مسبقاً{% endif %}</option>{% endfor %}</optgroup></select></div>
 <div class="col-md-3"><label>اسم الحساب</label><input class="form-control" id="accountNameAr" name="account_name_ar" required></div>
-<div class="col-md-3"><label>الاسم الإنجليزي</label><input class="form-control" name="account_name_en"></div>
-<div class="col-md-2"><label>نوع الحساب</label><select class="form-select" name="account_type"><option>أصل</option><option>خصم</option><option>حقوق ملكية</option><option>إيراد</option><option>مصروف</option></select></div>
-<div class="col-md-2"><label>الحساب الأب</label><select class="form-select" id="parentAccount" name="parent_id"><option value="">حساب رئيسي</option>{% for p in parents %}<option value="{{p.id}}">{{p.account_code}} - {{p.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label>الاسم الإنجليزي</label><input class="form-control" id="accountNameEn" name="account_name_en"></div>
+<div class="col-md-2"><label>نوع الحساب <small class="text-success">(تلقائي)</small></label><select class="form-select" id="accountType" name="account_type"><option>أصل</option><option>خصم</option><option>حقوق ملكية</option><option>إيراد</option><option>مصروف</option></select></div>
+<div class="col-md-2"><label>الحساب الأب</label><select class="form-select" id="parentAccount" name="parent_id"><option value="">حساب رئيسي</option>{% for p in parents %}<option value="{{p.id}}" data-account-type="{{p.account_type}}">{{p.account_code}} - {{p.account_name_ar}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>يقبل حركة</label><select class="form-select" name="accepts_entries"><option value="1">نعم</option><option value="0">لا</option></select></div>
-<div class="col-md-2"><label>طبيعة الرصيد</label><select class="form-select" name="normal_balance"><option>مدين</option><option>دائن</option></select></div>
-<div class="col-md-3"><label>القائمة المالية</label><select class="form-select" name="statement_type"><option>الميزانية العمومية</option><option>قائمة الدخل</option></select></div>
+<div class="col-md-2"><label>طبيعة الرصيد <small class="text-success">(تلقائي)</small></label><select class="form-select" id="normalBalance" name="normal_balance"><option>مدين</option><option>دائن</option></select></div>
+<div class="col-md-3"><label>القائمة المالية <small class="text-success">(تلقائي)</small></label><select class="form-select" id="statementType" name="statement_type"><option>الميزانية العمومية</option><option>قائمة الدخل</option></select></div>
 <div class="col-md-2"><label>الحالة</label><select class="form-select" name="active"><option value="1">نشط</option><option value="0">غير نشط</option></select></div>
 <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">إضافة الحساب</button></div>
 </div>
@@ -214,11 +215,33 @@ async function loadSuggestedAccountCode(){
   }
 }
 
-document.getElementById('parentAccount')?.addEventListener('change',loadSuggestedAccountCode);
+function applyAutomaticClassification(){
+ const parent=document.getElementById('parentAccount'),linked=document.getElementById('linkedParty'),type=document.getElementById('accountType'),normal=document.getElementById('normalBalance'),statement=document.getElementById('statementType');
+ const inherited=parent.selectedOptions[0]?.dataset.accountType;
+ const linkedType=linked.selectedOptions[0]?.dataset.type;
+ if(linkedType)type.value=linkedType;else if(inherited)type.value=inherited;
+ const current=type.value;
+ normal.value=['أصل','مصروف'].includes(current)?'مدين':'دائن';
+ statement.value=['إيراد','مصروف'].includes(current)?'قائمة الدخل':'الميزانية العمومية';
+ type.title=inherited?'تم توريث النوع من الحساب الأب':'حدد نوع الحساب الرئيسي';
+ normal.title='تُحدد تلقائياً حسب نوع الحساب';statement.title='تُحدد تلقائياً حسب نوع الحساب';
+}
+
+function applyLinkedParty(){
+ const party=document.getElementById('linkedParty'),chosen=party.selectedOptions[0],name=document.getElementById('accountNameAr'),nameEn=document.getElementById('accountNameEn'),type=document.getElementById('accountType');
+ if(!party.value){name.readOnly=false;nameEn.readOnly=false;applyAutomaticClassification();return;}
+ name.value=chosen.dataset.name||'';nameEn.value=chosen.dataset.nameEn||'';type.value=chosen.dataset.type||'أصل';
+ name.readOnly=true;nameEn.readOnly=true;applyAutomaticClassification();
+}
+
+document.getElementById('parentAccount')?.addEventListener('change',()=>{applyAutomaticClassification();loadSuggestedAccountCode()});
+document.getElementById('accountType')?.addEventListener('change',applyAutomaticClassification);
+document.getElementById('linkedParty')?.addEventListener('change',applyLinkedParty);
+applyAutomaticClassification();
 
 async function prepareChild(id,code,name){
  const parent=document.getElementById('parentAccount'), accCode=document.getElementById('accountCode'), accName=document.getElementById('accountNameAr'), hint=document.getElementById('codeHint');
- parent.value=String(id); document.getElementById('addAccountForm')?.scrollIntoView({behavior:'smooth',block:'center'});
+ parent.value=String(id); applyAutomaticClassification(); document.getElementById('addAccountForm')?.scrollIntoView({behavior:'smooth',block:'center'});
  try{
    const r=await fetch(`{{ url_for('chart_next_code') }}?parent_id=${id}`);
    const d=await r.json(); if(!r.ok) throw new Error(d.message||'تعذر اقتراح الكود');
