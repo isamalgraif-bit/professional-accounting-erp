@@ -1,0 +1,41 @@
+{% extends "base.html" %}{% block content %}
+<style>
+.monitor-hero{background:linear-gradient(135deg,#102a43,#176b87);color:white;border-radius:18px;padding:26px}.progress-xl{height:24px;border-radius:14px}.metric{border:1px solid #e4eaf0;border-radius:15px;padding:17px;background:#fff}.pulse{animation:pulse 1.4s infinite}@keyframes pulse{50%{opacity:.45}}
+</style>
+<div class="erp-page-title"><div><h3>متابعة عملية الاستيراد</h3><small>{{job.import_no}} — {{job.file_name}}</small></div><a class="btn btn-outline-secondary" href="{{url_for('data_import_center')}}">العودة للمركز</a></div>
+<div class="monitor-hero mb-4">
+  <div class="d-flex justify-content-between align-items-center mb-3"><div><h4 class="mb-1">المعالجة على دفعات</h4><div class="opacity-75">يمكن إبقاء هذه الشاشة مفتوحة، وسيتم تنفيذ دفعات متتابعة دون تجميد الواجهة.</div></div><span id="statusBadge" class="badge text-bg-light fs-6">{{job.status}}</span></div>
+  <div class="progress progress-xl"><div id="mainProgress" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%">0%</div></div>
+  <div class="mt-2 d-flex justify-content-between"><small id="progressText">جارٍ تحميل الحالة...</small><small id="lastMessage"></small></div>
+</div>
+<div class="row g-3 mb-4">
+  <div class="col-md-2"><div class="metric"><small>الإجمالي</small><h4 id="totalRows">{{job.total_rows}}</h4></div></div>
+  <div class="col-md-2"><div class="metric"><small>المعالج</small><h4 id="processedRows">0</h4></div></div>
+  <div class="col-md-2"><div class="metric"><small>إضافة</small><h4 id="successRows" class="text-success">0</h4></div></div>
+  <div class="col-md-2"><div class="metric"><small>تحديث</small><h4 id="updatedRows" class="text-primary">0</h4></div></div>
+  <div class="col-md-2"><div class="metric"><small>متجاهل</small><h4 id="skippedRows" class="text-warning">0</h4></div></div>
+  <div class="col-md-2"><div class="metric"><small>فشل</small><h4 id="failedRows" class="text-danger">0</h4></div></div>
+</div>
+<div class="form-card mb-4"><div class="d-flex gap-2"><button id="startBtn" class="btn btn-success px-5">بدء / استئناف المعالجة</button><button id="cancelBtn" class="btn btn-outline-danger">إلغاء المتبقي</button><a class="btn btn-outline-primary" href="{{url_for('data_import_history_detail',job_id=job.id)}}">عرض التقرير</a></div><div class="alert alert-secondary mt-3 mb-0">حجم الدفعة: 50 صفًا. عند انقطاع الاتصال تبقى الصفوف غير المعالجة في الطابور ويمكن استئنافها من هذه الشاشة.</div></div>
+<div class="form-card"><h5>سجل النشاط</h5><div id="eventLog">{% for e in events %}<div class="border-bottom py-2"><strong>{{e.event_type}}</strong> — {{e.message}} <small class="text-muted">{{e.created_at}}</small></div>{% else %}<div class="text-muted">لا توجد أحداث بعد.</div>{% endfor %}</div></div>
+<script>
+const progressUrl={{url_for('data_import_job_progress',job_id=job.id)|tojson}};
+const processUrl={{url_for('data_import_job_process',job_id=job.id)|tojson}};
+const cancelUrl={{url_for('data_import_job_cancel',job_id=job.id)|tojson}};
+let running=false;
+function terminal(s){return ['مكتمل','مكتمل مع أخطاء','ملغي'].includes(s)}
+async function refresh(){const r=await fetch(progressUrl);const d=await r.json();
+ document.getElementById('mainProgress').style.width=d.percent+'%';document.getElementById('mainProgress').textContent=d.percent+'%';
+ document.getElementById('progressText').textContent=`${d.processed} من ${d.total} صف`;
+ document.getElementById('lastMessage').textContent=d.message||'';document.getElementById('statusBadge').textContent=d.status;
+ ['total','processed','success','updated','skipped','failed'].forEach(k=>{const el=document.getElementById(k+'Rows');if(el)el.textContent=d[k]||0});
+ if(terminal(d.status)){running=false;document.getElementById('mainProgress').classList.remove('progress-bar-animated');}
+ return d;}
+async function processLoop(){if(running)return;running=true;document.getElementById('startBtn').classList.add('pulse');
+ while(running){const state=await refresh();if(terminal(state.status))break;const r=await fetch(processUrl,{method:'POST'});const d=await r.json();if(d.done)break;await new Promise(x=>setTimeout(x,250));}
+ running=false;document.getElementById('startBtn').classList.remove('pulse');await refresh();}
+document.getElementById('startBtn').onclick=processLoop;
+document.getElementById('cancelBtn').onclick=async()=>{if(!confirm('إلغاء جميع الصفوف التي لم تتم معالجتها؟'))return;running=false;await fetch(cancelUrl,{method:'POST'});await refresh();};
+refresh();
+</script>
+{% endblock %}

@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
+from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -10,11 +10,17 @@ import csv
 import io
 import base64
 import uuid
+import json
+import re
+import unicodedata
+import difflib
+import tempfile
+import openpyxl
 from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "RC2-1.0"
+APP_VERSION = "20.0.3"
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -64,6 +70,78 @@ def audit(action, entity, details=""):
         db.session.commit()
     except Exception:
         db.session.rollback()
+
+
+
+def next_invoice_draft_number():
+    """
+    Create the same date/time based number used in the original invoice model.
+    No DR, DRAFT, TEMP or other word is included.
+    Example: 20260716145837
+    """
+    current = datetime.now()
+    base_number = current.strftime("%Y%m%d%H%M%S")
+    candidate = base_number
+    suffix = 0
+
+    # Protect against two invoices created during the same second.
+    while row("""SELECT id FROM invoices
+                 WHERE invoice_no=:number OR draft_number=:number
+                 LIMIT 1""", {"number": candidate}):
+        suffix += 1
+        candidate = f"{base_number}{suffix:02d}"
+
+    return candidate
+
+
+def invoice_approval_preflight(invoice_id):
+    """
+    Validate the accounting requirements before consuming the official sequence.
+    """
+    invoice = row("""SELECT * FROM invoices WHERE id=:id""", {"id": invoice_id})
+    if not invoice:
+        raise ValueError("الفاتورة غير موجودة.")
+
+    ensure_open_period(invoice["invoice_date"])
+    require_accounts([
+        "customer_account_id",
+        "sales_account_id",
+        "vat_output_account_id",
+    ])
+
+    if sales_invoice_cost(invoice_id) > 0:
+        require_accounts([
+            "inventory_account_id",
+            "cost_of_sales_account_id",
+        ])
+
+    return invoice
+
+
+def assign_official_invoice_number(invoice_id):
+    """
+    Replace only the visible serial number at final approval.
+    All other invoice data remains unchanged.
+    """
+    invoice = invoice_approval_preflight(invoice_id)
+
+    original_number = invoice.get("draft_number") or invoice["invoice_no"]
+    official_number = next_invoice_number(invoice["invoice_date"])
+
+    execute("""UPDATE invoices
+               SET draft_number=COALESCE(draft_number,:draft_number),
+                   official_invoice_no=:official_number,
+                   invoice_no=:official_number,
+                   updated_at=:updated_at
+               WHERE id=:id""",
+            {
+                "draft_number": original_number,
+                "official_number": official_number,
+                "updated_at": datetime.now(),
+                "id": invoice_id,
+            })
+
+    return original_number, official_number
 
 
 def next_invoice_number(invoice_date_value):
@@ -1080,7 +1158,8 @@ ENDPOINT_MODULE_MAP = {
     "crm_center":"crm","crm_leads":"crm","crm_opportunities":"crm",
     "crm_activities":"crm","crm_pipeline":"crm","crm_report":"crm",
     "documents_center":"settings","document_categories":"settings","document_new":"settings","document_view":"settings","document_add_version":"settings","document_status_update":"settings","documents_report":"reports","documents_report_export":"reports",
-    "data_import_center":"settings","data_import_template":"settings","data_import_upload":"settings","data_import_confirm":"settings",
+    "data_import_center":"settings","data_import_template":"settings","data_import_upload":"settings","data_import_confirm":"settings","data_import_errors":"settings","data_import_history_detail":"settings",
+    "global_search":"dashboard","smart_lookup":"dashboard","smart_entity_details":"dashboard","quick_create":"dashboard",
     "settings":"settings","branches":"settings","cost_centers":"settings",
     "users_admin":"users","roles_admin":"users","security_audit":"users",
 }
@@ -1167,6 +1246,12 @@ def permission_required(permission_key):
     return decorator
 
 
+
+DMS_ENTITY_TYPES = [
+    "عام", "عميل", "مورد", "موظف", "مشروع", "عقد",
+    "فاتورة مبيعات", "فاتورة مورد", "طلب شراء", "أمر شراء",
+    "استلام بضاعة", "صنف مخزون", "أصل ثابت", "قيد محاسبي", "مركز تكلفة"
+]
 
 APPROVAL_DOCUMENT_TYPES = {
     "طلب شراء":"purchase_requisition",
@@ -1795,6 +1880,218 @@ EXCEL_IMPORT_DEFINITIONS = {
     },
 }
 
+IMPORT_HEADER_ALIASES = {
+    "code": ["code", "customer code", "supplier code", "item code", "الكود", "كود", "رقم العميل", "رقم المورد", "رمز الصنف"],
+    "name": ["name", "customer", "customer name", "client", "client name", "supplier", "supplier name", "item", "item name", "اسم", "اسم العميل", "العميل", "اسم المورد", "المورد", "اسم الصنف", "الصنف"],
+    "name_en": ["name en", "english name", "name english", "الاسم الانجليزي", "الاسم بالانجليزية"],
+    "vat_no": ["vat", "vat no", "vat number", "tax no", "tax number", "trn", "الرقم الضريبي", "رقم ضريبي"],
+    "phone": ["phone", "mobile", "telephone", "tel", "cell", "contact no", "الجوال", "الهاتف", "رقم الجوال", "رقم الهاتف"],
+    "email": ["email", "e-mail", "mail", "البريد", "البريد الالكتروني", "الايميل"],
+    "address": ["address", "location", "العنوان", "الموقع"],
+    "credit_limit": ["credit limit", "limit", "حد الائتمان", "الحد الائتماني"],
+    "description": ["description", "details", "الوصف", "البيان"],
+    "unit": ["unit", "uom", "الوحدة", "وحدة القياس"],
+    "quantity": ["quantity", "qty", "stock", "الكمية", "الرصيد"],
+    "unit_cost": ["unit cost", "cost", "average cost", "تكلفة الوحدة", "التكلفة"],
+    "reorder_level": ["reorder level", "minimum stock", "حد اعادة الطلب", "الحد الادنى"],
+    "active": ["active", "enabled", "نشط", "فعال"],
+    "employee_no": ["employee no", "employee number", "emp no", "رقم الموظف", "كود الموظف"],
+    "job_title": ["job title", "position", "المسمى الوظيفي", "الوظيفة"],
+    "basic_salary": ["basic salary", "salary", "الراتب الاساسي", "الراتب"],
+    "hire_date": ["hire date", "joining date", "date of joining", "تاريخ التعيين", "تاريخ المباشرة"],
+    "nationality": ["nationality", "الجنسية"],
+    "account_code": ["account code", "gl code", "كود الحساب", "رمز الحساب"],
+    "account_name_ar": ["account name ar", "arabic account name", "اسم الحساب", "اسم الحساب عربي"],
+    "account_name_en": ["account name en", "english account name", "اسم الحساب انجليزي"],
+    "account_type": ["account type", "type", "نوع الحساب"],
+    "parent_code": ["parent code", "parent account", "كود الحساب الاب", "الكود الاب"],
+    "accepts_entries": ["accepts entries", "posting account", "يقبل القيود", "حساب حركة"],
+}
+
+def normalize_header_name(value):
+    value = normalize_excel_value(value).lower().replace("_", " ").replace("-", " ")
+    value = unicodedata.normalize("NFKC", value)
+    value = re.sub(r"[\u064b-\u065f\u0670]", "", value)
+    value = re.sub(r"[^\w\u0600-\u06ff ]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def clean_import_value(value, field=""):
+    """Conservative cleaning: remove invisible characters and normalize common formats."""
+    text_value=normalize_excel_value(value)
+    text_value=unicodedata.normalize("NFKC",text_value)
+    text_value=re.sub(r"[\u200b-\u200f\u202a-\u202e\ufeff]","",text_value).strip()
+    text_value=re.sub(r"[ \t]+"," ",text_value)
+    if field in {"phone","vat_no","employee_no"}:
+        # Keep leading + for international phone numbers; VAT remains digits only.
+        if field=="vat_no":
+            return re.sub(r"\D","",text_value)
+        return re.sub(r"[^0-9+]","",text_value)
+    if field in {"credit_limit","quantity","unit_cost","reorder_level","basic_salary"}:
+        return text_value.replace(",","")
+    if field in {"active","accepts_entries"}:
+        lowered=text_value.lower()
+        if lowered in {"yes","true","active","enabled","نعم","نشط","فعال"}: return "1"
+        if lowered in {"no","false","inactive","disabled","لا","غير نشط"}: return "0"
+    return text_value
+
+
+def _mapping_aliases(definition, module_name=None):
+    aliases={}
+    for field in definition["headers"]:
+        aliases[normalize_header_name(field)]=(field,"اسم الحقل القياسي")
+        for alias in IMPORT_HEADER_ALIASES.get(field,[]):
+            aliases[normalize_header_name(alias)]=(field,"قاموس المرادفات")
+    if module_name:
+        try:
+            saved=rows("""SELECT source_header,target_field FROM data_import_profile_aliases
+                          WHERE module_name=:module""",{"module":module_name})
+            for item in saved:
+                aliases[normalize_header_name(item["source_header"])]=(item["target_field"],"مطابقة محفوظة")
+        except Exception:
+            db.session.rollback()
+    return aliases
+
+
+def smart_map_headers(raw_headers, definition, module_name=None, preferred_mapping=None):
+    aliases=_mapping_aliases(definition,module_name)
+    alias_names=list(aliases.keys())
+    mapping,details,used={}, {}, set()
+    preferred_mapping=preferred_mapping or {}
+    for original in raw_headers:
+        preferred=preferred_mapping.get(original)
+        normalized=normalize_header_name(original)
+        target=preferred if preferred in definition["headers"] else None
+        confidence=100 if target else 0
+        reason="قالب محفوظ" if target else ""
+        if not target and normalized in aliases:
+            target,reason=aliases[normalized]
+            confidence=100
+        if not target and normalized:
+            candidates=difflib.get_close_matches(normalized,alias_names,n=1,cutoff=.72)
+            if candidates:
+                candidate=candidates[0]
+                proposed,why=aliases[candidate]
+                ratio=round(difflib.SequenceMatcher(None,normalized,candidate).ratio()*100)
+                if proposed not in used:
+                    target,confidence,reason=proposed,ratio,"مطابقة تقريبية"
+        if target and target not in used:
+            mapping[original]=target
+            used.add(target)
+            details[original]={"target":target,"confidence":confidence,"reason":reason}
+        else:
+            mapping[original]=""
+            details[original]={"target":"","confidence":0,"reason":"غير مستخدم"}
+    return mapping,details
+
+
+def read_import_file(uploaded):
+    filename = secure_filename(uploaded.filename or "")
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if extension == "xlsx":
+        workbook = openpyxl.load_workbook(uploaded, read_only=True, data_only=True)
+        sheet = workbook.active
+        iterator = sheet.iter_rows(values_only=True)
+        first = next(iterator, None)
+        if not first:
+            raise ValueError("الملف فارغ.")
+        return filename, [normalize_excel_value(v) for v in first], [list(v) for v in iterator]
+    if extension == "csv":
+        raw = uploaded.read()
+        decoded = None
+        for encoding in ("utf-8-sig", "utf-8", "cp1256", "latin-1"):
+            try:
+                decoded = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                pass
+        if decoded is None:
+            raise ValueError("تعذر التعرف على ترميز ملف CSV.")
+        sample=decoded[:4096]
+        try:
+            dialect=csv.Sniffer().sniff(sample,delimiters=",;\t|")
+        except csv.Error:
+            dialect=csv.excel
+        parsed = list(csv.reader(io.StringIO(decoded),dialect))
+        if not parsed:
+            raise ValueError("الملف فارغ.")
+        return filename, [normalize_excel_value(v) for v in parsed[0]], parsed[1:]
+    raise ValueError("الأنواع المدعومة هي XLSX وCSV فقط.")
+
+
+def import_quality_breakdown(preview, definition):
+    if not preview:
+        return {"overall":0,"completeness":0,"validity":0,"uniqueness":0,"formatting":0}
+    required=definition.get("required",[])
+    required_cells=max(len(preview)*max(len(required),1),1)
+    completed=sum(1 for item in preview for f in required if str(item.get("data",{}).get(f,"")).strip())
+    completeness=round(completed/required_cells*100)
+    validity=round(sum(1 for item in preview if not item.get("errors"))/len(preview)*100)
+    duplicates=sum(1 for item in preview if item.get("duplicate_status") in {"داخل الملف","موجود بالنظام"})
+    uniqueness=round(max(0,1-duplicates/len(preview))*100)
+    warning_rows=sum(1 for item in preview if item.get("warnings"))
+    formatting=round(max(0,1-warning_rows/len(preview))*100)
+    overall=round(completeness*.30+validity*.40+uniqueness*.20+formatting*.10)
+    return {"overall":overall,"completeness":completeness,"validity":validity,"uniqueness":uniqueness,"formatting":formatting}
+
+
+def import_quality_score(preview, definition=None):
+    definition=definition or {"required":[]}
+    return import_quality_breakdown(preview,definition)["overall"]
+
+
+def find_existing_import_record(module_name,data):
+    checks={
+      "customers":("customers",[("code","code"),("vat_number","vat_no"),("email","email"),("name","name")]),
+      "suppliers":("suppliers",[("code","code"),("vat_number","vat_no"),("email","email"),("name","name")]),
+      "inventory":("inventory",[("code","code"),("name","name")]),
+      "employees":("employees",[("employee_no","employee_no"),("email","email"),("name","name")]),
+      "accounts":("chart_of_accounts",[("account_code","account_code")]),
+      "cost_centers":("cost_centers",[("code","code"),("name","name")]),
+    }
+    if module_name not in checks: return None
+    table,fields=checks[module_name]
+    clauses=[]; params={}
+    for db_field,input_field in fields:
+        value=str(data.get(input_field) or "").strip()
+        if value:
+            key=f"v{len(params)}"; params[key]=value
+            clauses.append(f"LOWER(CAST({db_field} AS TEXT))=LOWER(:{key})")
+    if not clauses: return None
+    try:
+        return row(f"SELECT id FROM {table} WHERE {' OR '.join(clauses)} ORDER BY id LIMIT 1",params)
+    except Exception:
+        db.session.rollback(); return None
+
+
+def preview_cache_path(token):
+    return os.path.join(tempfile.gettempdir(),f"west_erp_import_{token}.json")
+
+
+def save_import_preview(payload):
+    token=uuid.uuid4().hex
+    with open(preview_cache_path(token),"w",encoding="utf-8") as handle:
+        json.dump(payload,handle,ensure_ascii=False,default=str)
+    session["import_preview_token"]=token
+    return token
+
+
+def load_import_preview():
+    token=session.get("import_preview_token")
+    if not token: return {}
+    try:
+        with open(preview_cache_path(token),encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError,ValueError):
+        return {}
+
+
+def clear_import_preview():
+    token=session.pop("import_preview_token",None)
+    if token:
+        try: os.remove(preview_cache_path(token))
+        except OSError: pass
+
 def next_import_number():
     count=db.session.execute(text("SELECT COUNT(*) FROM data_import_jobs")).scalar() or 0
     return f"IMP-{count+1:07d}"
@@ -1809,14 +2106,29 @@ def normalize_excel_value(value):
 def validate_import_row(module_name, row_data, row_no):
     definition=EXCEL_IMPORT_DEFINITIONS[module_name]
     errors=[]
+    warnings=[]
     for field in definition["required"]:
         if not str(row_data.get(field,"")).strip():
-            errors.append(f"الصف {row_no}: الحقل {field} مطلوب.")
-    if row_data.get("email") and "@" not in str(row_data["email"]):
-        errors.append(f"الصف {row_no}: البريد الإلكتروني غير صحيح.")
-    if row_data.get("vat_no") and len(str(row_data["vat_no"]).replace(".0","")) not in (0,15):
-        errors.append(f"الصف {row_no}: الرقم الضريبي يجب أن يكون 15 رقمًا.")
-    return errors
+            errors.append(f"الحقل {field} مطلوب")
+    email=str(row_data.get("email") or "").strip()
+    if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        errors.append("البريد الإلكتروني غير صحيح")
+    vat=re.sub(r"\D", "", str(row_data.get("vat_no") or ""))
+    if vat and len(vat)!=15:
+        errors.append("الرقم الضريبي يجب أن يكون 15 رقمًا")
+    phone=re.sub(r"\D", "", str(row_data.get("phone") or ""))
+    if phone and len(phone)<8:
+        warnings.append("رقم الهاتف قصير ويحتاج مراجعة")
+    numeric_fields={"customers":["credit_limit"],"inventory":["quantity","unit_cost","reorder_level"],"employees":["basic_salary"]}.get(module_name,[])
+    for field in numeric_fields:
+        value=row_data.get(field)
+        if value not in (None, ""):
+            try:
+                if float(value)<0:
+                    errors.append(f"الحقل {field} لا يقبل قيمة سالبة")
+            except (TypeError,ValueError):
+                errors.append(f"الحقل {field} يجب أن يكون رقمًا")
+    return errors,warnings
 
 def import_excel_row(module_name, data, import_mode):
     updated=False
@@ -1827,7 +2139,7 @@ def import_excel_row(module_name, data, import_mode):
                         ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]})
         if existing:
             if import_mode=="إضافة وتحديث":
-                execute("""UPDATE customers SET name=:name,name_en=:name_en,vat_no=:vat,
+                execute("""UPDATE customers SET name=:name,name_en=:name_en,vat_number=:vat,
                   phone=:phone,email=:email,address=:address,credit_limit=:limit
                   WHERE id=:id""",
                   {"name":data["name"],"name_en":data.get("name_en",""),
@@ -1838,7 +2150,7 @@ def import_excel_row(module_name, data, import_mode):
             else:
                 raise ValueError("العميل موجود مسبقًا.")
         else:
-            execute("""INSERT INTO customers(code,name,name_en,vat_no,phone,email,
+            execute("""INSERT INTO customers(code,name,name_en,vat_number,phone,email,
               address,credit_limit,active,created_at)
               VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,:limit,1,:dt)""",
               {"code":code,"name":data["name"],"name_en":data.get("name_en",""),
@@ -1853,7 +2165,7 @@ def import_excel_row(module_name, data, import_mode):
                         ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]})
         if existing:
             if import_mode=="إضافة وتحديث":
-                execute("""UPDATE suppliers SET name=:name,name_en=:name_en,vat_no=:vat,
+                execute("""UPDATE suppliers SET name=:name,name_en=:name_en,vat_number=:vat,
                   phone=:phone,email=:email,address=:address WHERE id=:id""",
                   {"name":data["name"],"name_en":data.get("name_en",""),
                    "vat":data.get("vat_no",""),"phone":data.get("phone",""),
@@ -1863,7 +2175,7 @@ def import_excel_row(module_name, data, import_mode):
             else:
                 raise ValueError("المورد موجود مسبقًا.")
         else:
-            execute("""INSERT INTO suppliers(code,name,name_en,vat_no,phone,email,
+            execute("""INSERT INTO suppliers(code,name,name_en,vat_number,phone,email,
               address,active,created_at)
               VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,1,:dt)""",
               {"code":code,"name":data["name"],"name_en":data.get("name_en",""),
@@ -1972,6 +2284,113 @@ def import_excel_row(module_name, data, import_mode):
             execute("""INSERT INTO cost_centers(code,name,parent_id,active)
                        VALUES(:code,:name,:parent,:active)""",payload)
     return updated
+
+
+
+SMART_ENTITY_CONFIG = {
+    "customers": {
+        "table": "customers", "label": "العملاء",
+        "display": "name", "code": "code", "tax": "vat_number",
+        "account": "receivable_account_id"
+    },
+    "suppliers": {
+        "table": "suppliers", "label": "الموردون",
+        "display": "name", "code": "code", "tax": "vat_number",
+        "account": "payable_account_id"
+    },
+    "items": {
+        "table": "inventory", "label": "المواد",
+        "display": "name", "code": "code", "tax": None,
+        "account": None
+    },
+    "accounts": {
+        "table": "chart_of_accounts", "label": "الحسابات",
+        "display": "account_name_ar", "code": "account_code", "tax": None,
+        "account": None
+    },
+    "cost_centers": {
+        "table": "cost_centers", "label": "مراكز التكلفة",
+        "display": "name", "code": "code", "tax": None,
+        "account": None
+    },
+    "projects": {
+        "table": "projects", "label": "المشاريع",
+        "display": "name", "code": "project_no", "tax": None,
+        "account": None
+    },
+}
+
+def next_entity_code(table_name, prefix):
+    count=db.session.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar() or 0
+    return f"{prefix}-{count+1:06d}"
+
+def smart_entity_row(entity, entity_id):
+    cfg=SMART_ENTITY_CONFIG.get(entity)
+    if not cfg:
+        return None
+    fields=["id", f"{cfg['display']} AS name"]
+    if cfg.get("code"):
+        fields.append(f"{cfg['code']} AS code")
+    if cfg.get("tax"):
+        fields.append(f"{cfg['tax']} AS tax_number")
+    if cfg.get("account"):
+        fields.append(f"{cfg['account']} AS account_id")
+    if entity=="items":
+        fields.extend(["unit","unit_cost","quantity"])
+    return row(f"SELECT {','.join(fields)} FROM {cfg['table']} WHERE id=:id",{"id":entity_id})
+
+def create_quick_entity(entity, payload):
+    name=(payload.get("name") or "").strip()
+    if not name:
+        raise ValueError("الاسم مطلوب.")
+    if entity=="customer":
+        code=(payload.get("code") or next_entity_code("customers","CUS")).strip()
+        existing=row("SELECT id FROM customers WHERE code=:code OR name=:name",
+                     {"code":code,"name":name})
+        if existing:
+            raise ValueError("العميل موجود مسبقًا.")
+        execute("""INSERT INTO customers(code,name,name_en,vat_number,phone,email,address,
+          credit_limit,receivable_account_id)
+          VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,:limit,:account)""",
+          {"code":code,"name":name,"name_en":payload.get("name_en",""),
+           "vat":payload.get("vat_number",""),"phone":payload.get("phone",""),
+           "email":payload.get("email",""),"address":payload.get("address",""),
+           "limit":float(payload.get("credit_limit") or 0),
+           "account":payload.get("account_id") or None})
+        new_id=row("SELECT id FROM customers WHERE code=:code",{"code":code})["id"]
+        return "customers",smart_entity_row("customers",new_id)
+    if entity=="supplier":
+        code=(payload.get("code") or next_entity_code("suppliers","SUP")).strip()
+        existing=row("SELECT id FROM suppliers WHERE code=:code OR name=:name",
+                     {"code":code,"name":name})
+        if existing:
+            raise ValueError("المورد موجود مسبقًا.")
+        execute("""INSERT INTO suppliers(code,name,name_en,vat_number,phone,email,address,
+          payable_account_id)
+          VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,:account)""",
+          {"code":code,"name":name,"name_en":payload.get("name_en",""),
+           "vat":payload.get("vat_number",""),"phone":payload.get("phone",""),
+           "email":payload.get("email",""),"address":payload.get("address",""),
+           "account":payload.get("account_id") or None})
+        new_id=row("SELECT id FROM suppliers WHERE code=:code",{"code":code})["id"]
+        return "suppliers",smart_entity_row("suppliers",new_id)
+    if entity=="item":
+        code=(payload.get("code") or next_entity_code("inventory","ITM")).strip()
+        existing=row("SELECT id FROM inventory WHERE code=:code OR name=:name",
+                     {"code":code,"name":name})
+        if existing:
+            raise ValueError("المادة موجودة مسبقًا.")
+        execute("""INSERT INTO inventory(code,name,description,unit,quantity,unit_cost,
+          reorder_level,active)
+          VALUES(:code,:name,:description,:unit,:quantity,:cost,:reorder,1)""",
+          {"code":code,"name":name,"description":payload.get("description",""),
+           "unit":payload.get("unit","وحدة"),
+           "quantity":float(payload.get("quantity") or 0),
+           "cost":float(payload.get("unit_cost") or 0),
+           "reorder":float(payload.get("reorder_level") or 0)})
+        new_id=row("SELECT id FROM inventory WHERE code=:code",{"code":code})["id"]
+        return "items",smart_entity_row("items",new_id)
+    raise ValueError("نوع السجل غير مدعوم.")
 
 
 def init_db():
@@ -3128,6 +3547,44 @@ def init_db():
             imported_by INTEGER REFERENCES users(id),
             imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
+        """CREATE TABLE IF NOT EXISTS data_import_profiles(
+            id SERIAL PRIMARY KEY,
+            profile_name VARCHAR(150) NOT NULL,
+            module_name VARCHAR(100) NOT NULL,
+            source_system VARCHAR(100) DEFAULT '',
+            mapping_json TEXT NOT NULL,
+            created_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS data_import_profile_aliases(
+            id SERIAL PRIMARY KEY,
+            module_name VARCHAR(100) NOT NULL,
+            source_header VARCHAR(255) NOT NULL,
+            target_field VARCHAR(100) NOT NULL,
+            created_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(module_name,source_header)
+        )""",
+        """CREATE TABLE IF NOT EXISTS data_import_job_rows(
+            id SERIAL PRIMARY KEY,
+            job_id INTEGER NOT NULL REFERENCES data_import_jobs(id) ON DELETE CASCADE,
+            row_no INTEGER NOT NULL,
+            row_data TEXT NOT NULL,
+            row_status VARCHAR(30) DEFAULT 'قيد الانتظار',
+            action_type VARCHAR(30) DEFAULT '',
+            error_message TEXT DEFAULT '',
+            processed_at TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS data_import_job_events(
+            id SERIAL PRIMARY KEY,
+            job_id INTEGER NOT NULL REFERENCES data_import_jobs(id) ON DELETE CASCADE,
+            event_type VARCHAR(50) NOT NULL,
+            message TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE INDEX IF NOT EXISTS idx_import_job_rows_status
+            ON data_import_job_rows(job_id,row_status,id)""",
         """CREATE TABLE IF NOT EXISTS audit_logs(
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
@@ -3176,6 +3633,8 @@ def init_db():
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS address TEXT DEFAULT ''",
         "ALTER TABLE customers ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
         "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE purchase_requisition_items ADD COLUMN IF NOT EXISTS ordered_qty NUMERIC(18,3) DEFAULT 0",
+        "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS requisition_item_id INTEGER REFERENCES purchase_requisition_items(id)",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS phone VARCHAR(50) DEFAULT ''",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT ''",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS logo_url TEXT DEFAULT ''",
@@ -3194,6 +3653,22 @@ def init_db():
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS delivery_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS warehouse_id INTEGER',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS draft_number VARCHAR(100)',
+        'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS official_invoice_no VARCHAR(100)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_draft_number ON invoices(draft_number) WHERE draft_number IS NOT NULL',
+        'CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_official_no ON invoices(official_invoice_no) WHERE official_invoice_no IS NOT NULL',
+        'ALTER TABLE customers ADD COLUMN IF NOT EXISTS code VARCHAR(100)',
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS address TEXT DEFAULT ''",
+        'ALTER TABLE customers ADD COLUMN IF NOT EXISTS credit_limit NUMERIC(18,2) DEFAULT 0',
+        'ALTER TABLE customers ADD COLUMN IF NOT EXISTS receivable_account_id INTEGER',
+        'ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS code VARCHAR(100)',
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS address TEXT DEFAULT ''",
+        'ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS payable_account_id INTEGER',
+        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS code VARCHAR(100)',
+        "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''",
+        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(18,2) DEFAULT 0',
+        'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS reorder_level NUMERIC(18,3) DEFAULT 0',
+        'ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS party_account_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS project_id INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_by INTEGER',
         'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP',
@@ -3658,25 +4133,40 @@ def invoices():
     if request.method=="POST":
         try:
             prepared_items,gross_subtotal,discount_total,net_subtotal,invoice_vat,invoice_total = prepare_invoice_items_from_form(request.form)
-            invoice_date=request.form["invoice_date"]
-            invoice_no=next_invoice_number(invoice_date)
-            invoice_uuid=str(uuid.uuid4())
-            requested_status=request.form.get("status","مسودة")
-            initial_status="مسودة" if requested_status not in ("مسودة","معتمدة") else requested_status
 
-            execute("""INSERT INTO invoices(
-              invoice_no,invoice_uuid,customer_id,invoice_date,due_date,
+            customer_id=request.form.get("customer_id")
+            invoice_date=request.form.get("invoice_date")
+            if not customer_id:
+                raise ValueError("اختر العميل قبل حفظ الفاتورة.")
+            if not invoice_date:
+                raise ValueError("أدخل تاريخ الفاتورة.")
+
+            customer=row("SELECT id FROM customers WHERE id=:id",{"id":customer_id})
+            if not customer:
+                raise ValueError("العميل المحدد غير موجود.")
+
+            requested_status=request.form.get("status","مسودة")
+            if requested_status not in ("مسودة","معتمدة"):
+                requested_status="مسودة"
+
+            invoice_no=next_invoice_draft_number()
+            invoice_uuid=str(uuid.uuid4())
+
+            # One database transaction: invoice + items.
+            db.session.execute(text("""INSERT INTO invoices(
+              invoice_no,draft_number,invoice_uuid,customer_id,invoice_date,due_date,
               subtotal,discount,vat,total,status,branch_id,cost_center_id,project_id,
               payment_terms,payment_method,sales_person,customer_reference,
-              notes,created_at,updated_at)
-              VALUES(:no,:uuid,:customer,:invoice_date,:due_date,:subtotal,:discount,
-              :vat,:total,:status,:branch,:cost_center,:project,:payment_terms,
-              :payment_method,:sales_person,:customer_reference,:notes,:created,:updated)""",
-              {"no":invoice_no,"uuid":invoice_uuid,
-               "customer":request.form["customer_id"],"invoice_date":invoice_date,
+              notes,created_at,updated_at,posting_status)
+              VALUES(:no,:draft_number,:uuid,:customer,:invoice_date,:due_date,:subtotal,:discount,
+              :vat,:total,'مسودة',:branch,:cost_center,:project,:payment_terms,
+              :payment_method,:sales_person,:customer_reference,:notes,:created,:updated,
+              'غير مرحّل')"""),
+              {"no":invoice_no,"draft_number":invoice_no,"uuid":invoice_uuid,"customer":customer_id,
+               "invoice_date":invoice_date,
                "due_date":request.form.get("due_date") or None,
                "subtotal":net_subtotal,"discount":discount_total,
-               "vat":invoice_vat,"total":invoice_total,"status":initial_status,
+               "vat":invoice_vat,"total":invoice_total,
                "branch":request.form.get("branch_id") or None,
                "cost_center":request.form.get("cost_center_id") or None,
                "project":request.form.get("project_id") or None,
@@ -3686,29 +4176,61 @@ def invoices():
                "customer_reference":request.form.get("customer_reference",""),
                "notes":request.form.get("notes",""),
                "created":datetime.now(),"updated":datetime.now()})
-            invoice_id=row("SELECT id FROM invoices WHERE invoice_no=:no",{"no":invoice_no})["id"]
-            replace_invoice_items(invoice_id,prepared_items)
+
+            invoice_id=db.session.execute(
+                text("SELECT id FROM invoices WHERE invoice_no=:no"),
+                {"no":invoice_no}
+            ).scalar()
+
+            for item in prepared_items:
+                db.session.execute(text("""INSERT INTO invoice_items(
+                  invoice_id,item_name,description,quantity,unit,unit_price,
+                  discount_rate,vat_rate,line_subtotal,line_discount,line_vat,line_total)
+                  VALUES(:invoice_id,:item_name,:description,:quantity,:unit,:unit_price,
+                  :discount_rate,:vat_rate,:line_subtotal,:line_discount,:line_vat,:line_total)"""),
+                  {"invoice_id":invoice_id,**item})
+
+            db.session.commit()
             audit("CREATE","INVOICE",f"إنشاء فاتورة {invoice_no}")
 
             if requested_status=="معتمدة":
                 try:
+                    draft_number,official_number=assign_official_invoice_number(invoice_id)
                     post_invoice_to_ledger(invoice_id)
-                    execute("""UPDATE invoices SET status='معتمدة',approved_by=:user,
-                      approved_at=:dt WHERE id=:id""",
-                      {"user":session.get("user_id"),"dt":datetime.now(),"id":invoice_id})
-                    flash("تم إنشاء الفاتورة واعتمادها وترحيلها محاسبيًا.","success")
+                    execute("""UPDATE invoices
+                               SET status='معتمدة',approved_by=:user,
+                                   approved_at=:dt,updated_at=:dt
+                               WHERE id=:id""",
+                            {"user":session.get("user_id"),
+                             "dt":datetime.now(),"id":invoice_id})
+                    audit("APPROVE","INVOICE",
+                          f"اعتماد الفاتورة وتغيير الرقم من {draft_number} إلى {official_number}")
+                    flash(f"تم الحفظ والاعتماد. الرقم النهائي: {official_number}.","success")
                 except Exception as exc:
                     db.session.rollback()
-                    execute("""UPDATE invoices SET status='مسودة',posting_status='خطأ'
-                               WHERE id=:id""",{"id":invoice_id})
-                    flash(f"حُفظت الفاتورة كمسودة ولم تُرحّل: {exc}","danger")
+                    try:
+                        execute("""UPDATE invoices
+                                   SET invoice_no=COALESCE(draft_number,:draft_number),
+                                       official_invoice_no=NULL,
+                                       status='مسودة',posting_status='خطأ'
+                                   WHERE id=:id""",
+                                {"draft_number":invoice_no,"id":invoice_id})
+                    except Exception:
+                        db.session.rollback()
+                    flash(f"تم حفظ الفاتورة برقمها الأولي، لكن تعذر اعتمادها: {exc}","warning")
             else:
-                flash("تم إنشاء الفاتورة كمسودة قابلة للتعديل.","success")
-            return redirect(url_for("invoice_view",invoice_id=invoice_id,
-                                    print=1 if request.form.get("print_after_save")=="1" else None))
+                flash(f"تم حفظ الفاتورة برقم {invoice_no}.","success")
+
+            return redirect(url_for(
+                "invoice_view",
+                invoice_id=invoice_id,
+                print=1 if request.form.get("print_after_save")=="1" else None
+            ))
+
         except Exception as exc:
             db.session.rollback()
-            flash(str(exc),"danger")
+            app.logger.exception("Invoice save failed")
+            flash(f"تعذر حفظ الفاتورة: {exc}","danger")
             return redirect(url_for("invoices"))
 
     invoice_rows=rows("""SELECT i.*,c.name customer_name,b.name branch_name
@@ -3720,6 +4242,7 @@ def invoices():
       inventory_items=rows("SELECT * FROM inventory ORDER BY name"),
       centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"),
       projects=rows("SELECT id,project_no,name FROM projects ORDER BY project_no"))
+
 
 @app.route("/expenses", methods=["GET","POST"])
 @login_required
@@ -4374,6 +4897,7 @@ def journal_entries():
         tax_numbers=request.form.getlist("tax_number[]")
         invoice_numbers=request.form.getlist("invoice_number[]")
         invoice_dates=request.form.getlist("invoice_date[]")
+        party_account_ids=request.form.getlist("party_account_id[]")
         descriptions=request.form.getlist("line_description[]")
         cost_center_ids=request.form.getlist("cost_center_id[]")
         lines=[]; total_debit=0.0; total_credit=0.0
@@ -4398,15 +4922,18 @@ def journal_entries():
             tax_number = tax_numbers[i].strip() if i < len(tax_numbers) else ""
             invoice_number = invoice_numbers[i].strip() if i < len(invoice_numbers) else ""
             invoice_date = invoice_dates[i] if i < len(invoice_dates) and invoice_dates[i] else None
+            party_account_id = (party_account_ids[i] or None) if i < len(party_account_ids) else None
 
             if party_type == "مورد":
                 customer_id = None
-                party = row("SELECT vat_number FROM suppliers WHERE id=:id", {"id": supplier_id}) if supplier_id else None
+                party = row("SELECT vat_number,payable_account_id FROM suppliers WHERE id=:id", {"id": supplier_id}) if supplier_id else None
                 tax_number = (party["vat_number"] or "") if party else ""
+                party_account_id = party.get("payable_account_id") if party else party_account_id
             elif party_type == "عميل":
                 supplier_id = None
-                party = row("SELECT vat_number FROM customers WHERE id=:id", {"id": customer_id}) if customer_id else None
+                party = row("SELECT vat_number,receivable_account_id FROM customers WHERE id=:id", {"id": customer_id}) if customer_id else None
                 tax_number = (party["vat_number"] or "") if party else ""
+                party_account_id = party.get("receivable_account_id") if party else party_account_id
             else:
                 supplier_id = None
                 customer_id = None
@@ -4443,6 +4970,7 @@ def journal_entries():
                           "tax_number":tax_number,
                           "invoice_number":invoice_number,
                           "invoice_date":invoice_date,
+                          "party_account_id":party_account_id,
                           "line_description":descriptions[i] if i<len(descriptions) else "",
                           "cost_center_id":(cost_center_ids[i] or None) if i<len(cost_center_ids) else None})
             total_debit+=debit; total_credit+=credit
@@ -4470,10 +4998,10 @@ def journal_entries():
         for line in lines:
             execute("""INSERT INTO journal_entry_lines(
                 journal_id,account_id,debit,credit,taxable,tax_direction,supplier_id,customer_id,
-                party_type,tax_number,invoice_number,invoice_date,line_description,cost_center_id)
+                party_type,tax_number,invoice_number,invoice_date,party_account_id,line_description,cost_center_id)
                 VALUES(:journal_id,:account_id,:debit,:credit,:taxable,:tax_direction,
                 :supplier_id,:customer_id,:party_type,:tax_number,:invoice_number,:invoice_date,
-                :line_description,:cost_center_id)""",
+                :party_account_id,:line_description,:cost_center_id)""",
                 {"journal_id":journal_id,**line})
         flash(f"تم حفظ القيد {journal_no}","success")
         if request.form.get("print_after_save") == "1":
@@ -4773,18 +5301,62 @@ def invoice_approve(invoice_id):
     if invoice["status"] not in ("مسودة","معاد للتعديل","بانتظار الاعتماد"):
         flash("حالة الفاتورة لا تسمح بالاعتماد.","danger")
         return redirect(url_for("invoice_view",invoice_id=invoice_id))
+
+    old_number = invoice["invoice_no"]
+    official_number = None
+
     try:
+        draft_number,official_number=assign_official_invoice_number(invoice_id)
         post_invoice_to_ledger(invoice_id)
-        execute("""UPDATE invoices SET status='معتمدة',approved_by=:user,
-          approved_at=:dt,updated_at=:dt WHERE id=:id""",
-          {"user":session.get("user_id"),"dt":datetime.now(),"id":invoice_id})
-        audit("APPROVE","INVOICE",f"اعتماد وترحيل الفاتورة {invoice['invoice_no']}")
-        flash("تم اعتماد الفاتورة وترحيلها محاسبيًا. أصبحت مقفلة ضد التعديل والحذف.","success")
+
+        execute("""UPDATE invoices
+                   SET status='معتمدة',
+                       approved_by=:user,
+                       approved_at=:dt,
+                       updated_at=:dt
+                   WHERE id=:id""",
+                {
+                    "user":session.get("user_id"),
+                    "dt":datetime.now(),
+                    "id":invoice_id,
+                })
+
+        audit(
+            "APPROVE",
+            "INVOICE",
+            f"اعتماد الفاتورة وتغيير الرقم من {draft_number} إلى {official_number}"
+        )
+        flash(
+            f"تم اعتماد الفاتورة. تغير الرقم فقط من {draft_number} إلى {official_number}.",
+            "success"
+        )
+
     except Exception as exc:
         db.session.rollback()
-        execute("""UPDATE invoices SET posting_status='خطأ' WHERE id=:id""",{"id":invoice_id})
+
+        # Restore the date/time number if posting did not complete.
+        current=row("SELECT journal_id FROM invoices WHERE id=:id",{"id":invoice_id})
+        if not current or not current.get("journal_id"):
+            try:
+                execute("""UPDATE invoices
+                           SET invoice_no=COALESCE(draft_number,:old_number),
+                               official_invoice_no=NULL,
+                               posting_status='خطأ',
+                               updated_at=:dt
+                           WHERE id=:id""",
+                        {
+                            "old_number":old_number,
+                            "dt":datetime.now(),
+                            "id":invoice_id,
+                        })
+            except Exception:
+                db.session.rollback()
+
+        app.logger.exception("Final invoice approval failed")
         flash(f"تعذر اعتماد وترحيل الفاتورة: {exc}","danger")
+
     return redirect(url_for("invoice_view",invoice_id=invoice_id))
+
 
 
 @app.route("/invoices/<int:invoice_id>/copy",methods=["POST"])
@@ -4794,15 +5366,15 @@ def invoice_copy(invoice_id):
     if not source:
         return "الفاتورة غير موجودة",404
     new_date=request.form.get("invoice_date") or datetime.now().date()
-    new_no=next_invoice_number(new_date)
-    execute("""INSERT INTO invoices(invoice_no,invoice_uuid,customer_id,invoice_date,
+    new_no=next_invoice_draft_number()
+    execute("""INSERT INTO invoices(invoice_no,draft_number,invoice_uuid,customer_id,invoice_date,
       due_date,subtotal,discount,vat,total,status,branch_id,cost_center_id,project_id,
       payment_terms,payment_method,sales_person,customer_reference,notes,created_at,
       updated_at,copied_from_id)
-      VALUES(:no,:uuid,:customer,:invoice_date,:due_date,:subtotal,:discount,:vat,
+      VALUES(:no,:draft_number,:uuid,:customer,:invoice_date,:due_date,:subtotal,:discount,:vat,
       :total,'مسودة',:branch,:cost_center,:project,:payment_terms,:payment_method,
       :sales_person,:customer_reference,:notes,:created,:updated,:source)""",
-      {"no":new_no,"uuid":str(uuid.uuid4()),"customer":source["customer_id"],
+      {"no":new_no,"draft_number":new_no,"uuid":str(uuid.uuid4()),"customer":source["customer_id"],
        "invoice_date":new_date,"due_date":source.get("due_date"),
        "subtotal":source["subtotal"],"discount":source.get("discount") or 0,
        "vat":source["vat"],"total":source["total"],"branch":source.get("branch_id"),
@@ -5966,6 +6538,25 @@ def purchase_requisition_approve(req_id):
     flash("تم اعتماد طلب الشراء","success")
     return redirect(url_for("purchase_requisition_view",req_id=req_id))
 
+
+@app.route("/purchase-requisitions/<int:req_id>/open-items")
+@login_required
+def purchase_requisition_open_items(req_id):
+    req=row("""SELECT pr.*,b.name branch_name,cc.name cost_center_name
+               FROM purchase_requisitions pr
+               LEFT JOIN branches b ON b.id=pr.branch_id
+               LEFT JOIN cost_centers cc ON cc.id=pr.cost_center_id
+               WHERE pr.id=:id""",{"id":req_id})
+    if not req:
+        return {"error":"طلب الشراء غير موجود"},404
+    if req["status"] not in ("معتمد","تم إصدار أمر شراء جزئيًا"):
+        return {"error":"طلب الشراء غير متاح للتحويل إلى أمر شراء"},400
+    items=rows("""SELECT id,item_code,item_name,description,quantity,COALESCE(ordered_qty,0) ordered_qty,
+                  quantity-COALESCE(ordered_qty,0) remaining_qty,unit,estimated_price,suggested_supplier_id
+                  FROM purchase_requisition_items
+                  WHERE requisition_id=:id AND COALESCE(ordered_qty,0)<quantity ORDER BY id""",{"id":req_id})
+    return {"requisition":dict(req),"items":[dict(x) for x in items]}
+
 @app.route("/purchase-orders",methods=["GET","POST"])
 @login_required
 def purchase_orders():
@@ -5977,6 +6568,7 @@ def purchase_orders():
                 flash("لا يمكن إصدار أمر شراء من طلب غير معتمد","danger")
                 return redirect(url_for("purchase_orders"))
         names=request.form.getlist("item_name[]")
+        req_item_ids=request.form.getlist("requisition_item_id[]")
         qtys=request.form.getlist("quantity[]")
         prices=request.form.getlist("unit_price[]")
         vats=request.form.getlist("vat_rate[]")
@@ -5990,8 +6582,20 @@ def purchase_orders():
             if q<=0:continue
             base=q*p; tax=base*vr/100
             subtotal+=base; vat+=tax
+            req_item_id = (req_item_ids[i] if i < len(req_item_ids) else "") or None
+            if req_item_id:
+                source_item=row("""SELECT id,quantity,COALESCE(ordered_qty,0) ordered_qty,requisition_id
+                                   FROM purchase_requisition_items WHERE id=:id""",{"id":req_item_id})
+                if not source_item or not req_id or int(source_item["requisition_id"]) != int(req_id):
+                    flash("يوجد صنف غير مرتبط بطلب الشراء المحدد","danger")
+                    return redirect(url_for("purchase_orders"))
+                remaining=float(source_item["quantity"])-float(source_item["ordered_qty"] or 0)
+                if q > remaining + 1e-9:
+                    flash(f"كمية الصنف {n} تتجاوز الكمية المتبقية في طلب الشراء","danger")
+                    return redirect(url_for("purchase_orders"))
             items.append({"name":n.strip(),"qty":q,"price":p,"vat":vr,
-                          "unit":units[i],"code":codes[i],"description":descriptions[i]})
+                          "unit":units[i],"code":codes[i],"description":descriptions[i],
+                          "requisition_item_id":req_item_id})
         if not items:
             flash("أدخل صنفًا واحدًا على الأقل","danger")
             return redirect(url_for("purchase_orders"))
@@ -6015,12 +6619,19 @@ def purchase_orders():
         po_id=row("SELECT id FROM purchase_orders WHERE po_no=:n",{"n":no})["id"]
         for x in items:
             execute("""INSERT INTO purchase_order_items(
-              po_id,item_code,item_name,description,quantity,unit,unit_price,vat_rate)
-              VALUES(:po,:code,:name,:des,:qty,:unit,:price,:vat)""",
-              {"po":po_id,"code":x["code"],"name":x["name"],"des":x["description"],
+              po_id,requisition_item_id,item_code,item_name,description,quantity,unit,unit_price,vat_rate)
+              VALUES(:po,:req_item,:code,:name,:des,:qty,:unit,:price,:vat)""",
+              {"po":po_id,"req_item":x["requisition_item_id"],"code":x["code"],"name":x["name"],"des":x["description"],
                "qty":x["qty"],"unit":x["unit"],"price":x["price"],"vat":x["vat"]})
+            if x["requisition_item_id"]:
+                execute("""UPDATE purchase_requisition_items
+                           SET ordered_qty=COALESCE(ordered_qty,0)+:qty WHERE id=:id""",
+                        {"qty":x["qty"],"id":x["requisition_item_id"]})
         if req_id:
-            execute("UPDATE purchase_requisitions SET status='تم إصدار أمر شراء' WHERE id=:id",{"id":req_id})
+            open_count=row("""SELECT COUNT(*) count FROM purchase_requisition_items
+                              WHERE requisition_id=:id AND COALESCE(ordered_qty,0)<quantity""",{"id":req_id})["count"]
+            execute("UPDATE purchase_requisitions SET status=:status WHERE id=:id",
+                    {"status":"تم إصدار أمر شراء بالكامل" if open_count==0 else "تم إصدار أمر شراء جزئيًا","id":req_id})
         audit("CREATE","PURCHASE_ORDER",f"إنشاء أمر شراء {no}")
         flash(f"تم إنشاء أمر الشراء {no}","success")
         return redirect(url_for("purchase_order_view",po_id=po_id))
@@ -6028,8 +6639,8 @@ def purchase_orders():
       orders=rows("""SELECT po.*,s.name supplier_name FROM purchase_orders po
                      JOIN suppliers s ON s.id=po.supplier_id
                      ORDER BY po.po_date DESC,po.id DESC"""),
-      requisitions=rows("""SELECT id,requisition_no,total_estimated FROM purchase_requisitions
-                           WHERE status='معتمد' ORDER BY requisition_date DESC"""),
+      requisitions=rows("""SELECT id,requisition_no,total_estimated,status FROM purchase_requisitions
+                           WHERE status IN ('معتمد','تم إصدار أمر شراء جزئيًا') ORDER BY requisition_date DESC"""),
       suppliers=rows("SELECT id,name,name_en,vat_number FROM suppliers ORDER BY name"),
       branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
       centers=rows("SELECT * FROM cost_centers WHERE active=1 ORDER BY code"))
@@ -6039,7 +6650,9 @@ def purchase_orders():
 def purchase_order_view(po_id):
     po=row("""SELECT po.*,s.name supplier_name,s.name_en supplier_name_en,
               s.vat_number supplier_vat,b.name branch_name,cc.name cost_center_name
+              ,pr.requisition_no source_requisition_no
               FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id
+              LEFT JOIN purchase_requisitions pr ON pr.id=po.requisition_id
               LEFT JOIN branches b ON b.id=po.branch_id
               LEFT JOIN cost_centers cc ON cc.id=po.cost_center_id WHERE po.id=:id""",{"id":po_id})
     if not po:return "أمر الشراء غير موجود",404
@@ -8855,6 +9468,76 @@ def fixed_assets_report_export():
 
 
 
+
+@app.route("/api/smart-lookup/<entity>")
+@login_required
+def smart_lookup(entity):
+    cfg=SMART_ENTITY_CONFIG.get(entity)
+    if not cfg:
+        return {"ok":False,"error":"نوع البحث غير مدعوم"},404
+    q=request.args.get("q","").strip()
+    params={"q":f"%{q}%"}
+    display=cfg["display"]; code=cfg.get("code")
+    select_fields=["id",f"{display} AS name"]
+    if code: select_fields.append(f"{code} AS code")
+    if cfg.get("tax"): select_fields.append(f"{cfg['tax']} AS tax_number")
+    if cfg.get("account"): select_fields.append(f"{cfg['account']} AS account_id")
+    if entity=="items": select_fields.extend(["unit","unit_cost","quantity"])
+    conditions=[f"{display} ILIKE :q"]
+    if code: conditions.append(f"COALESCE({code},'') ILIKE :q")
+    result=rows(f"""SELECT {','.join(select_fields)} FROM {cfg['table']}
+                    WHERE {' OR '.join(conditions)}
+                    ORDER BY {display} LIMIT 30""",params)
+    return {"ok":True,"results":result}
+
+@app.route("/api/smart-entity/<entity>/<int:entity_id>")
+@login_required
+def smart_entity_details(entity,entity_id):
+    result=smart_entity_row(entity,entity_id)
+    if not result:
+        return {"ok":False,"error":"السجل غير موجود"},404
+    return {"ok":True,"result":result}
+
+@app.route("/api/quick-create/<entity>",methods=["POST"])
+@login_required
+def quick_create(entity):
+    try:
+        payload=request.get_json(silent=True) or request.form.to_dict()
+        lookup_entity,result=create_quick_entity(entity,payload)
+        audit("QUICK_CREATE",entity,f"إنشاء سريع: {result['name']}")
+        return {"ok":True,"lookup_entity":lookup_entity,"result":result}
+    except Exception as exc:
+        db.session.rollback()
+        return {"ok":False,"error":str(exc)},400
+
+@app.route("/global-search")
+@login_required
+def global_search():
+    q=request.args.get("q","").strip()
+    grouped={}
+    if q:
+        grouped["العملاء"]=rows("""SELECT id,code,name,'customer' result_type
+          FROM customers WHERE name ILIKE :q OR COALESCE(code,'') ILIKE :q
+          ORDER BY name LIMIT 20""",{"q":f"%{q}%"})
+        grouped["الموردون"]=rows("""SELECT id,code,name,'supplier' result_type
+          FROM suppliers WHERE name ILIKE :q OR COALESCE(code,'') ILIKE :q
+          ORDER BY name LIMIT 20""",{"q":f"%{q}%"})
+        grouped["المواد"]=rows("""SELECT id,code,name,'item' result_type
+          FROM inventory WHERE name ILIKE :q OR COALESCE(code,'') ILIKE :q
+          ORDER BY name LIMIT 20""",{"q":f"%{q}%"})
+        grouped["الفواتير"]=rows("""SELECT i.id,i.invoice_no code,c.name,
+          'invoice' result_type FROM invoices i JOIN customers c ON c.id=i.customer_id
+          WHERE i.invoice_no ILIKE :q OR c.name ILIKE :q
+          ORDER BY i.id DESC LIMIT 20""",{"q":f"%{q}%"})
+        grouped["المشاريع"]=rows("""SELECT id,project_no code,name,'project' result_type
+          FROM projects WHERE project_no ILIKE :q OR name ILIKE :q
+          ORDER BY project_no LIMIT 20""",{"q":f"%{q}%"})
+        grouped["الموظفون"]=rows("""SELECT id,employee_no code,name,'employee' result_type
+          FROM employees WHERE name ILIKE :q OR COALESCE(employee_no,'') ILIKE :q
+          ORDER BY name LIMIT 20""",{"q":f"%{q}%"})
+    return render_template("global_search.html",q=q,grouped=grouped)
+
+
 @app.route("/data-import")
 @login_required
 def data_import_center():
@@ -8883,83 +9566,237 @@ def data_import_upload(module_name):
     if module_name not in EXCEL_IMPORT_DEFINITIONS:
         return "الوحدة غير مدعومة",404
     definition=EXCEL_IMPORT_DEFINITIONS[module_name]
-    preview=[]
-    errors=[]
+    preview=[]; errors=[]; warnings=[]; mapping={}; mapping_details={}; file_info={}
+    quality_score=0; quality={}; simulation={"add":0,"update":0,"skip":0,"errors":0}
+    profiles=rows("""SELECT id,profile_name,source_system,mapping_json FROM data_import_profiles
+                     WHERE module_name=:module ORDER BY profile_name""",{"module":module_name})
     if request.method=="POST":
         uploaded=request.files.get("excel_file")
         if not uploaded or not uploaded.filename:
-            flash("اختر ملف Excel أولاً.","danger")
+            flash("اختر ملف Excel أو CSV أولاً.","danger")
             return redirect(url_for("data_import_upload",module_name=module_name))
         try:
-            workbook=openpyxl.load_workbook(uploaded,read_only=True,data_only=True)
-            sheet=workbook.active
-            raw_headers=[normalize_excel_value(x.value) for x in next(sheet.iter_rows())]
-            missing=[h for h in definition["required"] if h not in raw_headers]
+            filename,raw_headers,data_rows=read_import_file(uploaded)
+            preferred={}
+            profile_id=request.form.get("profile_id",type=int)
+            if profile_id:
+                saved=row("SELECT mapping_json FROM data_import_profiles WHERE id=:id AND module_name=:module",{"id":profile_id,"module":module_name})
+                if saved:
+                    try: preferred=json.loads(saved["mapping_json"] or "{}")
+                    except ValueError: preferred={}
+            mapping,mapping_details=smart_map_headers(raw_headers,definition,module_name,preferred)
+            mapped_fields={field for field in mapping.values() if field}
+            missing=[h for h in definition["required"] if h not in mapped_fields]
             if missing:
-                raise ValueError("الأعمدة المطلوبة غير موجودة: "+", ".join(missing))
-            for row_no,cells in enumerate(sheet.iter_rows(),start=2):
-                values=[normalize_excel_value(c.value) for c in cells]
-                data={raw_headers[i]:values[i] if i<len(values) else ""
-                      for i in range(len(raw_headers))}
-                if not any(str(v).strip() for v in data.values()):
-                    continue
-                row_errors=validate_import_row(module_name,data,row_no)
-                preview.append({"row_no":row_no,"data":data,"errors":row_errors})
-                errors.extend(row_errors)
-            session["import_preview"]={
-                "module_name":module_name,
-                "file_name":secure_filename(uploaded.filename),
-                "rows":preview[:1000],
-            }
-            flash(f"تمت قراءة {len(preview)} صفًا. راجع المعاينة قبل التأكيد.",
-                  "warning" if errors else "success")
+                raise ValueError("تعذر مطابقة الأعمدة المطلوبة: "+", ".join(missing))
+            duplicate_keys=set()
+            for row_no,values in enumerate(data_rows,start=2):
+                normalized_values=[normalize_excel_value(v) for v in values]
+                raw_data={raw_headers[i]:normalized_values[i] if i<len(normalized_values) else "" for i in range(len(raw_headers))}
+                data={target:clean_import_value(raw_data.get(source,""),target) for source,target in mapping.items() if target}
+                if not any(str(v).strip() for v in data.values()): continue
+                row_errors,row_warnings=validate_import_row(module_name,data,row_no)
+                identity=str(data.get("code") or data.get("employee_no") or data.get("account_code") or data.get("vat_no") or data.get("name") or "").strip().lower()
+                duplicate_status=""
+                if identity and identity in duplicate_keys:
+                    duplicate_status="داخل الملف"; row_warnings.append("السجل مكرر داخل الملف")
+                if identity: duplicate_keys.add(identity)
+                existing=find_existing_import_record(module_name,data)
+                action="update" if existing else "add"
+                if existing:
+                    duplicate_status="موجود بالنظام"
+                    row_warnings.append("يوجد سجل مطابق في النظام؛ سيعتمد الإجراء على وضع الاستيراد")
+                if row_errors: action="error"
+                preview.append({"row_no":row_no,"data":data,"errors":row_errors,"warnings":row_warnings,
+                                "duplicate_status":duplicate_status,"action":action})
+                errors.extend([f"الصف {row_no}: {e}" for e in row_errors])
+                warnings.extend([f"الصف {row_no}: {w}" for w in row_warnings])
+            quality=import_quality_breakdown(preview,definition); quality_score=quality["overall"]
+            simulation={"add":sum(1 for x in preview if x["action"]=="add"),
+                        "update":sum(1 for x in preview if x["action"]=="update"),
+                        "skip":sum(1 for x in preview if x.get("duplicate_status")=="داخل الملف"),
+                        "errors":sum(1 for x in preview if x["action"]=="error")}
+            file_info={"name":filename,"rows":len(preview),"columns":len(raw_headers)}
+            save_import_preview({"module_name":module_name,"file_name":filename,"rows":preview,
+                                 "mapping":mapping,"quality":quality,"simulation":simulation})
+            flash(f"تمت قراءة {len(preview)} صفًا ومطابقة {len(mapped_fields)} عمودًا تلقائيًا.","warning" if errors else "success")
         except Exception as exc:
-            db.session.rollback()
+            db.session.rollback(); clear_import_preview()
             flash(f"تعذر قراءة الملف: {exc}","danger")
-    return render_template("data_import_upload.html",module_name=module_name,
-      definition=definition,preview=preview,errors=errors)
+    return render_template("data_import_upload.html",module_name=module_name,definition=definition,
+      preview=preview,errors=errors,warnings=warnings,mapping=mapping,mapping_details=mapping_details,
+      file_info=file_info,quality_score=quality_score,quality=quality,simulation=simulation,profiles=profiles)
+
+
+@app.route("/data-import/<module_name>/profile",methods=["POST"])
+@login_required
+def data_import_save_profile(module_name):
+    preview=load_import_preview()
+    if preview.get("module_name")!=module_name:
+        flash("لا توجد معاينة صالحة لحفظ القالب.","danger")
+        return redirect(url_for("data_import_upload",module_name=module_name))
+    profile_name=request.form.get("profile_name","").strip()
+    if not profile_name:
+        flash("اكتب اسم قالب المطابقة.","danger")
+        return redirect(url_for("data_import_upload",module_name=module_name))
+    execute("""INSERT INTO data_import_profiles(profile_name,module_name,source_system,mapping_json,created_by,created_at,updated_at)
+              VALUES(:name,:module,:source,:mapping,:user,:dt,:dt)""",
+            {"name":profile_name,"module":module_name,"source":request.form.get("source_system","").strip(),
+             "mapping":json.dumps(preview.get("mapping",{}),ensure_ascii=False),"user":session.get("user_id"),"dt":datetime.now()})
+    for source,target in preview.get("mapping",{}).items():
+        if target:
+            try:
+                execute("""INSERT INTO data_import_profile_aliases(module_name,source_header,target_field,created_by,created_at)
+                          VALUES(:module,:source,:target,:user,:dt)
+                          ON CONFLICT(module_name,source_header) DO UPDATE SET target_field=EXCLUDED.target_field""",
+                        {"module":module_name,"source":source,"target":target,"user":session.get("user_id"),"dt":datetime.now()})
+            except Exception:
+                db.session.rollback()
+    audit("CREATE","IMPORT_PROFILE",f"حفظ قالب مطابقة {profile_name} لوحدة {module_name}")
+    flash("تم حفظ قالب المطابقة وسيظهر في عمليات الاستيراد القادمة.","success")
+    return redirect(url_for("data_import_upload",module_name=module_name))
+
 
 @app.route("/data-import/<module_name>/confirm",methods=["POST"])
 @login_required
 def data_import_confirm(module_name):
-    preview=session.get("import_preview") or {}
+    preview=load_import_preview()
     if preview.get("module_name")!=module_name:
         flash("لا توجد معاينة صالحة للاستيراد.","danger")
         return redirect(url_for("data_import_upload",module_name=module_name))
     import_mode=request.form.get("import_mode","إضافة فقط")
-    success=updated=failed=0
-    error_details=[]
     rows_data=preview.get("rows",[])
+    import_no=next_import_number()
+    now=datetime.now()
+    db.session.execute(text("""INSERT INTO data_import_jobs(import_no,module_name,file_name,import_mode,total_rows,
+      success_rows,updated_rows,failed_rows,status,error_details,imported_by,imported_at)
+      VALUES(:no,:module,:file,:mode,:total,0,0,0,'قيد الانتظار','',:user,:dt)"""),
+      {"no":import_no,"module":module_name,"file":preview.get("file_name",""),"mode":import_mode,
+       "total":len(rows_data),"user":session.get("user_id"),"dt":now})
+    job_id=db.session.execute(text("SELECT id FROM data_import_jobs WHERE import_no=:no"),{"no":import_no}).scalar_one()
     for item in rows_data:
-        if item.get("errors"):
-            failed+=1
-            error_details.extend(item["errors"])
-            continue
+        initial='فشل' if item.get('errors') else ('متجاهل' if item.get('duplicate_status')=='داخل الملف' else 'قيد الانتظار')
+        error=' | '.join(item.get('errors') or [])
+        db.session.execute(text("""INSERT INTO data_import_job_rows(job_id,row_no,row_data,row_status,action_type,error_message)
+          VALUES(:job,:row_no,:data,:status,:action,:error)"""),
+          {"job":job_id,"row_no":item.get("row_no"),"data":json.dumps(item.get("data",{}),ensure_ascii=False,default=str),
+           "status":initial,"action":item.get("action",''),"error":error})
+    db.session.execute(text("""INSERT INTO data_import_job_events(job_id,event_type,message,created_at)
+      VALUES(:job,'QUEUE',:message,:dt)"""),{"job":job_id,"message":f"تمت إضافة {len(rows_data)} صفًا إلى طابور المعالجة", "dt":now})
+    db.session.commit()
+    clear_import_preview()
+    audit("QUEUE","DATA_IMPORT",f"إضافة العملية {import_no} إلى طابور الاستيراد")
+    flash("تمت إضافة عملية الاستيراد إلى الطابور. ستبدأ المعالجة من شاشة المتابعة.","success")
+    return redirect(url_for("data_import_job_monitor",job_id=job_id))
+
+
+@app.route("/data-import/job/<int:job_id>")
+@login_required
+def data_import_job_monitor(job_id):
+    job=row("""SELECT j.*,u.username FROM data_import_jobs j LEFT JOIN users u ON u.id=j.imported_by
+               WHERE j.id=:id""",{"id":job_id})
+    if not job: return "عملية الاستيراد غير موجودة",404
+    events=rows("SELECT * FROM data_import_job_events WHERE job_id=:id ORDER BY id DESC LIMIT 30",{"id":job_id})
+    return render_template("data_import_job_monitor.html",job=job,events=events)
+
+
+@app.route("/data-import/job/<int:job_id>/progress")
+@login_required
+def data_import_job_progress(job_id):
+    job=row("SELECT * FROM data_import_jobs WHERE id=:id",{"id":job_id})
+    if not job: return jsonify({"error":"not_found"}),404
+    counts=row("""SELECT COUNT(*) total,
+      SUM(CASE WHEN row_status IN ('نجح','تم التحديث','فشل','متجاهل') THEN 1 ELSE 0 END) processed,
+      SUM(CASE WHEN row_status='نجح' THEN 1 ELSE 0 END) success,
+      SUM(CASE WHEN row_status='تم التحديث' THEN 1 ELSE 0 END) updated,
+      SUM(CASE WHEN row_status='فشل' THEN 1 ELSE 0 END) failed,
+      SUM(CASE WHEN row_status='متجاهل' THEN 1 ELSE 0 END) skipped
+      FROM data_import_job_rows WHERE job_id=:id""",{"id":job_id})
+    total=int(counts.get('total') or 0); processed=int(counts.get('processed') or 0)
+    percent=round(processed/total*100,1) if total else 100
+    latest=row("SELECT message,created_at FROM data_import_job_events WHERE job_id=:id ORDER BY id DESC LIMIT 1",{"id":job_id})
+    return jsonify({"status":job.get("status"),"total":total,"processed":processed,"percent":percent,
+      "success":int(counts.get('success') or 0),"updated":int(counts.get('updated') or 0),
+      "failed":int(counts.get('failed') or 0),"skipped":int(counts.get('skipped') or 0),
+      "message":latest.get('message') if latest else ''})
+
+
+@app.route("/data-import/job/<int:job_id>/process",methods=["POST"])
+@login_required
+def data_import_job_process(job_id):
+    job=row("SELECT * FROM data_import_jobs WHERE id=:id",{"id":job_id})
+    if not job: return jsonify({"error":"not_found"}),404
+    if job.get('status') in {'مكتمل','مكتمل مع أخطاء','ملغي'}:
+        return jsonify({"done":True,"status":job.get('status')})
+    execute("UPDATE data_import_jobs SET status='قيد التنفيذ' WHERE id=:id",{"id":job_id})
+    batch=rows("""SELECT * FROM data_import_job_rows WHERE job_id=:id AND row_status='قيد الانتظار'
+                  ORDER BY id LIMIT 50""",{"id":job_id})
+    for item in batch:
         try:
-            was_updated=import_excel_row(module_name,item["data"],import_mode)
-            updated+=1 if was_updated else 0
-            success+=1
+            data=json.loads(item.get('row_data') or '{}')
+            was_updated=import_excel_row(job['module_name'],data,job['import_mode'])
+            execute("""UPDATE data_import_job_rows SET row_status=:status,processed_at=:dt WHERE id=:id""",
+                    {"status":"تم التحديث" if was_updated else "نجح","dt":datetime.now(),"id":item['id']})
         except Exception as exc:
             db.session.rollback()
-            failed+=1
-            error_details.append(f"الصف {item['row_no']}: {exc}")
-    import_no=next_import_number()
-    execute("""INSERT INTO data_import_jobs(import_no,module_name,file_name,
-      import_mode,total_rows,success_rows,updated_rows,failed_rows,status,
-      error_details,imported_by,imported_at)
-      VALUES(:no,:module,:file,:mode,:total,:success,:updated,:failed,:status,
-      :errors,:user,:dt)""",
-      {"no":import_no,"module":module_name,"file":preview.get("file_name",""),
-       "mode":import_mode,"total":len(rows_data),"success":success,
-       "updated":updated,"failed":failed,
-       "status":"مكتمل مع أخطاء" if failed else "مكتمل",
-       "errors":"\n".join(error_details[:500]),"user":session.get("user_id"),
-       "dt":datetime.now()})
-    session.pop("import_preview",None)
-    audit("IMPORT","EXCEL",f"استيراد {module_name}: ناجح {success}، فاشل {failed}")
-    flash(f"اكتمل الاستيراد: ناجح {success}، تحديث {updated}، فاشل {failed}.",
-          "warning" if failed else "success")
-    return redirect(url_for("data_import_center"))
+            execute("""UPDATE data_import_job_rows SET row_status='فشل',error_message=:error,processed_at=:dt WHERE id=:id""",
+                    {"error":str(exc),"dt":datetime.now(),"id":item['id']})
+    counts=row("""SELECT COUNT(*) total,
+      SUM(CASE WHEN row_status='قيد الانتظار' THEN 1 ELSE 0 END) pending,
+      SUM(CASE WHEN row_status='نجح' THEN 1 ELSE 0 END) success,
+      SUM(CASE WHEN row_status='تم التحديث' THEN 1 ELSE 0 END) updated,
+      SUM(CASE WHEN row_status='فشل' THEN 1 ELSE 0 END) failed
+      FROM data_import_job_rows WHERE job_id=:id""",{"id":job_id})
+    pending=int(counts.get('pending') or 0); failed=int(counts.get('failed') or 0)
+    status=('مكتمل مع أخطاء' if failed else 'مكتمل') if pending==0 else 'قيد التنفيذ'
+    error_rows=rows("SELECT row_no,error_message FROM data_import_job_rows WHERE job_id=:id AND row_status='فشل' ORDER BY row_no LIMIT 1000",{"id":job_id})
+    errors='\n'.join(f"الصف {x['row_no']}: {x['error_message']}" for x in error_rows)
+    execute("""UPDATE data_import_jobs SET success_rows=:success,updated_rows=:updated,failed_rows=:failed,
+              status=:status,error_details=:errors WHERE id=:id""",
+            {"success":int(counts.get('success') or 0),"updated":int(counts.get('updated') or 0),
+             "failed":failed,"status":status,"errors":errors,"id":job_id})
+    if batch:
+        execute("""INSERT INTO data_import_job_events(job_id,event_type,message,created_at)
+                   VALUES(:job,'PROGRESS',:message,:dt)""",
+                {"job":job_id,"message":f"تمت معالجة دفعة من {len(batch)} صفًا — المتبقي {pending}","dt":datetime.now()})
+    if pending==0:
+        audit("IMPORT","BATCH",f"اكتملت عملية {job['import_no']} بالحالة {status}")
+    return jsonify({"done":pending==0,"status":status,"processed_batch":len(batch)})
+
+
+@app.route("/data-import/job/<int:job_id>/cancel",methods=["POST"])
+@login_required
+def data_import_job_cancel(job_id):
+    execute("UPDATE data_import_jobs SET status='ملغي' WHERE id=:id AND status IN ('قيد الانتظار','قيد التنفيذ')",{"id":job_id})
+    execute("UPDATE data_import_job_rows SET row_status='متجاهل' WHERE job_id=:id AND row_status='قيد الانتظار'",{"id":job_id})
+    execute("""INSERT INTO data_import_job_events(job_id,event_type,message,created_at)
+               VALUES(:job,'CANCEL','تم إلغاء العملية بواسطة المستخدم',:dt)""",{"job":job_id,"dt":datetime.now()})
+    audit("CANCEL","DATA_IMPORT",f"إلغاء عملية الاستيراد رقم {job_id}")
+    return jsonify({"ok":True})
+
+
+@app.route("/data-import/history/<int:job_id>")
+@login_required
+def data_import_history_detail(job_id):
+    job=row("""SELECT j.*,u.username FROM data_import_jobs j
+               LEFT JOIN users u ON u.id=j.imported_by WHERE j.id=:id""",{"id":job_id})
+    if not job:
+        return "عملية الاستيراد غير موجودة",404
+    return render_template("data_import_history_detail.html",job=job,
+      errors=[line for line in (job.get("error_details") or "").splitlines() if line])
+
+@app.route("/data-import/history/<int:job_id>/errors.xlsx")
+@login_required
+def data_import_errors(job_id):
+    job=row("SELECT * FROM data_import_jobs WHERE id=:id",{"id":job_id})
+    if not job:
+        return "عملية الاستيراد غير موجودة",404
+    error_lines=[line for line in (job.get("error_details") or "").splitlines() if line]
+    records=[]
+    for line in error_lines:
+        match=re.match(r"الصف\s+(\d+):\s*(.*)",line)
+        records.append([match.group(1) if match else "",match.group(2) if match else line])
+    return xlsx_response(f"{job['import_no']}_errors.xlsx","Import Errors",["الصف","سبب الخطأ"],records)
 
 
 @app.route("/financial-statements")
