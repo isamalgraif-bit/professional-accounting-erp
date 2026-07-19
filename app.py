@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.10.8"
+APP_VERSION = "20.11.0"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -2155,6 +2155,7 @@ def import_excel_row(module_name, data, import_mode):
     updated=False
     if module_name=="customers":
         code=data.get("code") or None
+        name_en=(data.get("name_en") or "").strip() or transliterate_arabic_name(data["name"])
         existing=row("""SELECT id FROM customers WHERE code=:code OR name=:name
                         ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]}) if code else row(
                      "SELECT id FROM customers WHERE name=:name ORDER BY id LIMIT 1",{"name":data["name"]})
@@ -2163,7 +2164,7 @@ def import_excel_row(module_name, data, import_mode):
                 execute("""UPDATE customers SET name=:name,name_en=:name_en,vat_number=:vat,
                   phone=:phone,email=:email,address=:address,credit_limit=:limit
                   WHERE id=:id""",
-                  {"name":data["name"],"name_en":data.get("name_en",""),
+                  {"name":data["name"],"name_en":name_en,
                    "vat":data.get("vat_no",""),"phone":data.get("phone",""),
                    "email":data.get("email",""),"address":data.get("address",""),
                    "limit":float(data.get("credit_limit") or 0),"id":existing["id"]})
@@ -2174,13 +2175,14 @@ def import_excel_row(module_name, data, import_mode):
             execute("""INSERT INTO customers(code,name,name_en,vat_number,phone,email,
               address,credit_limit)
               VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,:limit)""",
-              {"code":code,"name":data["name"],"name_en":data.get("name_en",""),
+              {"code":code,"name":data["name"],"name_en":name_en,
                "vat":data.get("vat_no",""),"phone":data.get("phone",""),
                "email":data.get("email",""),"address":data.get("address",""),
                "limit":float(data.get("credit_limit") or 0)})
 
     elif module_name=="suppliers":
         code=data.get("code") or None
+        name_en=(data.get("name_en") or "").strip() or transliterate_arabic_name(data["name"])
         existing=row("""SELECT id FROM suppliers WHERE code=:code OR name=:name
                         ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]}) if code else row(
                      "SELECT id FROM suppliers WHERE name=:name ORDER BY id LIMIT 1",{"name":data["name"]})
@@ -2188,7 +2190,7 @@ def import_excel_row(module_name, data, import_mode):
             if import_mode=="إضافة وتحديث":
                 execute("""UPDATE suppliers SET name=:name,name_en=:name_en,vat_number=:vat,
                   phone=:phone,email=:email,address=:address WHERE id=:id""",
-                  {"name":data["name"],"name_en":data.get("name_en",""),
+                  {"name":data["name"],"name_en":name_en,
                    "vat":data.get("vat_no",""),"phone":data.get("phone",""),
                    "email":data.get("email",""),"address":data.get("address",""),
                    "id":existing["id"]})
@@ -2199,7 +2201,7 @@ def import_excel_row(module_name, data, import_mode):
             execute("""INSERT INTO suppliers(code,name,name_en,vat_number,phone,email,
               address)
               VALUES(:code,:name,:name_en,:vat,:phone,:email,:address)""",
-              {"code":code,"name":data["name"],"name_en":data.get("name_en",""),
+              {"code":code,"name":data["name"],"name_en":name_en,
                "vat":data.get("vat_no",""),"phone":data.get("phone",""),
                "email":data.get("email",""),"address":data.get("address","")})
 
@@ -2233,7 +2235,8 @@ def import_excel_row(module_name, data, import_mode):
         existing=row("""SELECT id FROM employees WHERE employee_no=:no OR name=:name
                         ORDER BY id LIMIT 1""",{"no":emp_no,"name":data["name"]}) if emp_no else row(
                      "SELECT id FROM employees WHERE name=:name ORDER BY id LIMIT 1",{"name":data["name"]})
-        payload={"no":emp_no,"name":data["name"],"name_en":data.get("name_en",""),
+        payload={"no":emp_no,"name":data["name"],
+                 "name_en":(data.get("name_en") or "").strip() or transliterate_arabic_name(data["name"]),
                  "job":data.get("job_title",""),"salary":float(data.get("basic_salary") or 0),
                  "phone":data.get("phone",""),"email":data.get("email",""),
                  "hire":data.get("hire_date") or None,"nationality":data.get("nationality","")}
@@ -2263,7 +2266,7 @@ def import_excel_row(module_name, data, import_mode):
                 raise ValueError(f"الحساب الأب {data['parent_code']} غير موجود.")
             parent_id=parent["id"]
         payload={"code":data["account_code"],"ar":data["account_name_ar"],
-                 "en":data.get("account_name_en",""),"type":data["account_type"],
+                 "en":(data.get("account_name_en") or "").strip() or transliterate_arabic_name(data["account_name_ar"]),"type":data["account_type"],
                  "parent":parent_id,"accepts":int(float(data.get("accepts_entries") or 1)),
                  "active":int(float(data.get("active") or 1))}
         if existing:
@@ -4846,7 +4849,9 @@ def chart_of_accounts():
         normal_balance = "مدين" if account_type in ("أصل", "مصروف") else "دائن"
         statement_type = "قائمة الدخل" if account_type in ("إيراد", "مصروف") else "الميزانية العمومية"
         account_name_ar=linked_record["name"] if linked_record else request.form["account_name_ar"].strip()
-        account_name_en=(linked_record["name_en"] or "") if linked_record else request.form.get("account_name_en","").strip()
+        account_name_en=(linked_record["name_en"] or "").strip() if linked_record else request.form.get("account_name_en","").strip()
+        if not account_name_en:
+            account_name_en=transliterate_arabic_name(account_name_ar)
 
         execute("""INSERT INTO chart_of_accounts(
             account_code,account_name_ar,account_name_en,account_type,
@@ -4995,6 +5000,28 @@ def chart_next_code():
         "message": "تم اقتراح الكود تلقائيًا"
     }
 
+@app.route("/chart-of-accounts/fill-english-names",methods=["POST"])
+@login_required
+def chart_fill_english_names():
+    missing=rows("""SELECT id,account_name_ar FROM chart_of_accounts
+      WHERE account_name_en IS NULL OR TRIM(account_name_en)='' ORDER BY id""")
+    updated=0
+    try:
+        for account in missing:
+            english_name=transliterate_arabic_name(account["account_name_ar"])
+            if english_name:
+                db.session.execute(text("UPDATE chart_of_accounts SET account_name_en=:name WHERE id=:id"),
+                  {"name":english_name,"id":account["id"]})
+                updated+=1
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        flash(f"تعذر استكمال الأسماء الإنجليزية: {exc}","danger")
+        return redirect(url_for("chart_of_accounts"))
+    audit("UPDATE","ACCOUNT",f"توليد الأسماء الإنجليزية لـ {updated} حساب")
+    flash(f"تم توليد الاسم الإنجليزي لـ {updated} حساب، دون تعديل الأسماء الموجودة","success")
+    return redirect(url_for("chart_of_accounts"))
+
 
 @app.route("/chart-of-accounts/<int:account_id>")
 @login_required
@@ -5054,6 +5081,8 @@ def account_edit(account_id):
             parent = row("SELECT level FROM chart_of_accounts WHERE id=:id", {"id": parent_id})
             parent_level = parent["level"] if parent else 0
 
+        account_name_ar=request.form["account_name_ar"].strip()
+        account_name_en=request.form.get("account_name_en","").strip() or transliterate_arabic_name(account_name_ar)
         execute("""UPDATE chart_of_accounts SET
             account_code=:code,account_name_ar=:ar,account_name_en=:en,
             account_type=:type,parent_id=:parent,level=:level,
@@ -5061,8 +5090,8 @@ def account_edit(account_id):
             statement_type=:statement_type,active=:active
             WHERE id=:id""",
             {"code":request.form["account_code"].strip(),
-             "ar":request.form["account_name_ar"].strip(),
-             "en":request.form.get("account_name_en","").strip(),
+             "ar":account_name_ar,
+             "en":account_name_en,
              "type":request.form["account_type"],
              "parent":parent_id,
              "level":parent_level+1,

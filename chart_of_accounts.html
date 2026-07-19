@@ -8,6 +8,7 @@
 <div class="d-flex gap-2 flex-wrap">
 <button type="button" class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('chart_of_accounts')}}">📄 جديد</button>
 <a class="btn btn-success" href="{{url_for('chart_export')}}">تصدير Excel</a>
+<form method="post" action="{{url_for('chart_fill_english_names')}}" onsubmit="return confirm('سيتم توليد الاسم الإنجليزي للحسابات الفارغة فقط. متابعة؟')"><button class="btn btn-outline-success">🌐 استكمال الأسماء الإنجليزية</button></form>
 <button class="btn btn-outline-dark" onclick="window.print()">طباعة / PDF</button>
 </div>
 </div>
