@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.10.6"
+APP_VERSION = "20.10.7"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -2155,9 +2155,9 @@ def import_excel_row(module_name, data, import_mode):
     updated=False
     if module_name=="customers":
         code=data.get("code") or None
-        existing=row("""SELECT id FROM customers WHERE
-                        (:code IS NOT NULL AND code=:code) OR name=:name
-                        ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]})
+        existing=row("""SELECT id FROM customers WHERE code=:code OR name=:name
+                        ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]}) if code else row(
+                     "SELECT id FROM customers WHERE name=:name ORDER BY id LIMIT 1",{"name":data["name"]})
         if existing:
             if import_mode=="إضافة وتحديث":
                 execute("""UPDATE customers SET name=:name,name_en=:name_en,vat_number=:vat,
@@ -2181,9 +2181,9 @@ def import_excel_row(module_name, data, import_mode):
 
     elif module_name=="suppliers":
         code=data.get("code") or None
-        existing=row("""SELECT id FROM suppliers WHERE
-                        (:code IS NOT NULL AND code=:code) OR name=:name
-                        ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]})
+        existing=row("""SELECT id FROM suppliers WHERE code=:code OR name=:name
+                        ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]}) if code else row(
+                     "SELECT id FROM suppliers WHERE name=:name ORDER BY id LIMIT 1",{"name":data["name"]})
         if existing:
             if import_mode=="إضافة وتحديث":
                 execute("""UPDATE suppliers SET name=:name,name_en=:name_en,vat_number=:vat,
@@ -2206,9 +2206,9 @@ def import_excel_row(module_name, data, import_mode):
 
     elif module_name=="inventory":
         code=(data.get("code") or "").strip() or next_inventory_sku()
-        existing=row("""SELECT id FROM inventory WHERE
-                        (:code IS NOT NULL AND code=:code) OR name=:name
-                        ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]})
+        existing=row("""SELECT id FROM inventory WHERE code=:code OR name=:name
+                        ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]}) if code else row(
+                     "SELECT id FROM inventory WHERE name=:name ORDER BY id LIMIT 1",{"name":data["name"]})
         payload={"code":code,"name":data["name"],"description":data.get("description",""),
                  "unit":normalize_item_unit(data.get("unit")),"quantity":float(data.get("quantity") or 0),
                  "unit_cost":float(data.get("unit_cost") or 0),
@@ -2231,9 +2231,9 @@ def import_excel_row(module_name, data, import_mode):
 
     elif module_name=="employees":
         emp_no=data.get("employee_no") or None
-        existing=row("""SELECT id FROM employees WHERE
-                        (:no IS NOT NULL AND employee_no=:no) OR name=:name
-                        ORDER BY id LIMIT 1""",{"no":emp_no,"name":data["name"]})
+        existing=row("""SELECT id FROM employees WHERE employee_no=:no OR name=:name
+                        ORDER BY id LIMIT 1""",{"no":emp_no,"name":data["name"]}) if emp_no else row(
+                     "SELECT id FROM employees WHERE name=:name ORDER BY id LIMIT 1",{"name":data["name"]})
         payload={"no":emp_no,"name":data["name"],"name_en":data.get("name_en",""),
                  "job":data.get("job_title",""),"salary":float(data.get("basic_salary") or 0),
                  "phone":data.get("phone",""),"email":data.get("email",""),
