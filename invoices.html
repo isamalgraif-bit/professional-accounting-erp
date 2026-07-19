@@ -83,7 +83,7 @@
 <td><input class="form-control" name="item_name[]" list="inventoryList" placeholder="اكتب أو اختر المادة" required></td>
 <td><input class="form-control" name="description[]" placeholder="وصف العملية أو المشروع"></td>
 <td><input class="form-control quantity" type="number" name="quantity[]" min="0.001" step="0.001" value="1" required></td>
-<td><select class="form-select" name="unit[]"><option>وحدة</option><option>متر</option><option>كجم</option><option>طن</option><option>قطعة</option><option>رول</option><option>بكرة</option><option>صندوق</option><option>ساعة</option><option>يوم</option><option>شهر</option><option>خدمة</option><option>مقطوعية</option></select></td>
+<td><select class="form-select" name="unit[]">{% for unit in item_units %}<option value="{{unit}}">{{unit}}</option>{% endfor %}</select></td>
 <td><input class="form-control unit-price" type="number" name="unit_price[]" min="0" step="0.01" value="0" required></td>
 <td><input class="form-control discount-rate" type="number" name="discount_rate[]" min="0" max="100" step="0.01" value="0"></td>
 <td><input type="hidden" name="vat_rate[]" value="{{app_settings.vat_rate or 15}}"><input class="form-control line-vat" value="0.00" readonly></td>

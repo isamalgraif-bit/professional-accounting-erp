@@ -2,12 +2,12 @@
 <div class="erp-page-title"><div><h3>بطاقات الأصناف</h3><small class="text-muted">Professional Inventory Master</small></div>
 <div class="d-flex gap-2"><button class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('inventory')}}">📄 جديد</button><a class="btn btn-success" href="{{url_for('inventory_export')}}">📊 Excel</a></div></div>
 <div class="form-card mb-4"><form method="post" data-track-unsaved="1"><div class="row g-3">
-<div class="col-md-2"><label>كود الصنف</label><input class="form-control" name="sku"></div>
+<div class="col-md-2"><label>كود الصنف</label><input class="form-control" value="يُنشأ تلقائياً بعد الحفظ" readonly><small class="text-muted">مثال: ITM-000001</small></div>
 <div class="col-md-3"><label>اسم الصنف بالعربية</label><input class="form-control" name="name" required></div>
 <div class="col-md-3"><label>Item Name in English</label><input class="form-control" name="name_en"></div>
 <div class="col-md-2"><label>الباركود</label><input class="form-control" name="barcode"></div>
 <div class="col-md-2"><label>نوع الصنف</label><select class="form-select" name="item_type"><option>مخزني</option><option>خدمي</option><option>أصل ثابت</option></select></div>
-<div class="col-md-2"><label>الوحدة</label><input class="form-control" name="unit" value="وحدة"></div>
+<div class="col-md-2"><label>الوحدة</label><select class="form-select" name="unit" required>{% for unit in item_units %}<option value="{{unit}}">{{unit}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>طريقة التقييم</label><select class="form-select" name="valuation_method"><option>متوسط متحرك</option><option>FIFO</option></select></div>
 <div class="col-md-2"><label>التكلفة الافتتاحية</label><input class="form-control" type="number" step=".0001" name="cost" value="0"></div>
 <div class="col-md-2"><label>سعر البيع</label><input class="form-control" type="number" step=".01" name="sale_price" value="0"></div>

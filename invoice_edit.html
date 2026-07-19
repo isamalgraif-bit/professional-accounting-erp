@@ -25,7 +25,7 @@
 <td><input class="form-control" name="item_name[]" list="inventoryList" value="{{item.item_name}}" required></td>
 <td><input class="form-control" name="description[]" value="{{item.description or ''}}"></td>
 <td><input class="form-control qty" type="number" step=".001" min=".001" name="quantity[]" value="{{item.quantity}}" required></td>
-<td><input class="form-control" name="unit[]" value="{{item.unit}}"></td>
+<td><select class="form-select" name="unit[]">{% for unit in item_units %}<option value="{{unit}}" {{'selected' if unit==item.unit else ''}}>{{unit}}</option>{% endfor %}</select></td>
 <td><input class="form-control price" type="number" step=".01" min="0" name="unit_price[]" value="{{item.unit_price}}" required></td>
 <td><input class="form-control discount" type="number" step=".01" min="0" max="100" name="discount_rate[]" value="{{item.discount_rate or 0}}"></td>
 <td><input class="form-control vat-rate" type="number" step=".01" min="0" name="vat_rate[]" value="{{item.vat_rate or app_settings.vat_rate or 15}}"></td>

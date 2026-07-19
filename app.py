@@ -20,7 +20,13 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.0.3"
+APP_VERSION = "20.8.0"
+
+ITEM_UNITS = [
+    "وحدة", "قطعة", "متر", "متر مربع", "متر مكعب", "كجم", "طن",
+    "لتر", "رول", "بكرة", "صندوق", "كرتون", "حزمة", "طقم",
+    "ساعة", "يوم", "شهر", "خدمة", "مقطوعية"
+]
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
@@ -2184,12 +2190,12 @@ def import_excel_row(module_name, data, import_mode):
                "dt":datetime.now()})
 
     elif module_name=="inventory":
-        code=data.get("code") or None
+        code=(data.get("code") or "").strip() or next_inventory_sku()
         existing=row("""SELECT id FROM inventory WHERE
                         (:code IS NOT NULL AND code=:code) OR name=:name
                         ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]})
         payload={"code":code,"name":data["name"],"description":data.get("description",""),
-                 "unit":data.get("unit","وحدة"),"quantity":float(data.get("quantity") or 0),
+                 "unit":normalize_item_unit(data.get("unit")),"quantity":float(data.get("quantity") or 0),
                  "unit_cost":float(data.get("unit_cost") or 0),
                  "reorder":float(data.get("reorder_level") or 0),
                  "active":int(float(data.get("active") or 1))}
@@ -2203,9 +2209,9 @@ def import_excel_row(module_name, data, import_mode):
             else:
                 raise ValueError("الصنف موجود مسبقًا.")
         else:
-            execute("""INSERT INTO inventory(code,name,description,unit,quantity,
-              unit_cost,reorder_level,active)
-              VALUES(:code,:name,:description,:unit,:quantity,:unit_cost,:reorder,:active)""",
+            execute("""INSERT INTO inventory(code,sku,name,description,unit,quantity,
+              unit_cost,cost,reorder_level,active)
+              VALUES(:code,:code,:name,:description,:unit,:quantity,:unit_cost,:unit_cost,:reorder,:active)""",
               payload)
 
     elif module_name=="employees":
@@ -2324,6 +2330,26 @@ def next_entity_code(table_name, prefix):
     count=db.session.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar() or 0
     return f"{prefix}-{count+1:06d}"
 
+def next_inventory_sku():
+    """Generate one shared sequential item code for every item-creation screen."""
+    if db.engine.dialect.name == "postgresql":
+        db.session.execute(text("SELECT pg_advisory_xact_lock(2080001)"))
+    values=rows("""SELECT COALESCE(sku,code,'') value FROM inventory
+                   WHERE COALESCE(sku,code,'') ~ '^ITM-[0-9]+$'""") if db.engine.dialect.name=="postgresql" else rows(
+                  "SELECT COALESCE(sku,code,'') value FROM inventory")
+    highest=0
+    for value in values:
+        match=re.fullmatch(r"ITM-(\d+)",value["value"] or "")
+        if match:
+            highest=max(highest,int(match.group(1)))
+    return f"ITM-{highest+1:06d}"
+
+def normalize_item_unit(value):
+    unit=(value or "وحدة").strip()
+    if unit not in ITEM_UNITS:
+        raise ValueError("نوع الوحدة المحدد غير صحيح.")
+    return unit
+
 def smart_entity_row(entity, entity_id):
     cfg=SMART_ENTITY_CONFIG.get(entity)
     if not cfg:
@@ -2375,16 +2401,16 @@ def create_quick_entity(entity, payload):
         new_id=row("SELECT id FROM suppliers WHERE code=:code",{"code":code})["id"]
         return "suppliers",smart_entity_row("suppliers",new_id)
     if entity=="item":
-        code=(payload.get("code") or next_entity_code("inventory","ITM")).strip()
+        code=next_inventory_sku()
         existing=row("SELECT id FROM inventory WHERE code=:code OR name=:name",
                      {"code":code,"name":name})
         if existing:
             raise ValueError("المادة موجودة مسبقًا.")
-        execute("""INSERT INTO inventory(code,name,description,unit,quantity,unit_cost,
+        execute("""INSERT INTO inventory(code,sku,name,description,unit,quantity,unit_cost,cost,
           reorder_level,active)
-          VALUES(:code,:name,:description,:unit,:quantity,:cost,:reorder,1)""",
+          VALUES(:code,:code,:name,:description,:unit,:quantity,:cost,:cost,:reorder,1)""",
           {"code":code,"name":name,"description":payload.get("description",""),
-           "unit":payload.get("unit","وحدة"),
+           "unit":normalize_item_unit(payload.get("unit")),
            "quantity":float(payload.get("quantity") or 0),
            "cost":float(payload.get("unit_cost") or 0),
            "reorder":float(payload.get("reorder_level") or 0)})
@@ -3905,7 +3931,7 @@ def ensure_database():
 @app.context_processor
 def inject_settings():
     settings = row("SELECT * FROM settings WHERE id=1")
-    return {"app_settings": settings, "app_version": APP_VERSION,
+    return {"app_settings": settings, "app_version": APP_VERSION, "item_units": ITEM_UNITS,
             "can": has_permission, "current_username": session.get("username")}
 
 @app.route("/health")
@@ -4319,16 +4345,16 @@ def expenses():
 @login_required
 def inventory():
     if request.method=="POST":
-        sku=request.form.get("sku","").strip() or None
+        sku=next_inventory_sku()
         name=request.form["name"].strip()
         execute("""INSERT INTO inventory(
-          sku,name,name_en,barcode,category_id,item_type,unit,cost,sale_price,reorder_level,
+          sku,code,name,name_en,barcode,category_id,item_type,unit,cost,unit_cost,sale_price,reorder_level,
           min_level,max_level,valuation_method,track_batch,track_serial,track_expiry,active,quantity)
-          VALUES(:sku,:name,:name_en,:barcode,:category,:type,:unit,:cost,:sale,:reorder,
+          VALUES(:sku,:sku,:name,:name_en,:barcode,:category,:type,:unit,:cost,:cost,:sale,:reorder,
           :min,:max,:valuation,:batch,:serial,:expiry,1,0)""",
           {"sku":sku,"name":name,"name_en":request.form.get("name_en",""),
            "barcode":request.form.get("barcode",""),"category":request.form.get("category_id") or None,
-           "type":request.form.get("item_type","مخزني"),"unit":request.form.get("unit","وحدة"),
+           "type":request.form.get("item_type","مخزني"),"unit":normalize_item_unit(request.form.get("unit")),
            "cost":float(request.form.get("cost") or 0),"sale":float(request.form.get("sale_price") or 0),
            "reorder":float(request.form.get("reorder_level") or 0),
            "min":float(request.form.get("min_level") or 0),"max":float(request.form.get("max_level") or 0),
@@ -4512,7 +4538,7 @@ def warehouse_quick_create():
 def inventory_quick_create():
     data=request.get_json(silent=True) or {}
     name=(data.get("name") or "").strip()
-    sku=(data.get("sku") or "").strip() or None
+    sku=next_inventory_sku()
     if not name:
         return {"error":"اسم الصنف مطلوب"},400
     existing=row("""SELECT id,sku,name,unit,cost FROM inventory
@@ -4521,9 +4547,9 @@ def inventory_quick_create():
                  {"sku":sku,"name":name})
     if existing:
         return {"item":dict(existing),"created":False}
-    execute("""INSERT INTO inventory(sku,name,quantity,unit,cost,sale_price,reorder_level,active)
-               VALUES(:sku,:name,0,:unit,:cost,0,0,1)""",
-            {"sku":sku,"name":name,"unit":(data.get("unit") or "وحدة").strip(),
+    execute("""INSERT INTO inventory(sku,code,name,quantity,unit,cost,unit_cost,sale_price,reorder_level,active)
+               VALUES(:sku,:sku,:name,0,:unit,:cost,:cost,0,0,1)""",
+            {"sku":sku,"name":name,"unit":normalize_item_unit(data.get("unit")),
              "cost":float(data.get("cost") or 0)})
     item=row("SELECT id,sku,name,unit,cost FROM inventory WHERE name=:name ORDER BY id DESC LIMIT 1",{"name":name})
     audit("CREATE","INVENTORY_ITEM",f"إضافة صنف سريعة من أمر الشراء: {name}")
@@ -6535,7 +6561,7 @@ def purchase_requisitions():
             qty=float(quantities[i] or 0); price=float(prices[i] or 0)
             if qty<=0: continue
             total += qty*price
-            items.append({"name":inventory_item["name"],"qty":qty,"unit":units[i] or inventory_item["unit"],
+            items.append({"name":inventory_item["name"],"qty":qty,"unit":normalize_item_unit(units[i] or inventory_item["unit"]),
                           "price":price,"description":descriptions[i],
                           "required_date":required_dates[i] or None,
                           "supplier_id":supplier_ids[i] or None,
@@ -6674,7 +6700,7 @@ def purchase_orders():
                     flash(f"كمية الصنف {n} تتجاوز الكمية المتبقية في طلب الشراء","danger")
                     return redirect(url_for("purchase_orders"))
             items.append({"name":inventory_item["name"],"qty":q,"price":p,"vat":vr,
-                          "unit":units[i] or inventory_item["unit"],"code":codes[i] or inventory_item["sku"],"description":descriptions[i],
+                          "unit":normalize_item_unit(units[i] or inventory_item["unit"]),"code":codes[i] or inventory_item["sku"],"description":descriptions[i],
                           "requisition_item_id":req_item_id,
                           "inventory_item_id":inventory_item["id"]})
         if not items:
@@ -6811,10 +6837,11 @@ def goods_receipts():
                                 ORDER BY CASE WHEN sku=:sku THEN 0 ELSE 1 END LIMIT 1""",
                              {"sku":item["item_code"] or "","name":item["item_name"]})
                 if not inv_item:
-                    execute("""INSERT INTO inventory(sku,name,quantity,unit,cost,sale_price,reorder_level,active)
-                               VALUES(:sku,:name,0,:unit,:cost,0,0,1)""",
-                            {"sku":item["item_code"] or None,"name":item["item_name"],
-                             "unit":item["unit"],"cost":item["unit_price"]})
+                    generated_sku=item["item_code"] or next_inventory_sku()
+                    execute("""INSERT INTO inventory(sku,code,name,quantity,unit,cost,unit_cost,sale_price,reorder_level,active)
+                               VALUES(:sku,:sku,:name,0,:unit,:cost,:cost,0,0,1)""",
+                            {"sku":generated_sku,"name":item["item_name"],
+                             "unit":normalize_item_unit(item["unit"]),"cost":item["unit_price"]})
                     inv_item=row("SELECT id,cost FROM inventory WHERE name=:name ORDER BY id DESC LIMIT 1",
                                  {"name":item["item_name"]})
                 if warehouse_record:

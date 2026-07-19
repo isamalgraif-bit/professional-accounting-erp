@@ -203,8 +203,22 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 
 <script>
 window.erpUnsavedChanges = false;
+window.erpItemUnits = {{ item_units|tojson }};
+
+function upgradeUnitInputs(root=document){
+  root.querySelectorAll('input[name="unit"],input[name="unit[]"]').forEach(input=>{
+    if(input.type==='hidden'||input.dataset.unitUpgraded==='1')return;
+    const select=document.createElement('select');
+    select.className=input.className.replace('form-control','form-select');
+    select.name=input.name;select.required=input.required;select.dataset.unitUpgraded='1';
+    const current=input.value||'وحدة';
+    window.erpItemUnits.forEach(unit=>select.add(new Option(unit,unit,false,unit===current)));
+    input.replaceWith(select);
+  });
+}
 
 document.addEventListener('DOMContentLoaded', () => {
+  upgradeUnitInputs();
   document.querySelectorAll('form[data-track-unsaved="1"]').forEach(form => {
     form.addEventListener('input', () => { window.erpUnsavedChanges = true; });
     form.addEventListener('change', () => { window.erpUnsavedChanges = true; });
@@ -224,6 +238,9 @@ document.addEventListener('DOMContentLoaded', () => {
       window.location.href = target;
     });
   });
+  new MutationObserver(mutations=>mutations.forEach(m=>m.addedNodes.forEach(node=>{
+    if(node.nodeType===1)upgradeUnitInputs(node);
+  }))).observe(document.body,{childList:true,subtree:true});
 });
 </script>
 
@@ -234,13 +251,13 @@ document.addEventListener('DOMContentLoaded', () => {
   <div class="modal-body">
    <form id="quickCreateForm"><input type="hidden" id="quickEntity">
     <div class="row g-3">
-     <div class="col-md-3"><label>الكود</label><input class="form-control" name="code"></div>
+     <div class="col-md-3"><label>الكود</label><input class="form-control" value="يُنشأ تلقائياً" disabled></div>
      <div class="col-md-5"><label>الاسم</label><input class="form-control" name="name" required></div>
      <div class="col-md-4 quick-party"><label>الاسم الإنجليزي</label><input class="form-control" name="name_en"></div>
      <div class="col-md-3 quick-party"><label>الرقم الضريبي</label><input class="form-control" name="vat_number" maxlength="15"></div>
      <div class="col-md-3 quick-party"><label>الهاتف</label><input class="form-control" name="phone"></div>
      <div class="col-md-3 quick-party"><label>البريد</label><input class="form-control" name="email"></div>
-     <div class="col-md-3 quick-item"><label>الوحدة</label><input class="form-control" name="unit" value="وحدة"></div>
+     <div class="col-md-3 quick-item"><label>الوحدة</label><select class="form-select" name="unit">{% for unit in item_units %}<option value="{{unit}}">{{unit}}</option>{% endfor %}</select></div>
      <div class="col-md-3 quick-item"><label>التكلفة</label><input class="form-control" type="number" step=".01" name="unit_cost"></div>
      <div class="col-md-3 quick-item"><label>الرصيد الافتتاحي</label><input class="form-control" type="number" step=".001" name="quantity"></div>
      <div class="col-md-6"><label>الوصف/العنوان</label><input class="form-control" name="description"></div>
