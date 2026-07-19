@@ -20,7 +20,12 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.9.0"
+APP_VERSION = "20.10.0"
+
+JOURNAL_ACCOUNT_TYPES = [
+    "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
+    "مصروف", "إيراد", "أصل", "التزام", "جهة حكومية", "أخرى"
+]
 
 ITEM_UNITS = [
     "وحدة", "قطعة", "متر", "متر مربع", "متر مكعب", "كجم", "طن",
@@ -3687,6 +3692,8 @@ def init_db():
         "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS invoice_date DATE",
         "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id)",
         "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS party_type VARCHAR(20) DEFAULT ''",
+        "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS entity_id INTEGER",
+        "ALTER TABLE journal_batch_lines ADD COLUMN IF NOT EXISTS entity_id INTEGER",
         "ALTER TABLE journal_entry_lines ADD COLUMN IF NOT EXISTS tax_number VARCHAR(50) DEFAULT ''",
         "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS normal_balance VARCHAR(20) DEFAULT 'مدين'",
         "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS statement_type VARCHAR(50) DEFAULT 'الميزانية العمومية'",
@@ -3944,6 +3951,7 @@ def ensure_database():
 def inject_settings():
     settings = row("SELECT * FROM settings WHERE id=1")
     return {"app_settings": settings, "app_version": APP_VERSION, "item_units": ITEM_UNITS,
+            "journal_account_types": JOURNAL_ACCOUNT_TYPES,
             "can": has_permission, "current_username": session.get("username")}
 
 @app.route("/health")
@@ -4168,6 +4176,63 @@ def suppliers():
         audit("CREATE","SUPPLIER",f"إضافة مورد: {name_ar} / {name_en}")
         flash("تمت إضافة المورد", "success")
     return render_template("suppliers.html", rows=rows("SELECT * FROM suppliers ORDER BY id DESC"))
+
+def party_crud_config(party_type):
+    if party_type=="customer":
+        return {"table":"customers","label":"العميل","list_endpoint":"customers","statement_type":"customer"}
+    if party_type=="supplier":
+        return {"table":"suppliers","label":"المورد","list_endpoint":"suppliers","statement_type":"supplier"}
+    return None
+
+@app.route("/parties/<party_type>/<int:party_id>/edit",methods=["GET","POST"])
+@login_required
+def party_edit(party_type,party_id):
+    cfg=party_crud_config(party_type)
+    if not cfg:
+        return "نوع السجل غير صحيح",404
+    party=row(f"SELECT id,name,name_en,vat_number,phone,email FROM {cfg['table']} WHERE id=:id",{"id":party_id})
+    if not party:
+        return f"{cfg['label']} غير موجود",404
+    if request.method=="POST":
+        name=(request.form.get("name") or "").strip()
+        if not name:
+            flash("الاسم مطلوب","danger")
+            return redirect(request.url)
+        duplicate=row(f"SELECT id FROM {cfg['table']} WHERE LOWER(name)=LOWER(:name) AND id<>:id",
+                      {"name":name,"id":party_id})
+        if duplicate:
+            flash(f"يوجد {cfg['label']} آخر بالاسم نفسه","danger")
+            return redirect(request.url)
+        name_en=(request.form.get("name_en") or "").strip() or transliterate_arabic_name(name)
+        execute(f"""UPDATE {cfg['table']} SET name=:name,name_en=:name_en,
+          vat_number=:vat,phone=:phone,email=:email WHERE id=:id""",
+          {"name":name,"name_en":name_en,"vat":(request.form.get("vat_number") or "").strip(),
+           "phone":(request.form.get("phone") or "").strip(),"email":(request.form.get("email") or "").strip(),
+           "id":party_id})
+        audit("UPDATE",party_type.upper(),f"تعديل {cfg['label']}: {name}")
+        flash(f"تم تعديل بيانات {cfg['label']}","success")
+        return redirect(url_for(cfg["list_endpoint"]))
+    return render_template("party_edit.html",party=party,party_type=party_type,cfg=cfg)
+
+@app.route("/parties/<party_type>/<int:party_id>/delete",methods=["POST"])
+@login_required
+def party_delete(party_type,party_id):
+    cfg=party_crud_config(party_type)
+    if not cfg:
+        return "نوع السجل غير صحيح",404
+    party=row(f"SELECT id,name FROM {cfg['table']} WHERE id=:id",{"id":party_id})
+    if not party:
+        flash(f"{cfg['label']} غير موجود","danger")
+        return redirect(url_for(cfg["list_endpoint"]))
+    try:
+        db.session.execute(text(f"DELETE FROM {cfg['table']} WHERE id=:id"),{"id":party_id})
+        db.session.commit()
+        audit("DELETE",party_type.upper(),f"حذف {cfg['label']}: {party['name']}")
+        flash(f"تم حذف {cfg['label']} بنجاح","success")
+    except Exception:
+        db.session.rollback()
+        flash(f"لا يمكن حذف {cfg['label']} لوجود فواتير أو قيود أو حركات مرتبطة به. يمكن تعديل بياناته بدلاً من الحذف.","danger")
+    return redirect(url_for(cfg["list_endpoint"]))
 
 @app.route("/api/suppliers/quick-create", methods=["POST"])
 @login_required
@@ -5000,6 +5065,7 @@ def journal_entries():
         supplier_ids=request.form.getlist("supplier_id[]")
         customer_ids=request.form.getlist("customer_id[]")
         party_types=request.form.getlist("party_type[]")
+        entity_ids=request.form.getlist("entity_id[]")
         tax_numbers=request.form.getlist("tax_number[]")
         invoice_numbers=request.form.getlist("invoice_number[]")
         invoice_dates=request.form.getlist("invoice_date[]")
@@ -5029,21 +5095,35 @@ def journal_entries():
             invoice_number = invoice_numbers[i].strip() if i < len(invoice_numbers) else ""
             invoice_date = invoice_dates[i] if i < len(invoice_dates) and invoice_dates[i] else None
             party_account_id = (party_account_ids[i] or None) if i < len(party_account_ids) else None
+            entity_id = (entity_ids[i] or None) if i < len(entity_ids) else None
+
+            if party_type not in JOURNAL_ACCOUNT_TYPES:
+                flash(f"السطر {i+1}: نوع الحساب غير صحيح","danger")
+                return redirect(url_for("journal_entries"))
 
             if party_type == "مورد":
                 customer_id = None
                 party = row("SELECT vat_number,payable_account_id FROM suppliers WHERE id=:id", {"id": supplier_id}) if supplier_id else None
                 tax_number = (party["vat_number"] or "") if party else ""
                 party_account_id = party.get("payable_account_id") if party else party_account_id
+                entity_id = supplier_id
             elif party_type == "عميل":
                 supplier_id = None
                 party = row("SELECT vat_number,receivable_account_id FROM customers WHERE id=:id", {"id": customer_id}) if customer_id else None
                 tax_number = (party["vat_number"] or "") if party else ""
                 party_account_id = party.get("receivable_account_id") if party else party_account_id
+                entity_id = customer_id
+            elif party_type in ("موظف","مندوب مبيعات"):
+                supplier_id = None; customer_id = None; tax_number = ""
+                employee=row("SELECT id FROM employees WHERE id=:id AND active=1",{"id":entity_id}) if entity_id else None
+                if not employee:
+                    flash(f"السطر {i+1}: اختر {party_type}","danger")
+                    return redirect(url_for("journal_entries"))
             else:
                 supplier_id = None
                 customer_id = None
                 tax_number = ""
+                entity_id = None
 
             if taxable:
                 if direction == "غير مطبق":
@@ -5077,6 +5157,7 @@ def journal_entries():
                           "invoice_number":invoice_number,
                           "invoice_date":invoice_date,
                           "party_account_id":party_account_id,
+                          "entity_id":entity_id,
                           "line_description":descriptions[i] if i<len(descriptions) else "",
                           "cost_center_id":(cost_center_ids[i] or None) if i<len(cost_center_ids) else None})
             total_debit+=debit; total_credit+=credit
@@ -5104,10 +5185,10 @@ def journal_entries():
         for line in lines:
             execute("""INSERT INTO journal_entry_lines(
                 journal_id,account_id,debit,credit,taxable,tax_direction,supplier_id,customer_id,
-                party_type,tax_number,invoice_number,invoice_date,party_account_id,line_description,cost_center_id)
+                party_type,tax_number,invoice_number,invoice_date,party_account_id,entity_id,line_description,cost_center_id)
                 VALUES(:journal_id,:account_id,:debit,:credit,:taxable,:tax_direction,
                 :supplier_id,:customer_id,:party_type,:tax_number,:invoice_number,:invoice_date,
-                :party_account_id,:line_description,:cost_center_id)""",
+                :party_account_id,:entity_id,:line_description,:cost_center_id)""",
                 {"journal_id":journal_id,**line})
         flash(f"تم حفظ القيد {journal_no}","success")
         if request.form.get("print_after_save") == "1":
@@ -5126,6 +5207,7 @@ def journal_entries():
                          WHERE active=1 AND accepts_entries=1 ORDER BY account_code"""),
         suppliers=rows("SELECT id,name,vat_number FROM suppliers ORDER BY name"),
         customers=rows("SELECT id,name,vat_number FROM customers ORDER BY name"),
+        employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"),
         centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"))
 
 
@@ -5532,6 +5614,7 @@ def multi_journal():
         taxable_values = request.form.getlist("taxable[]")
         tax_directions = request.form.getlist("tax_direction[]")
         party_types = request.form.getlist("party_type[]")
+        entity_ids = request.form.getlist("entity_id[]")
         supplier_ids = request.form.getlist("supplier_id[]")
         customer_ids = request.form.getlist("customer_id[]")
         tax_numbers = request.form.getlist("tax_number[]")
@@ -5555,10 +5638,25 @@ def multi_journal():
 
             taxable = 1 if taxable_values[i] == "1" else 0
             party_type = party_types[i] if i < len(party_types) else ""
+            entity_id = (entity_ids[i] or None) if i < len(entity_ids) else None
             supplier_id = (supplier_ids[i] or None) if i < len(supplier_ids) else None
             customer_id = (customer_ids[i] or None) if i < len(customer_ids) else None
             tax_number = tax_numbers[i].strip() if i < len(tax_numbers) else ""
             direction = tax_directions[i] if i < len(tax_directions) else "غير مطبق"
+            if party_type not in JOURNAL_ACCOUNT_TYPES:
+                flash(f"المجموعة {group_no}: نوع الحساب غير صحيح","danger")
+                return redirect(url_for("multi_journal"))
+            if party_type in ("موظف","مندوب مبيعات"):
+                employee=row("SELECT id FROM employees WHERE id=:id AND active=1",{"id":entity_id}) if entity_id else None
+                if not employee:
+                    flash(f"المجموعة {group_no}: اختر {party_type}","danger")
+                    return redirect(url_for("multi_journal"))
+            elif party_type=="عميل":
+                entity_id=customer_id
+            elif party_type=="مورد":
+                entity_id=supplier_id
+            else:
+                entity_id=None
 
             if taxable:
                 if direction == "غير مطبق":
@@ -5583,6 +5681,7 @@ def multi_journal():
                 "party_type": party_type,
                 "supplier_id": supplier_id if party_type == "مورد" else None,
                 "customer_id": customer_id if party_type == "عميل" else None,
+                "entity_id": entity_id,
                 "tax_number": tax_number,
                 "invoice_number": invoice_numbers[i] if i < len(invoice_numbers) else "",
                 "invoice_date": invoice_dates[i] if i < len(invoice_dates) and invoice_dates[i] else None,
@@ -5624,10 +5723,10 @@ def multi_journal():
             for line in lines:
                 execute("""INSERT INTO journal_batch_lines(
                     group_id,account_id,debit,credit,taxable,tax_direction,party_type,
-                    supplier_id,customer_id,tax_number,invoice_number,invoice_date,
+                    supplier_id,customer_id,entity_id,tax_number,invoice_number,invoice_date,
                     line_description,cost_center_id)
                     VALUES(:group_id,:account_id,:debit,:credit,:taxable,:tax_direction,:party_type,
-                    :supplier_id,:customer_id,:tax_number,:invoice_number,:invoice_date,
+                    :supplier_id,:customer_id,:entity_id,:tax_number,:invoice_number,:invoice_date,
                     :line_description,:cost_center_id)""", {"group_id": group_id, **line})
 
         audit("CREATE", "JOURNAL_BATCH", f"إنشاء دفعة قيود {batch_no}")
@@ -5644,6 +5743,7 @@ def multi_journal():
                          WHERE active=1 AND accepts_entries=1 ORDER BY account_code"""),
         suppliers=rows("SELECT id,name,vat_number FROM suppliers ORDER BY name"),
         customers=rows("SELECT id,name,vat_number FROM customers ORDER BY name"),
+        employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"),
         centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code")
     )
 

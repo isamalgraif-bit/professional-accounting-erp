@@ -45,8 +45,8 @@
 <thead class="table-light" style="position:sticky;top:0">
 <tr>
 <th>المجموعة</th><th>الكود</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th>
-<th>خاضع للضريبة</th><th>مدخلات / مخرجات</th><th>نوع الطرف</th>
-<th>اسم المورد / العميل</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th>
+<th>خاضع للضريبة</th><th>مدخلات / مخرجات</th><th>نوع الحساب</th>
+<th>الجهة المرتبطة</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th>
 <th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th><th></th>
 </tr>
 </thead>
@@ -59,10 +59,11 @@
 <td><input class="form-control credit" type="number" step="0.01" min="0" name="credit[]" value="0"></td>
 <td><select class="form-select taxable" name="taxable[]"><option value="0">لا</option><option value="1">نعم</option></select></td>
 <td><select class="form-select direction" name="tax_direction[]"><option>غير مطبق</option><option>مدخلات</option><option>مخرجات</option></select></td>
-<td><select class="form-select party-type" name="party_type[]"><option value="">بدون</option><option>مورد</option><option>عميل</option></select></td>
+<td><select class="form-select party-type" name="party_type[]">{% for type in journal_account_types %}<option value="{{type}}">{{type or 'بدون'}}</option>{% endfor %}</select></td>
 <td>
 <select class="form-select supplier" name="supplier_id[]"><option value="">اختر المورد</option>{% for s in suppliers %}<option value="{{s.id}}" data-vat="{{s.vat_number or ''}}">{{s.name}}</option>{% endfor %}</select>
 <select class="form-select customer" name="customer_id[]" style="display:none"><option value="">اختر العميل</option>{% for c in customers %}<option value="{{c.id}}" data-vat="{{c.vat_number or ''}}">{{c.name}}</option>{% endfor %}</select>
+<select class="form-select employee" name="entity_id[]" style="display:none"><option value="">اختر الموظف / المندوب</option>{% for e in employees %}<option value="{{e.id}}">{{e.employee_no or ''}} - {{e.name}}</option>{% endfor %}</select>
 </td>
 <td><input class="form-control tax-number" name="tax_number[]" readonly></td>
 <td><input class="form-control" name="invoice_number[]"></td>
@@ -156,11 +157,13 @@ function sync(row,mode){
  if(a){id.value=a.id;code.value=a.code;name.value=a.name}else{id.value=''}
 }
 function party(row){
- const type=row.querySelector('.party-type').value,s=row.querySelector('.supplier'),c=row.querySelector('.customer'),tax=row.querySelector('.tax-number');
+ const type=row.querySelector('.party-type').value,s=row.querySelector('.supplier'),c=row.querySelector('.customer'),employee=row.querySelector('.employee'),tax=row.querySelector('.tax-number');
  s.style.display=type==='مورد'?'':'none';c.style.display=type==='عميل'?'':'none';
+ employee.style.display=['موظف','مندوب مبيعات'].includes(type)?'':'none';employee.required=['موظف','مندوب مبيعات'].includes(type);
  if(type==='مورد'){c.value='';tax.value=s.selectedOptions[0]?.dataset.vat||''}
  else if(type==='عميل'){s.value='';tax.value=c.selectedOptions[0]?.dataset.vat||''}
  else{s.value='';c.value='';tax.value=''}
+ if(!['موظف','مندوب مبيعات'].includes(type))employee.value='';
 }
 function bind(row){
  row.querySelector('.account-code').addEventListener('input',()=>sync(row,'code'));
@@ -318,5 +321,13 @@ function previewCurrentDraft(){
 
 document.getElementById('previewDraft')?.addEventListener('click',previewCurrentDraft);
 
+const batchContextMenu=document.createElement('div');batchContextMenu.className='journal-context-menu';
+batchContextMenu.innerHTML='<button type="button" data-action="statement">📄 كشف حساب</button><button type="button" data-action="ledger">📚 حساب الأستاذ</button>';
+document.body.appendChild(batchContextMenu);let contextBatchRow=null;
+document.getElementById('batchBody').addEventListener('contextmenu',event=>{const row=event.target.closest('.batch-row');if(!row)return;event.preventDefault();contextBatchRow=row;batchContextMenu.style.left=Math.min(event.clientX,window.innerWidth-190)+'px';batchContextMenu.style.top=Math.min(event.clientY,window.innerHeight-110)+'px';batchContextMenu.classList.add('show')});
+document.addEventListener('click',event=>{if(!event.target.closest('.journal-context-menu'))batchContextMenu.classList.remove('show')});
+batchContextMenu.addEventListener('click',event=>{const action=event.target.closest('button')?.dataset.action;if(!action||!contextBatchRow)return;const accountId=contextBatchRow.querySelector('.account-id').value,type=contextBatchRow.querySelector('.party-type').value;let url='';if(action==='statement'&&type==='عميل'){const id=contextBatchRow.querySelector('.customer').value;if(id)url=`{{url_for('party_statements')}}?party_type=customer&party_id=${id}`}else if(action==='statement'&&type==='مورد'){const id=contextBatchRow.querySelector('.supplier').value;if(id)url=`{{url_for('party_statements')}}?party_type=supplier&party_id=${id}`}else if(accountId){url=`{{url_for('accounting_report',slug='ledger-detail')}}?account_id=${accountId}&status=الكل`}batchContextMenu.classList.remove('show');if(url)window.open(url,'_blank');else alert('اختر الحساب والجهة أولاً لعرض كشف الحساب.')});
+
 </script>
+<style>.journal-context-menu{display:none;position:fixed;z-index:3000;min-width:180px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 12px 35px rgba(15,23,42,.2);padding:6px}.journal-context-menu.show{display:block}.journal-context-menu button{display:block;width:100%;border:0;background:#fff;text-align:right;padding:9px 11px;border-radius:7px}.journal-context-menu button:hover{background:#eef4ff;color:#174ea6}</style>
 {% endblock %}

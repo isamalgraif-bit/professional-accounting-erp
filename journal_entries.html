@@ -66,8 +66,8 @@
   <th>دائن</th>
   <th>خاضع للضريبة</th>
   <th>مدخلات / مخرجات</th>
-  <th>نوع الطرف</th>
-  <th>اسم المورد / العميل</th>
+  <th>نوع الحساب</th>
+  <th>الجهة المرتبطة</th>
   <th>الرقم الضريبي</th>
   <th>رقم الفاتورة</th>
   <th>تاريخ الفاتورة</th>
@@ -109,9 +109,7 @@
 
   <td>
     <select class="form-select party-type" name="party_type[]">
-      <option value="">بدون</option>
-      <option value="مورد">مورد</option>
-      <option value="عميل">عميل</option>
+      {% for type in journal_account_types %}<option value="{{type}}">{{type or 'بدون'}}</option>{% endfor %}
     </select>
   </td>
 
@@ -130,6 +128,7 @@
       {% endfor %}
     </select>
     <button type="button" class="btn btn-sm btn-outline-primary quick-customer" data-quick-create="customer" style="display:none">+ عميل</button>
+    <select class="form-select employee-select" name="entity_id[]" style="display:none"><option value="">اختر الموظف / المندوب</option>{% for e in employees %}<option value="{{e.id}}">{{e.employee_no or ''}} - {{e.name}}</option>{% endfor %}</select>
     <input type="hidden" class="party-account-id" name="party_account_id[]">
   </td>
 
@@ -336,6 +335,7 @@ function updateTaxFields(row){
   const partyType=row.querySelector('.party-type');
   const supplier=row.querySelector('.supplier-select');
   const customer=row.querySelector('.customer-select');
+  const employee=row.querySelector('.employee-select');
   const taxNumber=row.querySelector('.tax-number');
   const partyAccount=row.querySelector('.party-account-id');
   const quickSupplier=row.querySelector('.quick-supplier');
@@ -350,11 +350,13 @@ function updateTaxFields(row){
 
   supplier.required=taxable && partyType.value==='مورد';
   customer.required=taxable && partyType.value==='عميل';
+  employee.required=['موظف','مندوب مبيعات'].includes(partyType.value);
 
   supplier.style.display=partyType.value==='مورد' ? '' : 'none';
   customer.style.display=partyType.value==='عميل' ? '' : 'none';
   quickSupplier.style.display=partyType.value==='مورد' ? '' : 'none';
   quickCustomer.style.display=partyType.value==='عميل' ? '' : 'none';
+  employee.style.display=['موظف','مندوب مبيعات'].includes(partyType.value) ? '' : 'none';
 
   if(!taxable){
     direction.value='غير مطبق';
@@ -374,6 +376,7 @@ function updateTaxFields(row){
     taxNumber.value='';
     partyAccount.value='';
   }
+  if(!['موظف','مندوب مبيعات'].includes(partyType.value))employee.value='';
 }
 
 function bind(row){
@@ -556,7 +559,35 @@ function previewJournalDraft(){
 }
 document.getElementById('previewJournal')?.addEventListener('click',previewJournalDraft);
 
+const journalContextMenu=document.createElement('div');
+journalContextMenu.className='journal-context-menu';
+journalContextMenu.innerHTML='<button type="button" data-action="statement">📄 كشف حساب</button><button type="button" data-action="ledger">📚 حساب الأستاذ</button>';
+document.body.appendChild(journalContextMenu);
+let contextJournalRow=null;
+document.getElementById('journalBody').addEventListener('contextmenu',event=>{
+  const row=event.target.closest('.journal-row');if(!row)return;
+  event.preventDefault();contextJournalRow=row;
+  journalContextMenu.style.left=Math.min(event.clientX,window.innerWidth-190)+'px';
+  journalContextMenu.style.top=Math.min(event.clientY,window.innerHeight-110)+'px';
+  journalContextMenu.classList.add('show');
+});
+document.addEventListener('click',event=>{if(!event.target.closest('.journal-context-menu'))journalContextMenu.classList.remove('show')});
+journalContextMenu.addEventListener('click',event=>{
+  const action=event.target.closest('button')?.dataset.action;if(!action||!contextJournalRow)return;
+  const accountId=contextJournalRow.querySelector('.account-id').value;
+  const type=contextJournalRow.querySelector('.party-type').value;
+  let url='';
+  if(action==='statement'&&type==='عميل'){
+    const id=contextJournalRow.querySelector('.customer-select').value;if(id)url=`{{url_for('party_statements')}}?party_type=customer&party_id=${id}`;
+  }else if(action==='statement'&&type==='مورد'){
+    const id=contextJournalRow.querySelector('.supplier-select').value;if(id)url=`{{url_for('party_statements')}}?party_type=supplier&party_id=${id}`;
+  }else if(accountId){url=`{{url_for('accounting_report',slug='ledger-detail')}}?account_id=${accountId}&status=الكل`}
+  journalContextMenu.classList.remove('show');
+  if(url)window.open(url,'_blank');else alert('اختر الحساب والجهة أولاً لعرض كشف الحساب.');
+});
+
 </script>
+<style>.journal-context-menu{display:none;position:fixed;z-index:3000;min-width:180px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 12px 35px rgba(15,23,42,.2);padding:6px}.journal-context-menu.show{display:block}.journal-context-menu button{display:block;width:100%;border:0;background:#fff;text-align:right;padding:9px 11px;border-radius:7px}.journal-context-menu button:hover{background:#eef4ff;color:#174ea6}</style>
 {% endblock %}
 
 <script>
