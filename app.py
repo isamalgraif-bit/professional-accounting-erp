@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.8.1"
+APP_VERSION = "20.9.0"
 
 ITEM_UNITS = [
     "وحدة", "قطعة", "متر", "متر مربع", "متر مكعب", "كجم", "طن",
@@ -893,7 +893,17 @@ def financial_statement_data(filters):
         result.append(item)
     return result
 
-def party_statement_rows(party_type, party_id, date_from="", date_to=""):
+def party_opening_balance(party_type,party_id,date_from=""):
+    if not party_id or not date_from:
+        return 0.0
+    field="customer_id" if party_type=="customer" else "supplier_id"
+    result=row(f"""SELECT COALESCE(SUM(l.debit-l.credit),0) balance
+                   FROM journal_entry_lines l JOIN journal_entries j ON j.id=l.journal_id
+                   WHERE l.{field}=:party AND j.status='مرحّل' AND j.journal_date<:date_from""",
+               {"party":party_id,"date_from":date_from})
+    return round(float(result["balance"] or 0),2)
+
+def party_statement_rows(party_type, party_id, date_from="", date_to="", opening_balance=0):
     field="customer_id" if party_type=="customer" else "supplier_id"
     conditions=[f"l.{field}=:party","j.status='مرحّل'"]
     params={"party":party_id}
@@ -909,7 +919,7 @@ def party_statement_rows(party_type, party_id, date_from="", date_to=""):
       JOIN chart_of_accounts a ON a.id=l.account_id
       WHERE {' AND '.join(conditions)}
       ORDER BY j.journal_date,j.id,l.id""",params)
-    running=0
+    running=float(opening_balance or 0)
     output=[]
     for r in data:
         item=dict(r)
@@ -10023,26 +10033,39 @@ def financial_statements_export():
 @login_required
 def party_statements():
     party_type=request.args.get("party_type","customer")
+    if party_type not in ("customer","supplier"):
+        party_type="customer"
     party_id=request.args.get("party_id",type=int)
     date_from=request.args.get("date_from","")
     date_to=request.args.get("date_to","")
-    data=party_statement_rows(party_type,party_id,date_from,date_to) if party_id else []
+    opening=party_opening_balance(party_type,party_id,date_from)
+    data=party_statement_rows(party_type,party_id,date_from,date_to,opening) if party_id else []
     parties=rows("SELECT id,name FROM customers ORDER BY name") if party_type=="customer" \
             else rows("SELECT id,name FROM suppliers ORDER BY name")
+    party=row(f"SELECT id,name,name_en,vat_number,phone,email FROM {'customers' if party_type=='customer' else 'suppliers'} WHERE id=:id",{"id":party_id}) if party_id else None
+    total_debit=round(sum(float(x["debit"] or 0) for x in data),2)
+    total_credit=round(sum(float(x["credit"] or 0) for x in data),2)
+    closing=round(opening+total_debit-total_credit,2)
     return render_template("party_statement.html",party_type=party_type,party_id=party_id,
-      date_from=date_from,date_to=date_to,rows=data,parties=parties)
+      date_from=date_from,date_to=date_to,rows=data,parties=parties,party=party,
+      opening_balance=opening,total_debit=total_debit,total_credit=total_credit,closing_balance=closing)
 
 @app.route("/party-statements.xlsx")
 @login_required
 def party_statements_export():
     party_type=request.args.get("party_type","customer")
     party_id=request.args.get("party_id",type=int)
-    data=party_statement_rows(party_type,party_id,request.args.get("date_from",""),
-                              request.args.get("date_to","")) if party_id else []
+    date_from=request.args.get("date_from","");date_to=request.args.get("date_to","")
+    opening=party_opening_balance(party_type,party_id,date_from)
+    data=party_statement_rows(party_type,party_id,date_from,date_to,opening) if party_id else []
+    records=[]
+    if date_from:
+        records.append([date_from,"-","-","الرصيد الافتتاحي","-",0,0,opening])
+    records.extend([[r["journal_date"],r["journal_no"],r["reference"],r["line_description"] or r["description"],
+        r["invoice_number"],r["debit"],r["credit"],r["running_balance"]] for r in data])
     return xlsx_response("party_statement.xlsx","كشف الحساب",
       ["التاريخ","القيد","المرجع","البيان","رقم الفاتورة","مدين","دائن","الرصيد"],
-      [[r["journal_date"],r["journal_no"],r["reference"],r["line_description"],
-        r["invoice_number"],r["debit"],r["credit"],r["running_balance"]] for r in data])
+      records)
 
 @app.route("/payables-aging")
 @login_required

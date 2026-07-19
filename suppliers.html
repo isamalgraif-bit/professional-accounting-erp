@@ -18,8 +18,8 @@
 <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">💾 حفظ</button></div>
 </div></form></div>
 <div class="form-card"><div class="table-responsive"><table class="table table-striped align-middle">
-<thead><tr><th>الرقم</th><th>الاسم العربي</th><th>English Name</th><th>الرقم الضريبي</th><th>الجوال</th><th>البريد</th></tr></thead>
-<tbody>{% for r in rows %}<tr><td>{{r.id}}</td><td>{{r.name}}</td><td dir="ltr">{{r.name_en or '-'}}</td><td>{{r.vat_number or '-'}}</td><td>{{r.phone or '-'}}</td><td>{{r.email or '-'}}</td></tr>{% endfor %}</tbody>
+<thead><tr><th>الرقم</th><th>الاسم العربي</th><th>English Name</th><th>الرقم الضريبي</th><th>الجوال</th><th>البريد</th><th>كشف الحساب</th></tr></thead>
+<tbody>{% for r in rows %}<tr><td>{{r.id}}</td><td>{{r.name}}</td><td dir="ltr">{{r.name_en or '-'}}</td><td>{{r.vat_number or '-'}}</td><td>{{r.phone or '-'}}</td><td>{{r.email or '-'}}</td><td><a class="btn btn-sm btn-outline-primary" href="{{url_for('party_statements',party_type='supplier',party_id=r.id)}}">📄 كشف حساب</a></td></tr>{% endfor %}</tbody>
 </table></div></div>
 <script>
 async function generateEnglishName(){
