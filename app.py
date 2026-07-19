@@ -3635,6 +3635,9 @@ def init_db():
         "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
         "ALTER TABLE purchase_requisition_items ADD COLUMN IF NOT EXISTS ordered_qty NUMERIC(18,3) DEFAULT 0",
         "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS requisition_item_id INTEGER REFERENCES purchase_requisition_items(id)",
+        "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS warehouse_id INTEGER REFERENCES warehouses(id)",
+        "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER REFERENCES inventory(id)",
+        "ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS warehouse_id INTEGER REFERENCES warehouses(id)",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS phone VARCHAR(50) DEFAULT ''",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT ''",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS logo_url TEXT DEFAULT ''",
@@ -4127,6 +4130,25 @@ def suppliers():
         flash("تمت إضافة المورد", "success")
     return render_template("suppliers.html", rows=rows("SELECT * FROM suppliers ORDER BY id DESC"))
 
+@app.route("/api/suppliers/quick-create", methods=["POST"])
+@login_required
+def supplier_quick_create():
+    data=request.get_json(silent=True) or {}
+    name=(data.get("name") or "").strip()
+    if not name:
+        return {"error":"اسم المورد مطلوب"},400
+    existing=row("SELECT id,name,name_en,vat_number FROM suppliers WHERE LOWER(name)=LOWER(:name) LIMIT 1",{"name":name})
+    if existing:
+        return {"supplier":dict(existing),"created":False}
+    name_en=(data.get("name_en") or "").strip() or transliterate_arabic_name(name)
+    execute("""INSERT INTO suppliers(name,name_en,vat_number,phone,email)
+               VALUES(:name,:name_en,:vat,:phone,:email)""",
+            {"name":name,"name_en":name_en,"vat":(data.get("vat_number") or "").strip(),
+             "phone":(data.get("phone") or "").strip(),"email":(data.get("email") or "").strip()})
+    supplier=row("SELECT id,name,name_en,vat_number FROM suppliers WHERE LOWER(name)=LOWER(:name) ORDER BY id DESC LIMIT 1",{"name":name})
+    audit("CREATE","SUPPLIER",f"إضافة مورد سريعة من أمر الشراء: {name}")
+    return {"supplier":dict(supplier),"created":True},201
+
 @app.route("/invoices", methods=["GET","POST"])
 @login_required
 def invoices():
@@ -4466,6 +4488,45 @@ def warehouses():
       warehouses=rows("""SELECT w.*,b.name branch_name FROM warehouses w
                          LEFT JOIN branches b ON b.id=w.branch_id ORDER BY w.code"""),
       branches=rows("SELECT id,name FROM branches WHERE active=1 ORDER BY name"))
+
+@app.route("/api/warehouses/quick-create", methods=["POST"])
+@login_required
+def warehouse_quick_create():
+    data=request.get_json(silent=True) or {}
+    code=(data.get("code") or "").strip()
+    name=(data.get("name") or "").strip()
+    if not code or not name:
+        return {"error":"كود واسم المستودع مطلوبان"},400
+    existing=row("SELECT id,code,name FROM warehouses WHERE LOWER(code)=LOWER(:code) LIMIT 1",{"code":code})
+    if existing:
+        return {"warehouse":dict(existing),"created":False}
+    execute("INSERT INTO warehouses(code,name,branch_id,active) VALUES(:code,:name,:branch,1)",
+            {"code":code,"name":name,"branch":data.get("branch_id") or None})
+    warehouse=row("SELECT id,code,name FROM warehouses WHERE LOWER(code)=LOWER(:code) LIMIT 1",{"code":code})
+    audit("CREATE","WAREHOUSE",f"إضافة مستودع سريعة من أمر الشراء: {code} - {name}")
+    return {"warehouse":dict(warehouse),"created":True},201
+
+@app.route("/api/inventory/quick-create", methods=["POST"])
+@login_required
+def inventory_quick_create():
+    data=request.get_json(silent=True) or {}
+    name=(data.get("name") or "").strip()
+    sku=(data.get("sku") or "").strip() or None
+    if not name:
+        return {"error":"اسم الصنف مطلوب"},400
+    existing=row("""SELECT id,sku,name,unit,cost FROM inventory
+                    WHERE (:sku IS NOT NULL AND LOWER(sku)=LOWER(:sku)) OR LOWER(name)=LOWER(:name)
+                    ORDER BY CASE WHEN :sku IS NOT NULL AND LOWER(sku)=LOWER(:sku) THEN 0 ELSE 1 END LIMIT 1""",
+                 {"sku":sku,"name":name})
+    if existing:
+        return {"item":dict(existing),"created":False}
+    execute("""INSERT INTO inventory(sku,name,quantity,unit,cost,sale_price,reorder_level,active)
+               VALUES(:sku,:name,0,:unit,:cost,0,0,1)""",
+            {"sku":sku,"name":name,"unit":(data.get("unit") or "وحدة").strip(),
+             "cost":float(data.get("cost") or 0)})
+    item=row("SELECT id,sku,name,unit,cost FROM inventory WHERE name=:name ORDER BY id DESC LIMIT 1",{"name":name})
+    audit("CREATE","INVENTORY_ITEM",f"إضافة صنف سريعة من أمر الشراء: {name}")
+    return {"item":dict(item),"created":True},201
 
 @app.route("/inventory/export.xlsx")
 @login_required
@@ -6551,10 +6612,14 @@ def purchase_requisition_open_items(req_id):
         return {"error":"طلب الشراء غير موجود"},404
     if req["status"] not in ("معتمد","تم إصدار أمر شراء جزئيًا"):
         return {"error":"طلب الشراء غير متاح للتحويل إلى أمر شراء"},400
-    items=rows("""SELECT id,item_code,item_name,description,quantity,COALESCE(ordered_qty,0) ordered_qty,
+    items=rows("""SELECT pri.id,pri.item_code,pri.item_name,pri.description,pri.quantity,COALESCE(pri.ordered_qty,0) ordered_qty,
                   quantity-COALESCE(ordered_qty,0) remaining_qty,unit,estimated_price,suggested_supplier_id
-                  FROM purchase_requisition_items
-                  WHERE requisition_id=:id AND COALESCE(ordered_qty,0)<quantity ORDER BY id""",{"id":req_id})
+                  ,(SELECT inv.id FROM inventory inv
+                    WHERE (NULLIF(pri.item_code,'') IS NOT NULL AND inv.sku=pri.item_code)
+                       OR LOWER(inv.name)=LOWER(pri.item_name)
+                    ORDER BY CASE WHEN inv.sku=pri.item_code THEN 0 ELSE 1 END LIMIT 1) inventory_item_id
+                  FROM purchase_requisition_items pri
+                  WHERE requisition_id=:id AND COALESCE(ordered_qty,0)<quantity ORDER BY pri.id""",{"id":req_id})
     return {"requisition":dict(req),"items":[dict(x) for x in items]}
 
 @app.route("/purchase-orders",methods=["GET","POST"])
@@ -6564,7 +6629,7 @@ def purchase_orders():
         req_id=request.form.get("requisition_id") or None
         if req_id:
             req=row("SELECT status FROM purchase_requisitions WHERE id=:id",{"id":req_id})
-            if not req or req["status"]!="معتمد":
+            if not req or req["status"] not in ("معتمد","تم إصدار أمر شراء جزئيًا"):
                 flash("لا يمكن إصدار أمر شراء من طلب غير معتمد","danger")
                 return redirect(url_for("purchase_orders"))
         names=request.form.getlist("item_name[]")
@@ -6575,9 +6640,15 @@ def purchase_orders():
         units=request.form.getlist("unit[]")
         codes=request.form.getlist("item_code[]")
         descriptions=request.form.getlist("description[]")
+        inventory_item_ids=request.form.getlist("inventory_item_id[]")
         items=[]; subtotal=0; vat=0
         for i,n in enumerate(names):
             if not n.strip(): continue
+            inventory_item_id=((inventory_item_ids[i] if i<len(inventory_item_ids) else "") or None)
+            inventory_item=row("SELECT id,sku,name,unit FROM inventory WHERE id=:id AND active=1",{"id":inventory_item_id}) if inventory_item_id else None
+            if not inventory_item:
+                flash(f"اختر صنف مخزون صحيحًا للسطر: {n}","danger")
+                return redirect(request.url)
             q=float(qtys[i] or 0); p=float(prices[i] or 0); vr=float(vats[i] or 0)
             if q<=0:continue
             base=q*p; tax=base*vr/100
@@ -6593,25 +6664,27 @@ def purchase_orders():
                 if q > remaining + 1e-9:
                     flash(f"كمية الصنف {n} تتجاوز الكمية المتبقية في طلب الشراء","danger")
                     return redirect(url_for("purchase_orders"))
-            items.append({"name":n.strip(),"qty":q,"price":p,"vat":vr,
-                          "unit":units[i],"code":codes[i],"description":descriptions[i],
-                          "requisition_item_id":req_item_id})
+            items.append({"name":inventory_item["name"],"qty":q,"price":p,"vat":vr,
+                          "unit":units[i] or inventory_item["unit"],"code":codes[i] or inventory_item["sku"],"description":descriptions[i],
+                          "requisition_item_id":req_item_id,
+                          "inventory_item_id":inventory_item["id"]})
         if not items:
             flash("أدخل صنفًا واحدًا على الأقل","danger")
             return redirect(url_for("purchase_orders"))
         no=next_document_number("purchase_orders","po_date","PO",request.form["po_date"])
         execute("""INSERT INTO purchase_orders(
           po_no,po_date,requisition_id,supplier_id,branch_id,cost_center_id,
-          payment_terms,delivery_terms,warehouse,notes,status,subtotal,vat,total,
+          payment_terms,delivery_terms,warehouse,warehouse_id,notes,status,subtotal,vat,total,
           created_by,created_at)
           VALUES(:no,:dt,:req,:supplier,:branch,:cc,:pay,:delivery,:warehouse,
-          :notes,:status,:sub,:vat,:total,:uid,:created)""",
+          :warehouse_id,:notes,:status,:sub,:vat,:total,:uid,:created)""",
           {"no":no,"dt":request.form["po_date"],"req":req_id,
            "supplier":request.form["supplier_id"],"branch":request.form.get("branch_id") or None,
            "cc":request.form.get("cost_center_id") or None,
            "pay":request.form.get("payment_terms",""),
            "delivery":request.form.get("delivery_terms",""),
-           "warehouse":request.form.get("warehouse",""),
+           "warehouse":request.form.get("warehouse_name",""),
+           "warehouse_id":request.form.get("warehouse_id") or None,
            "notes":request.form.get("notes",""),
            "status":request.form.get("status","مسودة"),
            "sub":round(subtotal,2),"vat":round(vat,2),"total":round(subtotal+vat,2),
@@ -6619,10 +6692,11 @@ def purchase_orders():
         po_id=row("SELECT id FROM purchase_orders WHERE po_no=:n",{"n":no})["id"]
         for x in items:
             execute("""INSERT INTO purchase_order_items(
-              po_id,requisition_item_id,item_code,item_name,description,quantity,unit,unit_price,vat_rate)
-              VALUES(:po,:req_item,:code,:name,:des,:qty,:unit,:price,:vat)""",
+              po_id,requisition_item_id,inventory_item_id,item_code,item_name,description,quantity,unit,unit_price,vat_rate)
+              VALUES(:po,:req_item,:inventory_item,:code,:name,:des,:qty,:unit,:price,:vat)""",
               {"po":po_id,"req_item":x["requisition_item_id"],"code":x["code"],"name":x["name"],"des":x["description"],
-               "qty":x["qty"],"unit":x["unit"],"price":x["price"],"vat":x["vat"]})
+               "qty":x["qty"],"unit":x["unit"],"price":x["price"],"vat":x["vat"],
+               "inventory_item":x["inventory_item_id"]})
             if x["requisition_item_id"]:
                 execute("""UPDATE purchase_requisition_items
                            SET ordered_qty=COALESCE(ordered_qty,0)+:qty WHERE id=:id""",
@@ -6642,6 +6716,8 @@ def purchase_orders():
       requisitions=rows("""SELECT id,requisition_no,total_estimated,status FROM purchase_requisitions
                            WHERE status IN ('معتمد','تم إصدار أمر شراء جزئيًا') ORDER BY requisition_date DESC"""),
       suppliers=rows("SELECT id,name,name_en,vat_number FROM suppliers ORDER BY name"),
+      warehouses=rows("SELECT id,code,name FROM warehouses WHERE active=1 ORDER BY code,name"),
+      inventory_items=[dict(x) for x in rows("SELECT id,sku,name,unit,cost FROM inventory WHERE active=1 ORDER BY name")],
       branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
       centers=rows("SELECT * FROM cost_centers WHERE active=1 ORDER BY code"))
 
@@ -6675,7 +6751,7 @@ def goods_receipts():
     if request.method=="POST":
         po_id=int(request.form["po_id"])
         po=row("SELECT * FROM purchase_orders WHERE id=:id",{"id":po_id})
-        if not po or po["status"]!="معتمد":
+        if not po or po["status"] not in ("معتمد","مستلم جزئيًا"):
             flash("يجب اعتماد أمر الشراء أولًا","danger")
             return redirect(url_for("goods_receipts"))
         item_ids=request.form.getlist("po_item_id[]")
@@ -6700,11 +6776,16 @@ def goods_receipts():
             flash("أدخل كمية استلام","danger")
             return redirect(url_for("goods_receipts"))
         no=next_document_number("goods_receipts","grn_date","GRN",request.form["grn_date"])
+        warehouse_id=request.form.get("warehouse_id") or po.get("warehouse_id")
+        warehouse_record=row("SELECT id,code,name FROM warehouses WHERE id=:id AND active=1",{"id":warehouse_id}) if warehouse_id else None
+        if not warehouse_record:
+            flash("اختر مستودعًا صحيحًا قبل الاستلام","danger")
+            return redirect(url_for("goods_receipts",po_id=po_id))
         execute("""INSERT INTO goods_receipts(
-          grn_no,grn_date,po_id,supplier_id,warehouse,notes,status,created_by,created_at)
-          VALUES(:no,:dt,:po,:supplier,:wh,:notes,'معتمد',:uid,:created)""",
+          grn_no,grn_date,po_id,supplier_id,warehouse,warehouse_id,notes,status,created_by,created_at)
+          VALUES(:no,:dt,:po,:supplier,:wh,:warehouse_id,:notes,'معتمد',:uid,:created)""",
           {"no":no,"dt":request.form["grn_date"],"po":po_id,"supplier":po["supplier_id"],
-           "wh":request.form.get("warehouse",""),"notes":request.form.get("notes",""),
+           "wh":warehouse_record["name"],"warehouse_id":warehouse_record["id"],"notes":request.form.get("notes",""),
            "uid":session.get("user_id"),"created":datetime.now()})
         grn_id=row("SELECT id FROM goods_receipts WHERE grn_no=:n",{"n":no})["id"]
         for item_id,rq,aq,rej,note in lines:
@@ -6727,10 +6808,9 @@ def goods_receipts():
                              "unit":item["unit"],"cost":item["unit_price"]})
                     inv_item=row("SELECT id,cost FROM inventory WHERE name=:name ORDER BY id DESC LIMIT 1",
                                  {"name":item["item_name"]})
-                warehouse=row("SELECT id FROM warehouses WHERE active=1 ORDER BY id LIMIT 1")
-                if warehouse:
+                if warehouse_record:
                     record_inventory_movement(
-                      request.form["grn_date"],"استلام",inv_item["id"],warehouse["id"],aq,
+                      request.form["grn_date"],"استلام",inv_item["id"],warehouse_record["id"],aq,
                       item["unit_price"],reference_type="GRN",reference_id=grn_id,
                       reference_no=no,notes=f"استلام أمر الشراء {po['po_no']}")
 
