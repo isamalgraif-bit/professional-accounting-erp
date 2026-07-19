@@ -3,8 +3,8 @@
 <h3 class="mb-4">تعديل الحساب {{account.account_code}}</h3>
 <div class="form-card"><form method="post"><div class="row g-3">
 <div class="col-md-2"><label>كود الحساب</label><input class="form-control" name="account_code" value="{{account.account_code}}" required></div>
-<div class="col-md-3"><label>اسم الحساب</label><input class="form-control" name="account_name_ar" value="{{account.account_name_ar}}" required></div>
-<div class="col-md-3"><label>الاسم الإنجليزي <small class="text-success">(تلقائي عند تركه فارغًا)</small></label><input class="form-control" name="account_name_en" value="{{account.account_name_en or ''}}"></div>
+<div class="col-md-3"><label>اسم الحساب</label><input class="form-control" id="editAccountNameAr" name="account_name_ar" value="{{account.account_name_ar}}" required></div>
+<div class="col-md-3"><label>الاسم الإنجليزي</label><div class="input-group"><input class="form-control" id="editAccountNameEn" name="account_name_en" value="{{account.account_name_en or ''}}"><button class="btn btn-outline-primary" type="button" id="generateEditAccountEnglish">🌐 توليد</button></div><small class="text-muted" id="editEnglishHint">يُولد تلقائيًا عند تركه فارغًا.</small></div>
 <div class="col-md-2"><label>النوع</label><select class="form-select" name="account_type">{% for t in ['أصل','خصم','حقوق ملكية','إيراد','مصروف'] %}<option {% if account.account_type==t %}selected{% endif %}>{{t}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>الحساب الأب</label><select class="form-select" name="parent_id"><option value="">حساب رئيسي</option>{% for p in parents %}<option value="{{p.id}}" {% if account.parent_id==p.id %}selected{% endif %}>{{p.account_code}} - {{p.account_name_ar}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>يقبل حركة</label><select class="form-select" name="accepts_entries"><option value="1" {% if account.accepts_entries %}selected{% endif %}>نعم</option><option value="0" {% if not account.accepts_entries %}selected{% endif %}>لا</option></select></div>
@@ -13,4 +13,9 @@
 <div class="col-md-2"><label>الحالة</label><select class="form-select" name="active"><option value="1" {% if account.active %}selected{% endif %}>نشط</option><option value="0" {% if not account.active %}selected{% endif %}>غير نشط</option></select></div>
 <div class="col-12"><button class="btn btn-primary">حفظ التعديل</button></div>
 </div></form></div>
+<script>
+async function generateEditAccountEnglish(force=false){const ar=document.getElementById('editAccountNameAr'),en=document.getElementById('editAccountNameEn'),hint=document.getElementById('editEnglishHint'),name=ar.value.trim();if(!name||(!force&&en.value.trim()))return;hint.textContent='جارٍ التوليد...';try{const response=await fetch('{{url_for("transliterate_name_api")}}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});const data=await response.json();if(!response.ok)throw new Error(data.error||'تعذر التوليد');en.value=data.english_name||'';hint.textContent='تم التوليد ويمكن تعديل النتيجة.'}catch(error){hint.textContent=error.message||'تعذر التوليد.'}}
+document.getElementById('generateEditAccountEnglish')?.addEventListener('click',()=>generateEditAccountEnglish(true));
+document.getElementById('editAccountNameAr')?.addEventListener('blur',()=>generateEditAccountEnglish(false));
+</script>
 {% endblock %}
