@@ -3634,6 +3634,7 @@ def init_db():
         "ALTER TABLE customers ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
         "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
         "ALTER TABLE purchase_requisition_items ADD COLUMN IF NOT EXISTS ordered_qty NUMERIC(18,3) DEFAULT 0",
+        "ALTER TABLE purchase_requisition_items ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER REFERENCES inventory(id)",
         "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS requisition_item_id INTEGER REFERENCES purchase_requisition_items(id)",
         "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS warehouse_id INTEGER REFERENCES warehouses(id)",
         "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER REFERENCES inventory(id)",
@@ -6514,6 +6515,7 @@ def procurement_center():
 @login_required
 def purchase_requisitions():
     if request.method=="POST":
+        inventory_item_ids=request.form.getlist("inventory_item_id[]")
         item_names=request.form.getlist("item_name[]")
         quantities=request.form.getlist("quantity[]")
         units=request.form.getlist("unit[]")
@@ -6525,14 +6527,20 @@ def purchase_requisitions():
         items=[]; total=0
         for i,name in enumerate(item_names):
             if not name.strip(): continue
+            inventory_item_id=((inventory_item_ids[i] if i<len(inventory_item_ids) else "") or None)
+            inventory_item=row("SELECT id,sku,name,unit FROM inventory WHERE id=:id AND active=1",{"id":inventory_item_id}) if inventory_item_id else None
+            if not inventory_item:
+                flash(f"اختر صنف مخزون صحيحًا للسطر: {name}","danger")
+                return redirect(request.url)
             qty=float(quantities[i] or 0); price=float(prices[i] or 0)
             if qty<=0: continue
             total += qty*price
-            items.append({"name":name.strip(),"qty":qty,"unit":units[i],
+            items.append({"name":inventory_item["name"],"qty":qty,"unit":units[i] or inventory_item["unit"],
                           "price":price,"description":descriptions[i],
                           "required_date":required_dates[i] or None,
                           "supplier_id":supplier_ids[i] or None,
-                          "item_code":item_codes[i]})
+                          "item_code":item_codes[i] or inventory_item["sku"],
+                          "inventory_item_id":inventory_item["id"]})
         if not items:
             flash("أدخل صنفًا واحدًا على الأقل","danger")
             return redirect(url_for("purchase_requisitions"))
@@ -6555,12 +6563,12 @@ def purchase_requisitions():
         req_id=row("SELECT id FROM purchase_requisitions WHERE requisition_no=:n",{"n":no})["id"]
         for x in items:
             execute("""INSERT INTO purchase_requisition_items(
-              requisition_id,item_code,item_name,description,quantity,unit,
+              requisition_id,inventory_item_id,item_code,item_name,description,quantity,unit,
               estimated_price,required_date,suggested_supplier_id)
-              VALUES(:rid,:code,:name,:des,:qty,:unit,:price,:rd,:sid)""",
+              VALUES(:rid,:inventory_item,:code,:name,:des,:qty,:unit,:price,:rd,:sid)""",
               {"rid":req_id,"code":x["item_code"],"name":x["name"],"des":x["description"],
                "qty":x["qty"],"unit":x["unit"],"price":x["price"],
-               "rd":x["required_date"],"sid":x["supplier_id"]})
+               "rd":x["required_date"],"sid":x["supplier_id"],"inventory_item":x["inventory_item_id"]})
         audit("CREATE","PURCHASE_REQUISITION",f"إنشاء طلب شراء {no}")
         flash(f"تم إنشاء طلب الشراء {no}","success")
         return redirect(url_for("purchase_requisition_view",req_id=req_id))
@@ -6572,7 +6580,8 @@ def purchase_requisitions():
     return render_template("purchase_requisitions.html",reqs=reqs,
       branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
       centers=rows("SELECT * FROM cost_centers WHERE active=1 ORDER BY code"),
-      suppliers=rows("SELECT id,name,name_en FROM suppliers ORDER BY name"))
+      suppliers=[dict(x) for x in rows("SELECT id,name,name_en,vat_number FROM suppliers ORDER BY name")],
+      inventory_items=[dict(x) for x in rows("SELECT id,sku,name,unit,cost FROM inventory WHERE active=1 ORDER BY name")])
 
 @app.route("/purchase-requisitions/<int:req_id>")
 @login_required
@@ -6614,10 +6623,10 @@ def purchase_requisition_open_items(req_id):
         return {"error":"طلب الشراء غير متاح للتحويل إلى أمر شراء"},400
     items=rows("""SELECT pri.id,pri.item_code,pri.item_name,pri.description,pri.quantity,COALESCE(pri.ordered_qty,0) ordered_qty,
                   quantity-COALESCE(ordered_qty,0) remaining_qty,unit,estimated_price,suggested_supplier_id
-                  ,(SELECT inv.id FROM inventory inv
+                  ,COALESCE(pri.inventory_item_id,(SELECT inv.id FROM inventory inv
                     WHERE (NULLIF(pri.item_code,'') IS NOT NULL AND inv.sku=pri.item_code)
                        OR LOWER(inv.name)=LOWER(pri.item_name)
-                    ORDER BY CASE WHEN inv.sku=pri.item_code THEN 0 ELSE 1 END LIMIT 1) inventory_item_id
+                    ORDER BY CASE WHEN inv.sku=pri.item_code THEN 0 ELSE 1 END LIMIT 1)) inventory_item_id
                   FROM purchase_requisition_items pri
                   WHERE requisition_id=:id AND COALESCE(ordered_qty,0)<quantity ORDER BY pri.id""",{"id":req_id})
     return {"requisition":dict(req),"items":[dict(x) for x in items]}
