@@ -44,22 +44,22 @@
 <table class="table table-bordered table-sm align-middle" style="min-width:2400px">
 <thead class="table-light" style="position:sticky;top:0">
 <tr>
-<th>الجهة</th><th>الكود</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th>
-<th>خاضع للضريبة</th><th>مدخلات / مخرجات</th><th>نوع الحساب</th>
+<th>الكود</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th>
+<th>خاضع للضريبة</th><th>مدخلات / مخرجات</th><th>نوع الحساب</th><th>الجهة المرتبطة</th>
 <th>الرقم الضريبي</th><th>رقم الفاتورة</th>
 <th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th><th></th>
 </tr>
 </thead>
 <tbody id="batchBody">
 <tr class="batch-row">
-<td class="entity-cell"><input class="group-no" type="hidden" name="group_no[]" value="1"><select class="form-select supplier" name="supplier_id[]"><option value="">اختر المورد</option>{% for s in suppliers %}<option value="{{s.id}}" data-vat="{{s.vat_number or ''}}">{{s.name}}</option>{% endfor %}</select><select class="form-select customer" name="customer_id[]" style="display:none"><option value="">اختر العميل</option>{% for c in customers %}<option value="{{c.id}}" data-vat="{{c.vat_number or ''}}">{{c.name}}</option>{% endfor %}</select><select class="form-select employee" name="entity_id[]" style="display:none"><option value="">اختر الموظف / المندوب</option>{% for e in employees %}<option value="{{e.id}}">{{e.employee_no or ''}} - {{e.name}}</option>{% endfor %}</select><span class="entity-placeholder text-muted">حدد نوع الحساب</span></td>
-<td><input class="form-control account-code" list="accountCodeList" placeholder="الكود"></td>
+<td><input class="group-no" type="hidden" name="group_no[]" value="1"><input class="form-control account-code" list="accountCodeList" placeholder="الكود"></td>
 <td><input class="form-control account-name" list="accountNameList" placeholder="اسم الحساب"><input type="hidden" class="account-id" name="account_id[]"></td>
 <td><input class="form-control debit" type="number" step="0.01" min="0" name="debit[]" value="0"></td>
 <td><input class="form-control credit" type="number" step="0.01" min="0" name="credit[]" value="0"></td>
 <td><select class="form-select taxable" name="taxable[]"><option value="0">لا</option><option value="1">نعم</option></select></td>
 <td><select class="form-select direction" name="tax_direction[]"><option>غير مطبق</option><option>مدخلات</option><option>مخرجات</option></select></td>
 <td><select class="form-select party-type" name="party_type[]">{% for type in journal_account_types %}<option value="{{type}}">{{type or 'بدون'}}</option>{% endfor %}</select></td>
+<td class="entity-cell"><select class="form-select entity-picker" disabled><option value="">اختر نوع الحساب أولاً</option><optgroup label="الموردون">{% for s in suppliers %}<option value="supplier:{{s.id}}" data-types="مورد" data-id="{{s.id}}" data-vat="{{s.vat_number or ''}}">{{s.name}}</option>{% endfor %}</optgroup><optgroup label="العملاء">{% for c in customers %}<option value="customer:{{c.id}}" data-types="عميل" data-id="{{c.id}}" data-vat="{{c.vat_number or ''}}">{{c.name}}</option>{% endfor %}</optgroup><optgroup label="الموظفون والمندوبون">{% for e in employees %}<option value="employee:{{e.id}}" data-types="موظف|مندوب مبيعات" data-id="{{e.id}}">{{e.employee_no or ''}} - {{e.name}}</option>{% endfor %}</optgroup></select><select class="supplier" name="supplier_id[]" hidden><option value=""></option>{% for s in suppliers %}<option value="{{s.id}}">{{s.name}}</option>{% endfor %}</select><select class="customer" name="customer_id[]" hidden><option value=""></option>{% for c in customers %}<option value="{{c.id}}">{{c.name}}</option>{% endfor %}</select><select class="employee" name="entity_id[]" hidden><option value=""></option>{% for e in employees %}<option value="{{e.id}}">{{e.name}}</option>{% endfor %}</select></td>
 <td><input class="form-control tax-number" name="tax_number[]" readonly></td>
 <td><input class="form-control" name="invoice_number[]"></td>
 <td><input class="form-control" type="date" name="invoice_date[]"></td>
@@ -151,25 +151,30 @@ function sync(row,mode){
  const a=mode==='code'?accounts.find(x=>x.code===code.value.trim()):accounts.find(x=>x.name===name.value.trim());
  if(a){id.value=a.id;code.value=a.code;name.value=a.name}else{id.value=''}
 }
-function party(row){
- const type=row.querySelector('.party-type').value,s=row.querySelector('.supplier'),c=row.querySelector('.customer'),employee=row.querySelector('.employee'),placeholder=row.querySelector('.entity-placeholder'),tax=row.querySelector('.tax-number');
- s.style.display=type==='مورد'?'':'none';c.style.display=type==='عميل'?'':'none';
- employee.style.display=['موظف','مندوب مبيعات'].includes(type)?'':'none';employee.required=['موظف','مندوب مبيعات'].includes(type);
- placeholder.style.display=['مورد','عميل','موظف','مندوب مبيعات'].includes(type)?'none':'';
- if(type==='مورد'){c.value='';tax.value=s.selectedOptions[0]?.dataset.vat||''}
- else if(type==='عميل'){s.value='';tax.value=c.selectedOptions[0]?.dataset.vat||''}
- else{s.value='';c.value='';tax.value=''}
- if(!['موظف','مندوب مبيعات'].includes(type))employee.value='';
+function party(row,fromType=false){
+ const typeSelect=row.querySelector('.party-type'),picker=row.querySelector('.entity-picker'),s=row.querySelector('.supplier'),c=row.querySelector('.customer'),employee=row.querySelector('.employee'),tax=row.querySelector('.tax-number');
+ if(fromType){
+   const type=typeSelect.value,hasEntity=['مورد','عميل','موظف','مندوب مبيعات'].includes(type);
+   picker.value='';s.value='';c.value='';employee.value='';tax.value='';picker.disabled=!hasEntity;
+   picker.options[0].textContent=hasEntity?`اختر ${type}`:'لا توجد جهة مرتبطة';
+   [...picker.options].slice(1).forEach(option=>option.hidden=!option.dataset.types?.split('|').includes(type));
+   return;
+ }
+ const chosen=picker.selectedOptions[0],type=typeSelect.value,id=chosen?.dataset.id||'';
+ s.value='';c.value='';employee.value='';tax.value=chosen?.dataset.vat||'';
+ if(!id)return;
+ if(type==='مورد')s.value=id;
+ else if(type==='عميل')c.value=id;
+ else employee.value=id;
 }
 function bind(row){
  row.querySelector('.account-code').addEventListener('input',()=>sync(row,'code'));
  row.querySelector('.account-name').addEventListener('input',()=>sync(row,'name'));
- row.querySelector('.party-type').addEventListener('change',()=>party(row));
- row.querySelector('.supplier').addEventListener('change',()=>party(row));
- row.querySelector('.customer').addEventListener('change',()=>party(row));
+ row.querySelector('.party-type').addEventListener('change',()=>party(row,true));
+ row.querySelector('.entity-picker').addEventListener('change',()=>party(row));
  row.querySelector('.remove-row').addEventListener('click',()=>{if(document.querySelectorAll('.batch-row').length>2)row.remove();checkGroups()});
  row.querySelectorAll('.debit,.credit,.group-no').forEach(i=>i.addEventListener('input',checkGroups));
- party(row);
+ party(row,true);
 }
 function reset(row,groupNo){
  row.querySelectorAll('input').forEach(i=>i.value=(i.classList.contains('debit')||i.classList.contains('credit'))?'0':'');
@@ -306,14 +311,14 @@ function previewCurrentDraft(){
   <div class="head"><div><h2>معاينة دفعة قيود يومية متعددة</h2><div>مسودة غير محفوظة</div></div>
   <div><b>التاريخ:</b> ${esc(batchDate)}<br><b>الحالة:</b> ${esc(status)}<br><b>البيان:</b> ${esc(description)}</div></div>
   <table><thead><tr>
-  <th>م</th><th>الجهة</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th>
-  <th>الضريبة</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th>
+  <th>م</th><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th>
+  <th>الضريبة</th><th>مدخلات / مخرجات</th><th>نوع الحساب</th><th>الجهة المرتبطة</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th>
   </tr></thead><tbody>
-  ${rows.map(x=>`<tr><td>${x.no}</td><td>${esc(x.party)}</td><td>${esc(x.code)}</td><td>${esc(x.account)}</td>
-  <td>${x.debit}</td><td>${x.credit}</td><td>${esc(x.direction)}</td>
+  ${rows.map(x=>`<tr><td>${x.no}</td><td>${esc(x.code)}</td><td>${esc(x.account)}</td>
+  <td>${x.debit}</td><td>${x.credit}</td><td>${esc(x.taxable)}</td><td>${esc(x.direction)}</td><td>${esc(x.partyType)}</td><td>${esc(x.party)}</td>
   <td>${esc(x.taxNumber)}</td><td>${esc(x.invoiceNo)}</td><td>${esc(x.invoiceDate)}</td>
   <td>${esc(x.description)}</td><td>${esc(x.center)}</td></tr>`).join('')}
-  <tr class="total"><td colspan="4">الإجمالي</td><td>${totalDebit.toFixed(2)}</td><td>${totalCredit.toFixed(2)}</td><td colspan="6"></td></tr>
+  <tr class="total"><td colspan="3">الإجمالي</td><td>${totalDebit.toFixed(2)}</td><td>${totalCredit.toFixed(2)}</td><td colspan="9"></td></tr>
   </tbody></table></body></html>`);
   win.document.close();
 }
