@@ -4234,6 +4234,9 @@ def init_db():
 def ensure_database():
     if not getattr(app, "_db_initialized", False):
         init_db()
+        # Apply compatibility columns introduced by the complete master-data update
+        # before any export/import query is executed.
+        ensure_hr_and_sales_schema()
         seed_security_data()
         app._db_initialized = True
 
@@ -10466,6 +10469,9 @@ def data_import_template(module_name):
 @app.route("/data-import/export-current/<module_name>")
 @login_required
 def data_import_export_current(module_name):
+    # Ensure newly-added employee/customer/supplier columns exist even when the
+    # worker was started before this release was deployed.
+    ensure_hr_and_sales_schema()
     if module_name not in EXCEL_IMPORT_DEFINITIONS:
         return "الوحدة غير مدعومة",404
     queries={
