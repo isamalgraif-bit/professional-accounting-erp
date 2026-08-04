@@ -19,7 +19,7 @@
 {% for key,definition in modules.items() %}
 <div class="col-lg-4 col-md-6"><div class="import-card">
   <div class="d-flex gap-3 align-items-start"><div class="module-icon">{{icons.get(key,'📄')}}</div><div class="flex-grow-1"><h5 class="mb-1">{{definition.title}}</h5><p class="text-muted small">استيراد ذكي مع التحقق ومنع الأخطاء</p></div></div>
-  <div class="d-flex gap-2 mt-3"><a class="btn btn-outline-success flex-fill" href="{{url_for('data_import_template',module_name=key)}}">تحميل النموذج</a><a class="btn btn-primary flex-fill" href="{{url_for('data_import_upload',module_name=key)}}">استيراد</a></div>
+  <div class="d-grid gap-2 mt-3"><div class="d-flex gap-2"><a class="btn btn-outline-success flex-fill" href="{{url_for('data_import_template',module_name=key)}}">قالب فارغ</a><a class="btn btn-outline-primary flex-fill" href="{{url_for('data_import_export_current',module_name=key)}}">تنزيل البيانات الحالية</a></div><a class="btn btn-primary w-100" href="{{url_for('data_import_upload',module_name=key)}}">استيراد / إعادة رفع الملف</a></div>
 </div></div>
 {% endfor %}
 </div>

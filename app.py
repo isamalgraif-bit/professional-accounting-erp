@@ -19,8 +19,9 @@ import openpyxl
 from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
+from openpyxl.styles import Protection, Font, PatternFill
 
-APP_VERSION = "21.0.2"
+APP_VERSION = "21.0.4"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -1949,43 +1950,44 @@ def invoice_is_editable(invoice):
 EXCEL_IMPORT_DEFINITIONS = {
     "customers": {
         "title": "العملاء",
-        "headers": ["code","name","name_en","vat_no","phone","email","address","credit_limit"],
+        "headers": ["system_id","code","name","name_en","vat_no","phone","email","address","credit_limit"],
         "required": ["name"],
-        "sample": ["CUST-001","شركة العميل","Customer Co.","300000000000003","0500000000","info@example.com","الدمام",50000],
+        "sample": ["","CUST-001","شركة العميل","Customer Co.","300000000000003","0500000000","info@example.com","الدمام",50000],
     },
     "suppliers": {
         "title": "الموردون",
-        "headers": ["code","name","name_en","vat_no","phone","email","address"],
+        "headers": ["system_id","code","name","name_en","vat_no","phone","email","address"],
         "required": ["name"],
-        "sample": ["SUP-001","شركة المورد","Supplier Co.","300000000000003","0500000000","sales@example.com","الرياض"],
+        "sample": ["","SUP-001","شركة المورد","Supplier Co.","300000000000003","0500000000","sales@example.com","الرياض"],
     },
     "inventory": {
         "title": "الأصناف",
-        "headers": ["code","name","description","unit","quantity","unit_cost","reorder_level","active"],
+        "headers": ["system_id","code","name","description","unit","quantity","unit_cost","reorder_level","active"],
         "required": ["name"],
-        "sample": ["ITEM-001","كابل كهربائي","وصف الصنف","متر",100,25,20,1],
+        "sample": ["","ITEM-001","كابل كهربائي","وصف الصنف","متر",100,25,20,1],
     },
     "employees": {
         "title": "الموظفون",
-        "headers": ["employee_no","name","name_en","job_title","basic_salary","phone","email","hire_date","nationality"],
+        "headers": ["system_id","employee_no","name","name_en","job_title","basic_salary","phone","email","hire_date","nationality"],
         "required": ["name"],
-        "sample": ["EMP-001","اسم الموظف","Employee Name","محاسب",5000,"0500000000","employee@example.com","2026-01-01","سوداني"],
+        "sample": ["","EMP-001","اسم الموظف","Employee Name","محاسب",5000,"0500000000","employee@example.com","2026-01-01","سوداني"],
     },
     "accounts": {
         "title": "دليل الحسابات",
-        "headers": ["account_code","account_name_ar","account_name_en","account_type","parent_code","accepts_entries","active"],
+        "headers": ["system_id","account_code","account_name_ar","account_name_en","account_type","parent_code","accepts_entries","active"],
         "required": ["account_code","account_name_ar","account_type"],
-        "sample": ["110101","النقدية","Cash","أصل","1101",1,1],
+        "sample": ["","110101","النقدية","Cash","أصل","1101",1,1],
     },
     "cost_centers": {
         "title": "مراكز التكلفة",
-        "headers": ["code","name","parent_code","active"],
+        "headers": ["system_id","code","name","parent_code","active"],
         "required": ["code","name"],
-        "sample": ["CC-001","المشروع الرئيسي","",1],
+        "sample": ["","CC-001","المشروع الرئيسي","",1],
     },
 }
 
 IMPORT_HEADER_ALIASES = {
+    "system_id": ["system id", "record id", "database id", "معرف النظام", "رقم النظام", "معرف السجل"],
     "code": ["code", "customer code", "supplier code", "item code", "الكود", "كود", "رقم العميل", "رقم المورد", "رمز الصنف"],
     "name": ["name", "customer", "customer name", "client", "client name", "supplier", "supplier name", "item", "item name", "اسم", "اسم العميل", "العميل", "اسم المورد", "المورد", "اسم الصنف", "الصنف"],
     "name_en": ["name en", "english name", "name english", "الاسم الانجليزي", "الاسم بالانجليزية"],
@@ -2049,7 +2051,7 @@ def clean_import_value(value, field=""):
         if field=="vat_no":
             return re.sub(r"\D","",translated)
         return re.sub(r"[^0-9+]","",translated)
-    if field in {"employee_no","code","account_code","parent_code"}:
+    if field in {"system_id","employee_no","code","account_code","parent_code"}:
         return normalize_import_code(text_value)
     if field in {"credit_limit","quantity","unit_cost","reorder_level","basic_salary"}:
         return normalize_import_number(text_value)
@@ -2164,8 +2166,30 @@ def import_quality_score(preview, definition=None):
     return import_quality_breakdown(preview,definition)["overall"]
 
 
+IMPORT_MODULE_TABLES = {
+    "customers":"customers", "suppliers":"suppliers", "inventory":"inventory",
+    "employees":"employees", "accounts":"chart_of_accounts", "cost_centers":"cost_centers",
+}
+
+def find_import_record_by_system_id(module_name, data):
+    system_id=normalize_import_code(data.get("system_id") or "")
+    if not system_id:
+        return None
+    if not re.fullmatch(r"\d+", system_id):
+        raise ValueError("System ID غير صحيح؛ لا تقم بتعديل هذا العمود.")
+    table=IMPORT_MODULE_TABLES.get(module_name)
+    if not table:
+        return None
+    found=row(f"SELECT id FROM {table} WHERE id=:id", {"id":int(system_id)})
+    if not found:
+        raise ValueError(f"لم يتم العثور على السجل المرتبط بـ System ID {system_id}.")
+    return found
+
 def find_existing_import_record(module_name,data):
-    """Find duplicates deterministically, prioritising true identifiers over names."""
+    """Find duplicates deterministically, prioritising System ID then true identifiers."""
+    by_id=find_import_record_by_system_id(module_name,data)
+    if by_id:
+        return by_id
     checks={
       "customers":("customers",[("code","code"),("vat_number","vat_no"),("email","email"),("name","name")]),
       "suppliers":("suppliers",[("code","code"),("vat_number","vat_no"),("email","email"),("name","name")]),
@@ -2295,13 +2319,14 @@ def validate_import_row(module_name, row_data, row_no):
 def import_excel_row(module_name, data, import_mode):
     if module_name not in EXCEL_IMPORT_DEFINITIONS:
         raise ValueError("نوع الاستيراد غير مدعوم.")
-    if import_mode not in {"إضافة فقط","إضافة وتحديث"}:
+    if import_mode not in {"إضافة فقط","إضافة وتحديث","تحديث فقط","تحديث الحقول الفارغة فقط"}:
         raise ValueError("وضع الاستيراد غير صحيح.")
     updated=False
+    system_record=find_import_record_by_system_id(module_name,data)
     if module_name=="customers":
         code=data.get("code") or None
         name_en=(data.get("name_en") or "").strip() or transliterate_arabic_name(data["name"])
-        existing=row("""SELECT id FROM customers WHERE code=:code OR name=:name
+        existing=system_record or row("""SELECT id FROM customers WHERE code=:code OR name=:name
                         ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]}) if code else row(
                      "SELECT id FROM customers WHERE name=:name ORDER BY id LIMIT 1",{"name":data["name"]})
         if existing:
@@ -2317,6 +2342,7 @@ def import_excel_row(module_name, data, import_mode):
             else:
                 raise ValueError("العميل موجود مسبقًا.")
         else:
+            if import_mode in {"تحديث فقط","تحديث الحقول الفارغة فقط"}: raise ValueError("لم يتم العثور على عميل مطابق لتحديثه.")
             execute("""INSERT INTO customers(code,name,name_en,vat_number,phone,email,
               address,credit_limit)
               VALUES(:code,:name,:name_en,:vat,:phone,:email,:address,:limit)""",
@@ -2328,7 +2354,7 @@ def import_excel_row(module_name, data, import_mode):
     elif module_name=="suppliers":
         code=data.get("code") or None
         name_en=(data.get("name_en") or "").strip() or transliterate_arabic_name(data["name"])
-        existing=row("""SELECT id FROM suppliers WHERE code=:code OR name=:name
+        existing=system_record or row("""SELECT id FROM suppliers WHERE code=:code OR name=:name
                         ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]}) if code else row(
                      "SELECT id FROM suppliers WHERE name=:name ORDER BY id LIMIT 1",{"name":data["name"]})
         if existing:
@@ -2343,6 +2369,7 @@ def import_excel_row(module_name, data, import_mode):
             else:
                 raise ValueError("المورد موجود مسبقًا.")
         else:
+            if import_mode in {"تحديث فقط","تحديث الحقول الفارغة فقط"}: raise ValueError("لم يتم العثور على مورد مطابق لتحديثه.")
             execute("""INSERT INTO suppliers(code,name,name_en,vat_number,phone,email,
               address)
               VALUES(:code,:name,:name_en,:vat,:phone,:email,:address)""",
@@ -2352,7 +2379,7 @@ def import_excel_row(module_name, data, import_mode):
 
     elif module_name=="inventory":
         code=(data.get("code") or "").strip() or next_inventory_sku()
-        existing=row("""SELECT id FROM inventory WHERE code=:code OR name=:name
+        existing=system_record or row("""SELECT id FROM inventory WHERE code=:code OR name=:name
                         ORDER BY id LIMIT 1""",{"code":code,"name":data["name"]}) if code else row(
                      "SELECT id FROM inventory WHERE name=:name ORDER BY id LIMIT 1",{"name":data["name"]})
         payload={"code":code,"name":data["name"],"description":data.get("description",""),
@@ -2370,38 +2397,74 @@ def import_excel_row(module_name, data, import_mode):
             else:
                 raise ValueError("الصنف موجود مسبقًا.")
         else:
+            if import_mode in {"تحديث فقط","تحديث الحقول الفارغة فقط"}: raise ValueError("لم يتم العثور على صنف مطابق لتحديثه.")
             execute("""INSERT INTO inventory(code,sku,name,description,unit,quantity,
               unit_cost,cost,reorder_level,active)
               VALUES(:code,:code,:name,:description,:unit,:quantity,:unit_cost,:unit_cost,:reorder,:active)""",
               payload)
 
     elif module_name=="employees":
-        emp_no=data.get("employee_no") or None
-        existing=row("""SELECT id FROM employees WHERE employee_no=:no OR name=:name
-                        ORDER BY id LIMIT 1""",{"no":emp_no,"name":data["name"]}) if emp_no else row(
-                     "SELECT id FROM employees WHERE name=:name ORDER BY id LIMIT 1",{"name":data["name"]})
+        emp_no=(data.get("employee_no") or "").strip() or None
+        email=(data.get("email") or "").strip()
+        existing=system_record
+        match_method="System ID" if system_record else ""
+        if emp_no:
+            existing=row("SELECT id FROM employees WHERE LOWER(CAST(employee_no AS TEXT))=LOWER(:value) ORDER BY id LIMIT 1",{"value":emp_no})
+            if existing: match_method="رقم الموظف"
+        if not existing and email:
+            existing=row("SELECT id FROM employees WHERE LOWER(CAST(email AS TEXT))=LOWER(:value) ORDER BY id LIMIT 1",{"value":email})
+            if existing: match_method="البريد الإلكتروني"
+        if not existing:
+            name=(data.get("name") or "").strip()
+            matches=rows("SELECT id FROM employees WHERE LOWER(TRIM(name))=LOWER(TRIM(:name)) ORDER BY id LIMIT 2",{"name":name})
+            if len(matches)==1:
+                existing=matches[0]; match_method="الاسم المطابق الوحيد"
+            elif len(matches)>1:
+                raise ValueError("يوجد أكثر من موظف بنفس الاسم؛ أضف البريد الإلكتروني أو رقمًا معرفًا قديمًا للمطابقة الآمنة.")
         payload={"no":emp_no,"name":data["name"],
                  "name_en":(data.get("name_en") or "").strip() or transliterate_arabic_name(data["name"]),
-                 "job":data.get("job_title",""),"salary":float(data.get("basic_salary") or 0),
-                 "phone":data.get("phone",""),"email":data.get("email",""),
+                 "job":data.get("job_title",""),"salary":float(data.get("basic_salary") or 0) if data.get("basic_salary") not in (None,"") else None,
+                 "phone":data.get("phone",""),"email":email,
                  "hire":parse_import_date(data.get("hire_date"), "تاريخ التعيين"),"nationality":data.get("nationality","")}
         if existing:
-            if import_mode=="إضافة وتحديث":
-                execute("""UPDATE employees SET name=:name,name_en=:name_en,
-                  job_title=:job,basic_salary=:salary,phone=:phone,email=:email,
-                  hire_date=:hire,nationality=:nationality WHERE id=:id""",
-                  {**payload,"id":existing["id"]})
-                updated=True
+            if import_mode=="إضافة فقط":
+                raise ValueError(f"الموظف موجود مسبقًا (المطابقة بواسطة {match_method}).")
+            if import_mode=="تحديث الحقول الفارغة فقط":
+                execute("""UPDATE employees SET
+                  employee_no=CASE WHEN COALESCE(TRIM(CAST(employee_no AS TEXT)),'')='' THEN NULLIF(:no,'') ELSE employee_no END,
+                  name=CASE WHEN COALESCE(TRIM(name),'')='' THEN NULLIF(:name,'') ELSE name END,
+                  name_en=CASE WHEN COALESCE(TRIM(name_en),'')='' THEN NULLIF(:name_en,'') ELSE name_en END,
+                  job_title=CASE WHEN COALESCE(TRIM(job_title),'')='' THEN NULLIF(:job,'') ELSE job_title END,
+                  basic_salary=CASE WHEN COALESCE(basic_salary,0)=0 AND :salary IS NOT NULL THEN :salary ELSE basic_salary END,
+                  phone=CASE WHEN COALESCE(TRIM(phone),'')='' THEN NULLIF(:phone,'') ELSE phone END,
+                  email=CASE WHEN COALESCE(TRIM(email),'')='' THEN NULLIF(:email,'') ELSE email END,
+                  hire_date=CASE WHEN hire_date IS NULL THEN :hire ELSE hire_date END,
+                  nationality=CASE WHEN COALESCE(TRIM(nationality),'')='' THEN NULLIF(:nationality,'') ELSE nationality END
+                  WHERE id=:id""",{**payload,"id":existing["id"]})
             else:
-                raise ValueError("الموظف موجود مسبقًا.")
+                # Safe update: blank spreadsheet cells never erase existing values.
+                execute("""UPDATE employees SET
+                  employee_no=COALESCE(NULLIF(:no,''),employee_no),
+                  name=COALESCE(NULLIF(:name,''),name),
+                  name_en=COALESCE(NULLIF(:name_en,''),name_en),
+                  job_title=COALESCE(NULLIF(:job,''),job_title),
+                  basic_salary=COALESCE(:salary,basic_salary),
+                  phone=COALESCE(NULLIF(:phone,''),phone),
+                  email=COALESCE(NULLIF(:email,''),email),
+                  hire_date=COALESCE(:hire,hire_date),
+                  nationality=COALESCE(NULLIF(:nationality,''),nationality)
+                  WHERE id=:id""",{**payload,"id":existing["id"]})
+            updated=True
         else:
+            if import_mode=="تحديث فقط" or import_mode=="تحديث الحقول الفارغة فقط":
+                raise ValueError("لم يتم العثور على موظف مطابق لتحديثه.")
             execute("""INSERT INTO employees(employee_no,name,name_en,job_title,
               basic_salary,phone,email,hire_date,nationality,active)
-              VALUES(:no,:name,:name_en,:job,:salary,:phone,:email,:hire,:nationality,1)""",
+              VALUES(:no,:name,:name_en,:job,COALESCE(:salary,0),:phone,:email,:hire,:nationality,1)""",
               payload)
 
     elif module_name=="accounts":
-        existing=row("SELECT id FROM chart_of_accounts WHERE account_code=:code",
+        existing=system_record or row("SELECT id FROM chart_of_accounts WHERE account_code=:code",
                      {"code":data["account_code"]})
         parent_id=None
         if data.get("parent_code"):
@@ -2424,12 +2487,13 @@ def import_excel_row(module_name, data, import_mode):
             else:
                 raise ValueError("الحساب موجود مسبقًا.")
         else:
+            if import_mode in {"تحديث فقط","تحديث الحقول الفارغة فقط"}: raise ValueError("لم يتم العثور على حساب مطابق لتحديثه.")
             execute("""INSERT INTO chart_of_accounts(account_code,account_name_ar,
               account_name_en,account_type,parent_id,accepts_entries,active)
               VALUES(:code,:ar,:en,:type,:parent,:accepts,:active)""",payload)
 
     elif module_name=="cost_centers":
-        existing=row("SELECT id FROM cost_centers WHERE code=:code",
+        existing=system_record or row("SELECT id FROM cost_centers WHERE code=:code",
                      {"code":data["code"]})
         parent_id=None
         if data.get("parent_code"):
@@ -2449,6 +2513,7 @@ def import_excel_row(module_name, data, import_mode):
             else:
                 raise ValueError("مركز التكلفة موجود مسبقًا.")
         else:
+            if import_mode in {"تحديث فقط","تحديث الحقول الفارغة فقط"}: raise ValueError("لم يتم العثور على مركز تكلفة مطابق لتحديثه.")
             execute("""INSERT INTO cost_centers(code,name,parent_id,active)
                        VALUES(:code,:name,:parent,:active)""",payload)
     return updated
@@ -10302,6 +10367,52 @@ def data_import_template(module_name):
         [definition["sample"]],
     )
 
+@app.route("/data-import/export-current/<module_name>")
+@login_required
+def data_import_export_current(module_name):
+    if module_name not in EXCEL_IMPORT_DEFINITIONS:
+        return "الوحدة غير مدعومة",404
+    queries={
+      "customers": """SELECT id system_id,code,name,name_en,vat_number vat_no,phone,email,address,credit_limit FROM customers ORDER BY id""",
+      "suppliers": """SELECT id system_id,code,name,name_en,vat_number vat_no,phone,email,address FROM suppliers ORDER BY id""",
+      "inventory": """SELECT id system_id,COALESCE(code,sku) code,name,description,unit,quantity,COALESCE(unit_cost,cost,0) unit_cost,reorder_level,active FROM inventory ORDER BY id""",
+      "employees": """SELECT id system_id,employee_no,name,name_en,job_title,basic_salary,phone,email,hire_date,nationality FROM employees ORDER BY id""",
+      "accounts": """SELECT a.id system_id,a.account_code,a.account_name_ar,a.account_name_en,a.account_type,p.account_code parent_code,a.accepts_entries,a.active FROM chart_of_accounts a LEFT JOIN chart_of_accounts p ON p.id=a.parent_id ORDER BY a.account_code""",
+      "cost_centers": """SELECT c.id system_id,c.code,c.name,p.code parent_code,c.active FROM cost_centers c LEFT JOIN cost_centers p ON p.id=c.parent_id ORDER BY c.code""",
+    }
+    definition=EXCEL_IMPORT_DEFINITIONS[module_name]
+    data=rows(queries[module_name])
+    wb=Workbook(); ws=wb.active; ws.title=definition["title"][:31]; ws.sheet_view.rightToLeft=True
+    ws.append(definition["headers"])
+    for item in data:
+        ws.append([item.get(header,"") for header in definition["headers"]])
+    for cell in ws[1]:
+        cell.font=Font(bold=True); cell.fill=PatternFill("solid",fgColor="D9EAF7"); cell.protection=Protection(locked=True)
+    for row_cells in ws.iter_rows(min_row=2):
+        for index,cell in enumerate(row_cells, start=1):
+            cell.protection=Protection(locked=(index==1))
+    ws.column_dimensions["A"].width=14
+    for column in ws.columns:
+        max_length=max(len(str(cell.value or "")) for cell in column)
+        ws.column_dimensions[column[0].column_letter].width=min(max(max_length+3,12),45)
+    ws.freeze_panes="A2"
+    ws.auto_filter.ref=ws.dimensions
+    ws.protection.sheet=True
+    ws.protection.password="west-erp"
+    ws.protection.selectLockedCells=False
+    ws.protection.selectUnlockedCells=True
+    note=wb.create_sheet("تعليمات")
+    note.sheet_view.rightToLeft=True
+    note.append(["تعليمات التعديل وإعادة الاستيراد"]); note["A1"].font=Font(bold=True,size=14)
+    note.append(["1. لا تعدّل أو تحذف عمود System ID؛ فهو يربط الصف بالسجل الصحيح داخل النظام."])
+    note.append(["2. عدّل الحقول المطلوبة فقط ثم احفظ الملف بصيغة XLSX."])
+    note.append(["3. أعد رفع الملف من مركز الاستيراد واختر إضافة وتحديث أو تحديث فقط."])
+    note.append(["4. الصفوف الجديدة يمكن إضافتها بترك System ID فارغًا."])
+    note.column_dimensions["A"].width=100
+    output=io.BytesIO(); wb.save(output); output.seek(0)
+    audit("EXPORT","DATA_IMPORT",f"تصدير البيانات الحالية لوحدة {module_name}")
+    return Response(output.getvalue(),mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",headers={"Content-Disposition":f'attachment; filename="{module_name}_current_data.xlsx"'})
+
 @app.route("/data-import/<module_name>",methods=["GET","POST"])
 @login_required
 def data_import_upload(module_name):
@@ -10407,8 +10518,8 @@ def data_import_confirm(module_name):
         flash("لا توجد معاينة صالحة للاستيراد.","danger")
         return redirect(url_for("data_import_upload",module_name=module_name))
     import_mode=request.form.get("import_mode","إضافة فقط")
-    if import_mode not in {"إضافة فقط","إضافة وتحديث"}:
-        import_mode="إضافة فقط"
+    if import_mode not in {"إضافة فقط","إضافة وتحديث","تحديث فقط","تحديث الحقول الفارغة فقط"}:
+        import_mode="إضافة وتحديث"
     rows_data=preview.get("rows",[])
     if module_name in {"accounts","cost_centers"}:
         # Parents must be queued before children even when Excel rows are unordered.
