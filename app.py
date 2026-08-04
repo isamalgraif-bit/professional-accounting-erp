@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.11.1"
+APP_VERSION = "20.11.2"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -199,6 +199,81 @@ def next_journal_number(journal_date_value):
     return f"JV-{journal_year}-{number:06d}"
 
 
+
+
+
+def post_multi_journal_batch(batch_id):
+    """Post every balanced group in a multi-journal batch to the general ledger.
+
+    The operation is idempotent: each batch group is linked through
+    journal_entries.source_type/source_id, so retrying cannot duplicate entries.
+    """
+    batch = row("SELECT * FROM journal_batches WHERE id=:id", {"id": batch_id})
+    if not batch:
+        raise ValueError("دفعة القيود غير موجودة.")
+    ensure_open_period(batch["batch_date"])
+    groups = rows("SELECT * FROM journal_batch_groups WHERE batch_id=:id ORDER BY group_no", {"id": batch_id})
+    if not groups:
+        raise ValueError("لا توجد قيود داخل الدفعة.")
+
+    posted_count = 0
+    try:
+        for group in groups:
+            existing = row("""SELECT id,journal_no FROM journal_entries
+                              WHERE source_type='MULTI_JOURNAL' AND source_id=:source_id
+                              LIMIT 1""", {"source_id": group["id"]})
+            if existing:
+                db.session.execute(text("""UPDATE journal_batch_groups
+                                           SET status='مرحّل',journal_no=:journal_no
+                                           WHERE id=:id"""),
+                                   {"journal_no": existing["journal_no"], "id": group["id"]})
+                continue
+
+            lines = rows("SELECT * FROM journal_batch_lines WHERE group_id=:id ORDER BY id", {"id": group["id"]})
+            total_debit = round(sum(float(x["debit"] or 0) for x in lines), 2)
+            total_credit = round(sum(float(x["credit"] or 0) for x in lines), 2)
+            if len(lines) < 2 or total_debit <= 0 or total_debit != total_credit:
+                raise ValueError(f"المجموعة {group['group_no']} غير متوازنة ولا يمكن ترحيلها.")
+
+            journal_no = group["journal_no"] or next_journal_number(batch["batch_date"])
+            db.session.execute(text("""INSERT INTO journal_entries(
+                journal_no,journal_date,reference,description,status,total_debit,total_credit,
+                created_by,created_at,source_type,source_id,posted_at)
+                VALUES(:no,:date,:reference,:description,'مرحّل',:debit,:credit,
+                       :user,:created,'MULTI_JOURNAL',:source_id,:posted_at)"""),
+                {"no": journal_no, "date": batch["batch_date"], "reference": batch["batch_no"],
+                 "description": batch["description"] or f"دفعة قيود متعددة {batch['batch_no']} - المجموعة {group['group_no']}",
+                 "debit": total_debit, "credit": total_credit, "user": batch["created_by"] or session.get("user_id"),
+                 "created": batch["created_at"] or datetime.now(), "source_id": group["id"],
+                 "posted_at": datetime.now()})
+            journal_id = db.session.execute(text("SELECT id FROM journal_entries WHERE journal_no=:no"),
+                                            {"no": journal_no}).scalar_one()
+            for line in lines:
+                db.session.execute(text("""INSERT INTO journal_entry_lines(
+                    journal_id,account_id,debit,credit,taxable,tax_direction,supplier_id,customer_id,
+                    party_type,tax_number,invoice_number,invoice_date,line_description,cost_center_id)
+                    VALUES(:journal_id,:account_id,:debit,:credit,:taxable,:tax_direction,:supplier_id,
+                           :customer_id,:party_type,:tax_number,:invoice_number,:invoice_date,
+                           :line_description,:cost_center_id)"""),
+                    {"journal_id": journal_id, "account_id": line["account_id"], "debit": line["debit"],
+                     "credit": line["credit"], "taxable": line["taxable"],
+                     "tax_direction": line["tax_direction"], "supplier_id": line["supplier_id"],
+                     "customer_id": line["customer_id"], "party_type": line["party_type"],
+                     "tax_number": line["tax_number"], "invoice_number": line["invoice_number"],
+                     "invoice_date": line["invoice_date"], "line_description": line["line_description"],
+                     "cost_center_id": line["cost_center_id"]})
+            db.session.execute(text("""UPDATE journal_batch_groups
+                                       SET status='مرحّل',journal_no=:journal_no,total_debit=:debit,total_credit=:credit
+                                       WHERE id=:id"""),
+                               {"journal_no": journal_no, "debit": total_debit, "credit": total_credit, "id": group["id"]})
+            posted_count += 1
+
+        db.session.execute(text("UPDATE journal_batches SET status='مرحّل' WHERE id=:id"), {"id": batch_id})
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+    return posted_count
 
 def next_batch_number(batch_date_value):
     if isinstance(batch_date_value, str):
@@ -5857,7 +5932,7 @@ def multi_journal():
                    VALUES(:no,:date,:description,:status,:user,:created)""",
                 {"no": batch_no, "date": request.form["batch_date"],
                  "description": request.form.get("description",""),
-                 "status": request.form["status"],
+                 "status": "مسودة",
                  "user": session.get("user_id"), "created": datetime.now()})
         batch_id = row("SELECT id FROM journal_batches WHERE batch_no=:no", {"no": batch_no})["id"]
 
@@ -5868,7 +5943,7 @@ def multi_journal():
             execute("""INSERT INTO journal_batch_groups(batch_id,group_no,journal_no,total_debit,total_credit,status)
                        VALUES(:batch,:group_no,:journal_no,:td,:tc,:status)""",
                     {"batch": batch_id, "group_no": group_no, "journal_no": journal_no,
-                     "td": td, "tc": tc, "status": request.form["status"]})
+                     "td": td, "tc": tc, "status": "مسودة"})
             group_id = row("""SELECT id FROM journal_batch_groups
                               WHERE batch_id=:batch AND group_no=:group_no""",
                            {"batch": batch_id, "group_no": group_no})["id"]
@@ -5881,8 +5956,17 @@ def multi_journal():
                     :supplier_id,:customer_id,:entity_id,:tax_number,:invoice_number,:invoice_date,
                     :line_description,:cost_center_id)""", {"group_id": group_id, **line})
 
-        audit("CREATE", "JOURNAL_BATCH", f"إنشاء دفعة قيود {batch_no}")
-        flash(f"تم حفظ دفعة القيود {batch_no}", "success")
+        requested_status = request.form.get("status", "مسودة")
+        if requested_status == "مرحّل":
+            try:
+                posted_count = post_multi_journal_batch(batch_id)
+                audit("POST", "JOURNAL_BATCH", f"ترحيل دفعة القيود {batch_no} بعدد {posted_count} قيود")
+                flash(f"تم حفظ وترحيل دفعة القيود {batch_no} إلى الأستاذ وميزان المراجعة", "success")
+            except Exception as exc:
+                flash(f"تم حفظ الدفعة كمسودة، وتعذر الترحيل: {exc}", "danger")
+        else:
+            audit("CREATE", "JOURNAL_BATCH", f"إنشاء دفعة قيود {batch_no}")
+            flash(f"تم حفظ دفعة القيود {batch_no} كمسودة", "success")
         if request.form.get("print_after_save") == "1":
             return redirect(url_for("multi_journal_view", batch_id=batch_id, print=1))
         return redirect(url_for("multi_journal_view", batch_id=batch_id))
@@ -5898,6 +5982,24 @@ def multi_journal():
         employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"),
         centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code")
     )
+
+
+@app.route("/multi-journal/<int:batch_id>/post", methods=["POST"])
+@login_required
+def multi_journal_post(batch_id):
+    batch = row("SELECT * FROM journal_batches WHERE id=:id", {"id": batch_id})
+    if not batch:
+        return "الدفعة غير موجودة", 404
+    try:
+        posted_count = post_multi_journal_batch(batch_id)
+        audit("POST", "JOURNAL_BATCH", f"ترحيل/استكمال دفعة {batch['batch_no']} بعدد {posted_count} قيود جديدة")
+        if posted_count:
+            flash(f"تم ترحيل {posted_count} قيد إلى الأستاذ وميزان المراجعة", "success")
+        else:
+            flash("جميع قيود الدفعة مرحّلة مسبقًا ولا توجد ازدواجية", "info")
+    except Exception as exc:
+        flash(f"تعذر ترحيل الدفعة: {exc}", "danger")
+    return redirect(url_for("multi_journal_view", batch_id=batch_id))
 
 @app.route("/multi-journal/<int:batch_id>")
 @login_required

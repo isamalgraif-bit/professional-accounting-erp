@@ -39,7 +39,11 @@ th{background:#edf2f7}
 <div class="toolbar" id="print-each">
 <button class="btn" onclick="window.print()">طباعة الدفعة كاملة / PDF</button>
 <button id="printEachButton" class="btn secondary" onclick="printEachGroup()">طباعة كل قيد في صفحة مستقلة</button>
-<a class="btn success" href="{{url_for('multi_journal_export',batch_id=batch.id)}}">تصدير Excel</a><span style="align-self:center;background:#fff;padding:8px 12px;border-radius:7px">يمكن حفظ PDF من نافذة الطباعة</span>
+<a class="btn success" href="{{url_for('multi_journal_export',batch_id=batch.id)}}">تصدير Excel</a>
+<form method="post" action="{{url_for('multi_journal_post',batch_id=batch.id)}}" style="display:inline" onsubmit="return confirm('تأكيد ترحيل جميع قيود الدفعة إلى الأستاذ وميزان المراجعة؟')">
+<button class="btn success" type="submit">{{'فحص واستكمال الترحيل' if batch.status=='مرحّل' else 'ترحيل إلى ميزان المراجعة'}}</button>
+</form>
+<span style="align-self:center;background:#fff;padding:8px 12px;border-radius:7px">يمكن حفظ PDF من نافذة الطباعة</span>
 </div>
 
 <div class="sheet">

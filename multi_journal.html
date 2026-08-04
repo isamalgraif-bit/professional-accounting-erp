@@ -89,6 +89,7 @@
 <tbody>{% for b in batches %}<tr><td>{{b.batch_no}}</td><td>{{b.batch_date}}</td><td>{{b.description}}</td><td>{{b.status}}</td>
 <td class="text-nowrap">
 <a class="btn btn-sm btn-outline-primary" href="{{url_for('multi_journal_view',batch_id=b.id)}}">عرض</a>
+<form class="d-inline" method="post" action="{{url_for('multi_journal_post',batch_id=b.id)}}" onsubmit="return confirm('تأكيد ترحيل الدفعة إلى ميزان المراجعة؟')"><button class="btn btn-sm btn-outline-success" type="submit">ترحيل/فحص</button></form>
 <a class="btn btn-sm btn-dark" target="_blank" href="{{url_for('multi_journal_view',batch_id=b.id,print=1)}}">طباعة الدفعة / PDF</a>
 <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{url_for('multi_journal_view',batch_id=b.id)}}#print-each">كل قيد صفحة</a>
 <a class="btn btn-sm btn-outline-success" href="{{url_for('multi_journal_export',batch_id=b.id)}}">📊 Excel</a>
