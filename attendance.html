@@ -1,14 +1,26 @@
 {% extends "base.html" %}{% block content %}
-<div class="erp-page-title"><div><h3>الحضور والانصراف</h3><small>Attendance</small></div></div>
-<div class="form-card mb-4"><form method="post"><div class="row g-3">
-<div class="col-md-3"><label>الموظف</label><select class="form-select" name="employee_id" required>{% for e in employees %}<option value="{{e.id}}">{{e.employee_no or ''}} - {{e.name}}</option>{% endfor %}</select></div>
-<div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="attendance_date" required></div>
-<div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>حاضر</option><option>غائب</option><option>إجازة</option><option>مأمورية</option></select></div>
-<div class="col-md-2"><label>دخول</label><input class="form-control" type="time" name="check_in"></div>
-<div class="col-md-2"><label>خروج</label><input class="form-control" type="time" name="check_out"></div>
-<div class="col-md-1"><label>إضافي</label><input class="form-control" type="number" step=".01" name="overtime_hours" value="0"></div>
-<div class="col-md-2"><label>ساعات غياب</label><input class="form-control" type="number" step=".01" name="absence_hours" value="0"></div>
-<div class="col-md-8"><label>ملاحظات</label><input class="form-control" name="notes"></div>
-<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">حفظ</button></div></div></form></div>
-<div class="form-card"><form method="get" class="row g-2 mb-3"><div class="col-md-3"><input class="form-control" type="date" name="date_from" value="{{date_from}}"></div><div class="col-md-3"><input class="form-control" type="date" name="date_to" value="{{date_to}}"></div><div class="col-md-2"><button class="btn btn-outline-primary w-100">تصفية</button></div></form>
-<table class="table table-striped"><thead><tr><th>التاريخ</th><th>الموظف</th><th>الحالة</th><th>دخول</th><th>خروج</th><th>إضافي</th><th>غياب</th></tr></thead><tbody>{% for r in records %}<tr><td>{{r.attendance_date}}</td><td>{{r.name}}</td><td>{{r.status}}</td><td>{{r.check_in or '-'}}</td><td>{{r.check_out or '-'}}</td><td>{{r.overtime_hours}}</td><td>{{r.absence_hours}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}
+<div class="erp-page-title"><div><h3>الحضور والانصراف الشهري</h3><small>Monthly Attendance & Overtime</small></div></div>
+<div class="form-card mb-3">
+<form method="get" class="row g-2 align-items-end">
+<div class="col-md-3"><label>الشهر</label><input class="form-control" type="month" name="month" value="{{month}}" required></div>
+<div class="col-md-2"><button class="btn btn-primary w-100">تحميل كامل الشهر</button></div>
+<div class="col-md-3"><a class="btn btn-outline-success w-100" href="{{url_for('attendance_export',month=month)}}">تنزيل الشهر Excel</a></div>
+<div class="col-md-4"><div class="alert alert-info mb-0 py-2">المربع المحدد = حاضر، وغير المحدد = غائب. يمكن إدخال الإضافي في نفس الشاشة.</div></div>
+</form></div>
+<form method="post">
+<input type="hidden" name="month" value="{{month}}">
+{% for e in employees %}<input type="hidden" name="employee_ids" value="{{e.id}}">{% endfor %}
+<div class="form-card mb-3" style="overflow:auto;max-height:68vh">
+<table class="table table-bordered table-sm align-middle text-center" style="min-width:1500px;">
+<thead class="sticky-top bg-white"><tr><th style="min-width:210px">الموظف</th>{% for d in days %}<th style="min-width:115px">{{d.day}}<br><small>{{d.strftime('%a')}}</small></th>{% endfor %}</tr></thead>
+<tbody>{% for e in employees %}<tr><th class="text-start sticky-start bg-white">{{e.employee_no or ''}} - {{e.name}}</th>
+{% for d in days %}{% set key=e.id|string+'_'+d.isoformat() %}{% set r=record_map.get((e.id,d.isoformat())) %}
+<td class="{% if d.weekday() in [4,5] %}table-light{% endif %}">
+<div class="form-check d-flex justify-content-center"><input class="form-check-input" type="checkbox" name="present" value="{{key}}" {% if not r or r.status != 'غائب' %}checked{% endif %} title="حاضر"></div>
+<div class="input-group input-group-sm mt-1"><span class="input-group-text">د</span><input type="time" class="form-control" name="check_in_{{key}}" value="{{r.check_in.strftime('%H:%M') if r and r.check_in else ''}}"></div>
+<div class="input-group input-group-sm mt-1"><span class="input-group-text">خ</span><input type="time" class="form-control" name="check_out_{{key}}" value="{{r.check_out.strftime('%H:%M') if r and r.check_out else ''}}"></div>
+<div class="input-group input-group-sm mt-1"><span class="input-group-text">إضافي</span><input type="number" step=".01" min="0" class="form-control" name="overtime_{{key}}" value="{{r.overtime_hours if r else 0}}"></div>
+<input class="form-control form-control-sm mt-1" name="notes_{{key}}" value="{{r.notes if r else ''}}" placeholder="ملاحظة">
+</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+<div class="text-end sticky-bottom bg-white py-2"><button class="btn btn-success btn-lg px-5">حفظ الشهر بالكامل</button></div>
+</form>{% endblock %}

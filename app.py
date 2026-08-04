@@ -5,6 +5,7 @@ from werkzeug.utils import secure_filename
 from sqlalchemy import text
 from functools import wraps
 from datetime import datetime, date, timedelta
+import calendar
 import os
 import csv
 import io
@@ -21,7 +22,7 @@ import qrcode
 from openpyxl import Workbook
 from openpyxl.styles import Protection, Font, PatternFill
 
-APP_VERSION = "21.0.4"
+APP_VERSION = "21.0.7"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -1116,7 +1117,7 @@ def calculate_employee_payroll(employee, period_start, period_end):
       AND (recurring=1 OR adjustment_date BETWEEN :start AND :end)""",
       {"employee":employee["id"],"start":period_start,"end":period_end})
     extra_earnings=sum(float(x["amount"]) for x in adjustments if x["adjustment_type"]=="استحقاق")
-    other_deductions=sum(float(x["amount"]) for x in adjustments if x["adjustment_type"]=="استقطاع")
+    other_deductions=sum(float(x["amount"]) for x in adjustments if x["adjustment_type"] in ("استقطاع","خصم"))
 
     gross=round(basic+allowances+overtime_amount+extra_earnings,2)
     deductions=round(absence_deduction+other_deductions,2)
@@ -3344,6 +3345,7 @@ def init_db():
             employee_id INTEGER NOT NULL REFERENCES employees(id),
             adjustment_date DATE NOT NULL,
             adjustment_type VARCHAR(30) NOT NULL,
+            adjustment_category VARCHAR(100) DEFAULT '',
             amount NUMERIC(18,2) NOT NULL,
             recurring INTEGER DEFAULT 0,
             description TEXT DEFAULT '',
@@ -4115,6 +4117,7 @@ def init_db():
         'ALTER TABLE expenses ADD COLUMN IF NOT EXISTS invoice_date DATE',
         "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'مسودة'",
         'ALTER TABLE expenses ADD COLUMN IF NOT EXISTS journal_id INTEGER',
+        "ALTER TABLE employee_salary_adjustments ADD COLUMN IF NOT EXISTS adjustment_category VARCHAR(100) DEFAULT ''",
         "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS posting_status VARCHAR(30) DEFAULT 'غير مرحّل'"
     ]
     for migration in migrations:
@@ -10068,52 +10071,96 @@ def payroll_settings():
 @app.route("/attendance",methods=["GET","POST"])
 @login_required
 def attendance():
+    selected_month=request.values.get("month") or date.today().strftime("%Y-%m")
+    try:
+        year,month_no=[int(x) for x in selected_month.split("-")]
+        first_day=date(year,month_no,1)
+    except Exception:
+        first_day=date.today().replace(day=1)
+        selected_month=first_day.strftime("%Y-%m")
+    last_day=date(first_day.year,first_day.month,calendar.monthrange(first_day.year,first_day.month)[1])
+
     if request.method=="POST":
-        execute("""INSERT INTO attendance_records(employee_id,attendance_date,status,
-          check_in,check_out,overtime_hours,absence_hours,notes,created_by,created_at)
-          VALUES(:employee,:dt,:status,:check_in,:check_out,:ot,:absence,:notes,:uid,:created)
-          ON CONFLICT(employee_id,attendance_date) DO UPDATE SET
-          status=EXCLUDED.status,check_in=EXCLUDED.check_in,check_out=EXCLUDED.check_out,
-          overtime_hours=EXCLUDED.overtime_hours,absence_hours=EXCLUDED.absence_hours,
-          notes=EXCLUDED.notes""",
-          {"employee":request.form["employee_id"],"dt":request.form["attendance_date"],
-           "status":request.form.get("status","حاضر"),
-           "check_in":request.form.get("check_in") or None,
-           "check_out":request.form.get("check_out") or None,
-           "ot":float(request.form.get("overtime_hours") or 0),
-           "absence":float(request.form.get("absence_hours") or 0),
-           "notes":request.form.get("notes",""),"uid":session.get("user_id"),
-           "created":datetime.now()})
-        flash("تم حفظ سجل الحضور","success")
-        return redirect(url_for("attendance"))
-    date_from=request.args.get("date_from","")
-    date_to=request.args.get("date_to","")
-    conditions=[];params={}
-    if date_from:
-        conditions.append("a.attendance_date>=:date_from");params["date_from"]=date_from
-    if date_to:
-        conditions.append("a.attendance_date<=:date_to");params["date_to"]=date_to
-    where=" WHERE "+" AND ".join(conditions) if conditions else ""
-    return render_template("attendance.html",date_from=date_from,date_to=date_to,
-      records=rows(f"""SELECT a.*,e.employee_no,e.name FROM attendance_records a
-                       JOIN employees e ON e.id=a.employee_id
-                       {where} ORDER BY a.attendance_date DESC,e.name""",params),
-      employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"))
+        employee_ids=request.form.getlist("employee_ids")
+        present_keys=set(request.form.getlist("present"))
+        saved=0
+        for employee_id in employee_ids:
+            employee_id=int(employee_id)
+            for day_no in range(1,last_day.day+1):
+                dt=date(first_day.year,first_day.month,day_no)
+                key=f"{employee_id}_{dt.isoformat()}"
+                status="حاضر" if key in present_keys else "غائب"
+                check_in=request.form.get(f"check_in_{key}") or None
+                check_out=request.form.get(f"check_out_{key}") or None
+                overtime=float(request.form.get(f"overtime_{key}") or 0)
+                notes=request.form.get(f"notes_{key}","")
+                execute("""INSERT INTO attendance_records(employee_id,attendance_date,status,
+                  check_in,check_out,overtime_hours,absence_hours,notes,created_by,created_at)
+                  VALUES(:employee,:dt,:status,:check_in,:check_out,:ot,0,:notes,:uid,:created)
+                  ON CONFLICT(employee_id,attendance_date) DO UPDATE SET
+                  status=EXCLUDED.status,check_in=EXCLUDED.check_in,check_out=EXCLUDED.check_out,
+                  overtime_hours=EXCLUDED.overtime_hours,
+                  absence_hours=CASE WHEN EXCLUDED.status='غائب' THEN 0 ELSE attendance_records.absence_hours END,
+                  notes=EXCLUDED.notes""",
+                  {"employee":employee_id,"dt":dt,"status":status,"check_in":check_in,
+                   "check_out":check_out,"ot":overtime,"notes":notes,
+                   "uid":session.get("user_id"),"created":datetime.now()})
+                saved+=1
+        flash(f"تم حفظ حضور الشهر بالكامل ({saved} سجل)","success")
+        return redirect(url_for("attendance",month=selected_month))
+
+    employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name")
+    existing=rows("""SELECT * FROM attendance_records
+                     WHERE attendance_date BETWEEN :start AND :end""",
+                  {"start":first_day,"end":last_day})
+    record_map={(int(r["employee_id"]),str(r["attendance_date"])):r for r in existing}
+    days=[date(first_day.year,first_day.month,d) for d in range(1,last_day.day+1)]
+    return render_template("attendance.html",month=selected_month,days=days,
+                           employees=employees,record_map=record_map)
+
+@app.route("/attendance/export")
+@login_required
+def attendance_export():
+    selected_month=request.args.get("month") or date.today().strftime("%Y-%m")
+    try:
+        year,month_no=[int(x) for x in selected_month.split("-")]
+        first_day=date(year,month_no,1)
+    except Exception:
+        first_day=date.today().replace(day=1)
+        selected_month=first_day.strftime("%Y-%m")
+    last_day=date(first_day.year,first_day.month,calendar.monthrange(first_day.year,first_day.month)[1])
+    data=rows("""SELECT e.employee_no,e.name,a.attendance_date,a.status,a.check_in,a.check_out,
+                        a.overtime_hours,a.absence_hours,a.notes
+                 FROM employees e LEFT JOIN attendance_records a ON a.employee_id=e.id
+                   AND a.attendance_date BETWEEN :start AND :end
+                 WHERE e.active=1 ORDER BY e.name,a.attendance_date""",
+              {"start":first_day,"end":last_day})
+    wb=Workbook(); ws=wb.active; ws.title="Attendance"
+    ws.append(["رقم الموظف","اسم الموظف","التاريخ","الحالة","الدخول","الخروج","الساعات الإضافية","ساعات الغياب","ملاحظات"])
+    for c in ws[1]: c.font=Font(bold=True)
+    for r in data:
+        ws.append([r["employee_no"],r["name"],r["attendance_date"],r["status"] or "غير مسجل",
+                   str(r["check_in"] or ""),str(r["check_out"] or ""),r["overtime_hours"] or 0,
+                   r["absence_hours"] or 0,r["notes"] or ""])
+    output=io.BytesIO(); wb.save(output); output.seek(0)
+    return Response(output.getvalue(),mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition":f'attachment; filename="attendance_{selected_month}.xlsx"'})
 
 @app.route("/salary-adjustments",methods=["GET","POST"])
 @login_required
 def salary_adjustments():
     if request.method=="POST":
         execute("""INSERT INTO employee_salary_adjustments(employee_id,adjustment_date,
-          adjustment_type,amount,recurring,description,active,created_by,created_at)
-          VALUES(:employee,:dt,:type,:amount,:recurring,:description,1,:uid,:created)""",
+          adjustment_type,adjustment_category,amount,recurring,description,active,created_by,created_at)
+          VALUES(:employee,:dt,:type,:category,:amount,:recurring,:description,1,:uid,:created)""",
           {"employee":request.form["employee_id"],"dt":request.form["adjustment_date"],
            "type":request.form["adjustment_type"],
+           "category":request.form.get("adjustment_category","").strip(),
            "amount":float(request.form["amount"] or 0),
            "recurring":1 if request.form.get("recurring") else 0,
            "description":request.form.get("description",""),
            "uid":session.get("user_id"),"created":datetime.now()})
-        flash("تم حفظ الاستحقاق/الاستقطاع","success")
+        flash("تم حفظ الاستحقاق/الاستقطاع/الخصم","success")
         return redirect(url_for("salary_adjustments"))
     return render_template("salary_adjustments.html",
       rows=rows("""SELECT a.*,e.name employee_name FROM employee_salary_adjustments a
