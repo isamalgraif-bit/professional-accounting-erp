@@ -8,7 +8,7 @@
   </div>
   <div class="erp-toolbar no-print">
     <button type="button" class="erp-tool-btn" data-new-document="1" data-new-url="{{ url_for('journal_entries') }}">📄 <span>مستند جديد</span></button>
-    <button type="button" class="erp-tool-btn primary" id="saveJournalTop">💾 <span>حفظ</span></button>
+    <button type="button" class="erp-tool-btn primary" id="saveJournalTop">💾 <span>{{'تعديل وحفظ' if edit_journal else 'حفظ'}}</span></button>
     <button type="button" class="erp-tool-btn success" id="postJournalTop">✅ <span>حفظ وترحيل</span></button>
     <button type="button" class="erp-tool-btn dark" id="savePrintJournal">🖨️ <span>حفظ وطباعة</span></button>
     <button type="button" class="erp-tool-btn" id="previewJournal">👁️ <span>معاينة المسودة</span></button>
@@ -37,22 +37,28 @@
 <div class="form-card mb-4">
 <form method="post" id="journalForm" data-track-unsaved="1">
 <input type="hidden" name="print_after_save" id="journalPrintAfterSave" value="0">
+<input type="hidden" name="journal_id" value="{{edit_journal.id if edit_journal else ''}}">
+{% if edit_journal and edit_journal.status=='مرحّل' %}
+<div class="alert alert-warning py-2 mb-3">
+  هذا القيد مرحّل. عند الضغط على «تعديل وحفظ» سيتم تحديث أثره مباشرة في الأستاذ العام وميزان المراجعة مع بقائه بحالة «مرحّل».
+</div>
+{% endif %}
 <div class="row g-3 mb-3">
   <div class="col-md-2">
     <label class="form-label">تاريخ القيد</label>
-    <input class="form-control" type="date" name="journal_date" id="journalDate" required>
+    <input class="form-control" type="date" name="journal_date" id="journalDate" value="{{edit_journal.journal_date if edit_journal else ''}}" required>
   </div>
   <div class="col-md-2">
     <label class="form-label">الحالة</label>
-    <select class="form-select" name="status" id="journalStatus"><option>مسودة</option><option>مرحّل</option></select>
+    <select class="form-select" name="status" id="journalStatus"><option {% if not edit_journal or edit_journal.status=='مسودة' %}selected{% endif %}>مسودة</option><option {% if edit_journal and edit_journal.status=='مرحّل' %}selected{% endif %}>مرحّل</option></select>
   </div>
   <div class="col-md-3">
     <label class="form-label">المرجع</label>
-    <input class="form-control" name="reference">
+    <input class="form-control" name="reference" value="{{edit_journal.reference if edit_journal else ''}}">
   </div>
   <div class="col-md-5">
     <label class="form-label">البيان العام</label>
-    <input class="form-control" name="description">
+    <input class="form-control" name="description" value="{{edit_journal.description if edit_journal else ''}}">
   </div>
 </div>
 
@@ -179,7 +185,7 @@
 </div>
 
 <div class="mt-4 text-end">
-  <button class="btn btn-primary btn-lg" id="saveJournalBottom">💾 حفظ القيد</button>
+  <button class="btn btn-primary btn-lg" id="saveJournalBottom">💾 {{'تعديل وحفظ' if edit_journal else 'حفظ القيد'}}</button>
   <button type="button" class="btn btn-success btn-lg" id="postJournalBottom">✅ حفظ وترحيل</button>
 </div>
 </form>
@@ -187,17 +193,23 @@
 
 <div class="form-card">
 <h5 class="mb-3">القيود السابقة</h5>
+<form method="post" action="{{url_for('journal_bulk_post')}}" id="bulkPostForm" onsubmit="return confirm('تأكيد ترحيل القيود المحددة؟')">
+<div class="mb-3 d-flex gap-2 align-items-center">
+  <button class="btn btn-success" type="submit">✅ ترحيل القيود المحددة</button>
+  <span class="text-muted">يمكن اختيار عدد من القيود المسودة وترحيلها دفعة واحدة.</span>
+</div>
 <div class="table-responsive">
 <table class="table table-striped align-middle">
 <thead>
 <tr>
-  <th>رقم القيد</th><th>التاريخ</th><th>البيان</th>
+  <th class="no-print"><input type="checkbox" id="selectAllJournals" title="تحديد الكل"></th><th>رقم القيد</th><th>التاريخ</th><th>البيان</th>
   <th>المدين</th><th>الدائن</th><th>الحالة</th><th>الإجراءات</th>
 </tr>
 </thead>
 <tbody>
 {% for j in journals %}
 <tr>
+  <td class="no-print">{% if j.status != 'مرحّل' %}<input type="checkbox" name="journal_ids[]" value="{{j.id}}" class="journal-check">{% endif %}</td>
   <td>{{j.journal_no}}</td>
   <td>{{j.journal_date}}</td>
   <td>{{j.description}}</td>
@@ -206,7 +218,8 @@
   <td>{{j.status}}</td>
   <td class="text-nowrap">
     <a class="btn btn-sm btn-outline-primary" href="{{url_for('journal_view', journal_id=j.id)}}">عرض / طباعة</a>
-    {% if j.status!='مرحّل' %}<form class="d-inline" method="post" action="{{url_for('journal_post',journal_id=j.id)}}" onsubmit="return confirm('تأكيد ترحيل القيد؟ لا يمكن حذفه بعد الترحيل.')"><button class="btn btn-sm btn-success">✅ ترحيل</button></form>{% endif %}
+    <a class="btn btn-sm btn-outline-warning" href="{{url_for('journal_entries',edit_id=j.id)}}">✏️ تعديل وحفظ</a>
+    {% if j.status!='مرحّل' %}<form class="d-inline" method="post" action="{{url_for('journal_post',journal_id=j.id)}}" onsubmit="return confirm('تأكيد ترحيل القيد؟')"><button class="btn btn-sm btn-success">✅ ترحيل</button></form>{% endif %}
     <form class="d-inline" method="post" action="{{url_for('journal_delete',journal_id=j.id)}}" onsubmit="return confirm('تأكيد الحذف؟')">
       <button class="btn btn-sm btn-outline-danger">حذف</button>
     </form>
@@ -216,6 +229,7 @@
 </tbody>
 </table>
 </div>
+</form>
 </div>
 
 
@@ -428,6 +442,37 @@ resetRow(secondRow);
 journalBody.appendChild(secondRow);
 
 document.querySelectorAll('.journal-row').forEach(bind);
+
+const editLines={{edit_lines|tojson}};
+if(editLines.length){
+  while(document.querySelectorAll('.journal-row').length<editLines.length){
+    const nr=document.querySelector('.journal-row').cloneNode(true); resetRow(nr); journalBody.appendChild(nr); bind(nr);
+  }
+  document.querySelectorAll('.journal-row').forEach((r,i)=>{
+    const x=editLines[i]; if(!x){r.remove();return;}
+    r.querySelector('.account-id').value=x.account_id||'';
+    r.querySelector('.account-code').value=x.account_code||'';
+    r.querySelector('.account-name').value=x.account_name_ar||'';
+    r.querySelector('.debit').value=Number(x.debit||0).toFixed(2);
+    r.querySelector('.credit').value=Number(x.credit||0).toFixed(2);
+    r.querySelector('.taxable').value=String(x.taxable||0);
+    r.querySelector('.tax-direction').value=x.tax_direction||'غير مطبق';
+    r.querySelector('.party-type').value=x.party_type||'';
+    r.querySelector('.supplier-select').value=x.supplier_id||'';
+    r.querySelector('.customer-select').value=x.customer_id||'';
+    r.querySelector('.employee-select').value=x.entity_id||'';
+    r.querySelector('.party-account-id').value=x.party_account_id||'';
+    r.querySelector('.tax-number').value=x.tax_number||'';
+    r.querySelector('.invoice-number').value=x.invoice_number||'';
+    r.querySelector('.invoice-date').value=x.invoice_date||'';
+    r.querySelector('[name="line_description[]"]').value=x.line_description||'';
+    r.querySelector('.cost-center-id').value=x.cost_center_id||'';
+    r.querySelector('.cost-center-search').value=x.cost_center_code ? `${x.cost_center_code} - ${x.cost_center_name||''}` : '';
+    updateTaxFields(r);
+  });
+  calc();
+}
+
 journalDate.value=new Date().toISOString().slice(0,10);
 calc();
 
@@ -592,6 +637,9 @@ journalContextMenu.addEventListener('click',event=>{
   if(url)window.open(url,'_blank');else alert('اختر الحساب والجهة أولاً لعرض كشف الحساب.');
 });
 
+
+const selectAllJournals=document.getElementById('selectAllJournals');
+if(selectAllJournals){selectAllJournals.addEventListener('change',()=>{document.querySelectorAll('.journal-check').forEach(x=>x.checked=selectAllJournals.checked);});}
 </script>
 <style>.journal-context-menu{display:none;position:fixed;z-index:3000;min-width:180px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 12px 35px rgba(15,23,42,.2);padding:6px}.journal-context-menu.show{display:block}.journal-context-menu button{display:block;width:100%;border:0;background:#fff;text-align:right;padding:9px 11px;border-radius:7px}.journal-context-menu button:hover{background:#eef4ff;color:#174ea6}</style>
 {% endblock %}

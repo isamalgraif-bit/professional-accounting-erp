@@ -5355,6 +5355,41 @@ def journal_entries():
                           "line_description":descriptions[i] if i<len(descriptions) else "",
                           "cost_center_id":(cost_center_ids[i] or None) if i<len(cost_center_ids) else None})
             total_debit+=debit; total_credit+=credit
+        # المبلغ المدخل في السطر الخاضع للضريبة يعتبر مبلغاً إجمالياً شاملاً ضريبة القيمة المضافة.
+        # يتم فصل الضريبة تلقائياً وترحيلها إلى حساب ضريبة المدخلات أو المخرجات.
+        settings_vat = row("SELECT vat_rate,vat_input_account_id,vat_output_account_id FROM settings WHERE id=1") or {}
+        vat_rate = float(settings_vat.get("vat_rate") or 15)
+        expanded_lines = []
+        for line in lines:
+            if not line["taxable"]:
+                expanded_lines.append(line)
+                continue
+            vat_account_id = settings_vat.get("vat_input_account_id") if line["tax_direction"] == "مدخلات" else settings_vat.get("vat_output_account_id")
+            if not vat_account_id:
+                flash(f"يجب تحديد حساب ضريبة {line['tax_direction']} من الإعدادات قبل الحفظ", "danger")
+                return redirect(url_for("journal_entries"))
+            gross = float(line["debit"] or line["credit"] or 0)
+            vat_amount = round(gross * vat_rate / (100 + vat_rate), 2)
+            net_amount = round(gross - vat_amount, 2)
+            if line["debit"] > 0:
+                line["debit"] = net_amount
+            else:
+                line["credit"] = net_amount
+            expanded_lines.append(line)
+            vat_line = dict(line)
+            vat_line.update({
+                "account_id": vat_account_id,
+                "debit": vat_amount if line["debit"] > 0 else 0,
+                "credit": vat_amount if line["credit"] > 0 else 0,
+                "taxable": 0,
+                "line_description": f"ضريبة القيمة المضافة {line['tax_direction']} - {line.get('invoice_number') or ''}".strip(),
+                "cost_center_id": line.get("cost_center_id"),
+            })
+            expanded_lines.append(vat_line)
+        lines = expanded_lines
+        total_debit = round(sum(float(x["debit"] or 0) for x in lines), 2)
+        total_credit = round(sum(float(x["credit"] or 0) for x in lines), 2)
+
         if len(lines)<2:
             flash("يجب أن يحتوي القيد على سطرين على الأقل","danger")
             return redirect(url_for("journal_entries"))
@@ -5372,15 +5407,38 @@ def journal_entries():
             flash("حالة القيد غير صحيحة","danger")
             return redirect(url_for("journal_entries"))
         posted_at=datetime.now() if journal_status=="مرحّل" else None
-        journal_no=next_journal_number(request.form["journal_date"])
-        execute("""INSERT INTO journal_entries(
-            journal_no,journal_date,reference,description,status,total_debit,total_credit,created_by,created_at,posted_at)
-            VALUES(:no,:date,:ref,:desc,:status,:debit,:credit,:user,:created,:posted_at)""",
-            {"no":journal_no,"date":request.form["journal_date"],
-             "ref":request.form.get("reference",""),"desc":request.form.get("description",""),
-             "status":journal_status,"debit":total_debit,"credit":total_credit,
-             "user":session.get("user_id"),"created":datetime.now(),"posted_at":posted_at})
-        journal_id=row("SELECT id FROM journal_entries WHERE journal_no=:no",{"no":journal_no})["id"]
+        edit_journal_id = request.form.get("journal_id")
+        if edit_journal_id:
+            existing_journal = row("SELECT * FROM journal_entries WHERE id=:id", {"id": edit_journal_id})
+            if not existing_journal:
+                flash("القيد المطلوب تعديله غير موجود", "danger")
+                return redirect(url_for("journal_entries"))
+            was_posted = existing_journal["status"] == "مرحّل"
+            # يسمح بتعديل القيد المرحّل مع الحفاظ على حالته وترحيله المحاسبي.
+            # تقارير الأستاذ وميزان المراجعة تقرأ مباشرة من سطور القيد، لذلك حذف
+            # السطور القديمة وإعادة إنشائها يحدّث الأثر المحاسبي دون تكرار.
+            if was_posted:
+                journal_status = "مرحّل"
+                posted_at = existing_journal.get("posted_at") or datetime.now()
+            journal_id = int(edit_journal_id)
+            journal_no = existing_journal["journal_no"]
+            execute("""UPDATE journal_entries SET journal_date=:date,reference=:ref,description=:desc,
+                       status=:status,total_debit=:debit,total_credit=:credit,posted_at=:posted_at
+                       WHERE id=:id""",
+                    {"date":request.form["journal_date"],"ref":request.form.get("reference",""),
+                     "desc":request.form.get("description",""),"status":journal_status,
+                     "debit":total_debit,"credit":total_credit,"posted_at":posted_at,"id":journal_id})
+            execute("DELETE FROM journal_entry_lines WHERE journal_id=:id", {"id": journal_id})
+        else:
+            journal_no=next_journal_number(request.form["journal_date"])
+            execute("""INSERT INTO journal_entries(
+                journal_no,journal_date,reference,description,status,total_debit,total_credit,created_by,created_at,posted_at)
+                VALUES(:no,:date,:ref,:desc,:status,:debit,:credit,:user,:created,:posted_at)""",
+                {"no":journal_no,"date":request.form["journal_date"],
+                 "ref":request.form.get("reference",""),"desc":request.form.get("description",""),
+                 "status":journal_status,"debit":total_debit,"credit":total_credit,
+                 "user":session.get("user_id"),"created":datetime.now(),"posted_at":posted_at})
+            journal_id=row("SELECT id FROM journal_entries WHERE journal_no=:no",{"no":journal_no})["id"]
         for line in lines:
             execute("""INSERT INTO journal_entry_lines(
                 journal_id,account_id,debit,credit,taxable,tax_direction,supplier_id,customer_id,
@@ -5389,12 +5447,20 @@ def journal_entries():
                 :supplier_id,:customer_id,:party_type,:tax_number,:invoice_number,:invoice_date,
                 :party_account_id,:entity_id,:line_description,:cost_center_id)""",
                 {"journal_id":journal_id,**line})
-        audit("POST" if journal_status=="مرحّل" else "CREATE","JOURNAL",f"{'ترحيل' if journal_status=='مرحّل' else 'حفظ'} القيد {journal_no}")
-        flash(f"تم {'حفظ وترحيل' if journal_status=='مرحّل' else 'حفظ'} القيد {journal_no}","success")
+        action_name = "UPDATE" if edit_journal_id else ("POST" if journal_status=="مرحّل" else "CREATE")
+        audit(action_name,"JOURNAL",f"{'تعديل وحفظ' if edit_journal_id else ('ترحيل' if journal_status=='مرحّل' else 'حفظ')} القيد {journal_no}")
+        flash(f"تم {'تعديل وحفظ' if edit_journal_id else ('حفظ وترحيل' if journal_status=='مرحّل' else 'حفظ')} القيد {journal_no}","success")
         if request.form.get("print_after_save") == "1":
             return redirect(url_for("journal_view", journal_id=journal_id, print=1))
-        return redirect(url_for("journal_entries"))
+        return redirect(url_for("journal_entries", edit_id=journal_id))
     q = request.args.get("q", "").strip()
+    edit_id = request.args.get("edit_id", type=int)
+    edit_journal = row("SELECT * FROM journal_entries WHERE id=:id", {"id": edit_id}) if edit_id else None
+    edit_lines = rows("""SELECT l.*,a.account_code,a.account_name_ar,cc.code cost_center_code,cc.name cost_center_name
+                         FROM journal_entry_lines l
+                         JOIN chart_of_accounts a ON a.id=l.account_id
+                         LEFT JOIN cost_centers cc ON cc.id=l.cost_center_id
+                         WHERE l.journal_id=:id ORDER BY l.id""", {"id": edit_id}) if edit_journal else []
     journal_params = {}
     journal_where = ""
     if q:
@@ -5402,7 +5468,7 @@ def journal_entries():
         journal_params["q"] = f"%{q}%"
     return render_template("journal_entries.html",
         journals=rows(f"SELECT * FROM journal_entries {journal_where} ORDER BY journal_date DESC,id DESC", journal_params),
-        q=q,
+        q=q, edit_journal=edit_journal, edit_lines=edit_lines,
         accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
                          WHERE active=1 AND accepts_entries=1 ORDER BY account_code"""),
         suppliers=rows("SELECT id,name,vat_number FROM suppliers ORDER BY name"),
@@ -5437,6 +5503,47 @@ def journal_post(journal_id):
     flash(f"تم ترحيل القيد {journal['journal_no']} وظهر في الأستاذ والتقارير","success")
     return redirect(url_for("journal_entries"))
 
+
+
+@app.route("/journal-entries/bulk-post", methods=["POST"])
+@login_required
+def journal_bulk_post():
+    journal_ids = [int(x) for x in request.form.getlist("journal_ids[]") if str(x).isdigit()]
+    if not journal_ids:
+        flash("اختر قيداً واحداً على الأقل للترحيل", "danger")
+        return redirect(url_for("journal_entries"))
+    posted = 0
+    skipped = 0
+    errors = []
+    for journal_id in journal_ids:
+        journal = row("SELECT * FROM journal_entries WHERE id=:id", {"id": journal_id})
+        if not journal or journal["status"] == "مرحّل":
+            skipped += 1
+            continue
+        totals = row("""SELECT COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit,COUNT(*) line_count
+                        FROM journal_entry_lines WHERE journal_id=:id""", {"id": journal_id})
+        debit = round(float(totals["debit"] or 0), 2)
+        credit = round(float(totals["credit"] or 0), 2)
+        if totals["line_count"] < 2 or debit <= 0 or debit != credit:
+            errors.append(journal["journal_no"])
+            continue
+        try:
+            ensure_open_period(journal["journal_date"])
+            execute("""UPDATE journal_entries SET status='مرحّل',posted_at=:posted,total_debit=:debit,total_credit=:credit
+                       WHERE id=:id AND status<>'مرحّل'""",
+                    {"posted": datetime.now(), "debit": debit, "credit": credit, "id": journal_id})
+            posted += 1
+            audit("POST", "JOURNAL", f"ترحيل جماعي للقيد {journal['journal_no']}")
+        except Exception:
+            db.session.rollback()
+            errors.append(journal["journal_no"])
+    if posted:
+        flash(f"تم ترحيل {posted} قيد، وتغيرت حالتها إلى مرحّل", "success")
+    if skipped:
+        flash(f"تم تجاهل {skipped} قيد لأنها مرحلة مسبقاً أو غير موجودة", "info")
+    if errors:
+        flash("تعذر ترحيل القيود التالية: " + ", ".join(errors), "danger")
+    return redirect(url_for("journal_entries"))
 
 
 # ==================== Complete CRUD / View / Print / Export ====================
