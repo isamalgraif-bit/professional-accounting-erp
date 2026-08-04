@@ -194,9 +194,10 @@
 <div class="form-card">
 <h5 class="mb-3">القيود السابقة</h5>
 <form method="post" action="{{url_for('journal_bulk_post')}}" id="bulkPostForm" onsubmit="return confirm('تأكيد ترحيل القيود المحددة؟')">
-<div class="mb-3 d-flex gap-2 align-items-center">
-  <button class="btn btn-success" type="submit">✅ ترحيل القيود المحددة</button>
-  <span class="text-muted">يمكن اختيار عدد من القيود المسودة وترحيلها دفعة واحدة.</span>
+<div class="mb-3 d-flex gap-2 align-items-center flex-wrap">
+  <button class="btn btn-success" type="submit" id="bulkPostButton" disabled>✅ ترحيل المحدد (<span id="selectedJournalCount">0</span>)</button>
+  <button class="btn btn-outline-secondary" type="button" id="clearJournalSelection">إلغاء التحديد</button>
+  <span class="text-muted">حدد القيود المسودة ثم اضغط «ترحيل المحدد».</span>
 </div>
 <div class="table-responsive">
 <table class="table table-striped align-middle">
@@ -219,10 +220,8 @@
   <td class="text-nowrap">
     <a class="btn btn-sm btn-outline-primary" href="{{url_for('journal_view', journal_id=j.id)}}">عرض / طباعة</a>
     <a class="btn btn-sm btn-outline-warning" href="{{url_for('journal_entries',edit_id=j.id)}}">✏️ تعديل وحفظ</a>
-    {% if j.status!='مرحّل' %}<form class="d-inline" method="post" action="{{url_for('journal_post',journal_id=j.id)}}" onsubmit="return confirm('تأكيد ترحيل القيد؟')"><button class="btn btn-sm btn-success">✅ ترحيل</button></form>{% endif %}
-    <form class="d-inline" method="post" action="{{url_for('journal_delete',journal_id=j.id)}}" onsubmit="return confirm('تأكيد الحذف؟')">
-      <button class="btn btn-sm btn-outline-danger">حذف</button>
-    </form>
+    {% if j.status!='مرحّل' %}<button class="btn btn-sm btn-success" type="submit" formmethod="post" formaction="{{url_for('journal_post',journal_id=j.id)}}" onclick="return confirm('تأكيد ترحيل القيد؟')">✅ ترحيل</button>{% endif %}
+    <button class="btn btn-sm btn-outline-danger" type="submit" formmethod="post" formaction="{{url_for('journal_delete',journal_id=j.id)}}" onclick="return confirm('تأكيد الحذف؟')">حذف</button>
   </td>
 </tr>
 {% endfor %}
@@ -639,7 +638,23 @@ journalContextMenu.addEventListener('click',event=>{
 
 
 const selectAllJournals=document.getElementById('selectAllJournals');
-if(selectAllJournals){selectAllJournals.addEventListener('change',()=>{document.querySelectorAll('.journal-check').forEach(x=>x.checked=selectAllJournals.checked);});}
+const journalChecks=[...document.querySelectorAll('.journal-check')];
+const bulkPostButton=document.getElementById('bulkPostButton');
+const selectedJournalCount=document.getElementById('selectedJournalCount');
+const clearJournalSelection=document.getElementById('clearJournalSelection');
+function updateJournalSelection(){
+  const selected=journalChecks.filter(x=>x.checked).length;
+  if(selectedJournalCount) selectedJournalCount.textContent=selected;
+  if(bulkPostButton) bulkPostButton.disabled=selected===0;
+  if(selectAllJournals){
+    selectAllJournals.checked=journalChecks.length>0 && selected===journalChecks.length;
+    selectAllJournals.indeterminate=selected>0 && selected<journalChecks.length;
+  }
+}
+if(selectAllJournals){selectAllJournals.addEventListener('change',()=>{journalChecks.forEach(x=>x.checked=selectAllJournals.checked);updateJournalSelection();});}
+journalChecks.forEach(x=>x.addEventListener('change',updateJournalSelection));
+if(clearJournalSelection){clearJournalSelection.addEventListener('click',()=>{journalChecks.forEach(x=>x.checked=false);updateJournalSelection();});}
+updateJournalSelection();
 </script>
 <style>.journal-context-menu{display:none;position:fixed;z-index:3000;min-width:180px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 12px 35px rgba(15,23,42,.2);padding:6px}.journal-context-menu.show{display:block}.journal-context-menu button{display:block;width:100%;border:0;background:#fff;text-align:right;padding:9px 11px;border-radius:7px}.journal-context-menu button:hover{background:#eef4ff;color:#174ea6}</style>
 {% endblock %}
