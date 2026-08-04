@@ -1,16 +1,31 @@
 {% extends "base.html" %}
-{% block content %}<div class="erp-page-title"><div><h3 class="mb-1">نظرة عامة</h3><small class="text-muted">متابعة أهم مؤشرات النظام</small></div><span class="badge bg-primary">West ERP {{app_version}}</span></div>
-<h3 class="mb-4">لوحة التحكم</h3>
-<div class="row g-3 mb-4">
-<div class="col-md-3"><div class="card card-kpi p-3"><small>المبيعات المعتمدة</small><h4>{{ "%.2f"|format(sales) }} ر.س</h4></div></div>
-<div class="col-md-3"><div class="card card-kpi p-3"><small>إجمالي المصروفات</small><h4>{{ "%.2f"|format(expenses) }} ر.س</h4></div></div>
-<div class="col-md-3"><div class="card card-kpi p-3"><small>عدد العملاء</small><h4>{{ customers }}</h4></div></div>
-<div class="col-md-3"><div class="card card-kpi p-3"><small>الموظفون النشطون</small><h4>{{ employees }}</h4></div></div>
+{% block content %}
+<div class="erp-page-title">
+  <div><h3 class="mb-1">لوحة التحكم</h3><small class="text-muted">الوصول السريع إلى جميع أقسام النظام</small></div>
+  <span class="badge bg-primary px-3 py-2">West ERP {{ app_version }}</span>
 </div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-xl-3"><div class="card card-kpi p-3"><small class="text-muted">المبيعات المعتمدة</small><h4>{{ "%.2f"|format(sales) }} ر.س</h4></div></div>
+  <div class="col-6 col-xl-3"><div class="card card-kpi p-3"><small class="text-muted">إجمالي المصروفات</small><h4>{{ "%.2f"|format(expenses) }} ر.س</h4></div></div>
+  <div class="col-6 col-xl-3"><div class="card card-kpi p-3"><small class="text-muted">عدد العملاء</small><h4>{{ customers }}</h4></div></div>
+  <div class="col-6 col-xl-3"><div class="card card-kpi p-3"><small class="text-muted">الموظفون النشطون</small><h4>{{ employees }}</h4></div></div>
+</div>
+
+<h5 class="mb-3">أقسام النظام</h5>
+<div class="row g-3 mb-4">
+  <div class="col-md-6 col-xl-3"><div class="section-card"><div class="section-icon">▤</div><h5>الحسابات</h5><p class="text-muted small">القيود، الحسابات، الخزينة والقوائم المالية.</p><div class="section-links"><a href="{{url_for('chart_of_accounts')}}">دليل الحسابات</a><a href="{{url_for('journal_entries')}}">قيد يومية</a><a href="{{url_for('multi_journal')}}">قيود متعددة</a><a href="{{url_for('reports')}}">التقارير</a></div></div></div>
+  <div class="col-md-6 col-xl-3"><div class="section-card"><div class="section-icon">◫</div><h5>المبيعات والعملاء</h5><p class="text-muted small">الفواتير، التحصيل، المرتجعات ومتابعة العملاء.</p><div class="section-links"><a href="{{url_for('sales_center')}}">مركز المبيعات</a><a href="{{url_for('invoices')}}">الفواتير</a><a href="{{url_for('manage_module',module_name='customers')}}">العملاء</a></div></div></div>
+  <div class="col-md-6 col-xl-3"><div class="section-card"><div class="section-icon">▣</div><h5>المشتريات والموردون</h5><p class="text-muted small">طلبات وأوامر الشراء وفواتير الموردين.</p><div class="section-links"><a href="{{url_for('procurement_center')}}">مركز المشتريات</a><a href="{{url_for('purchase_orders')}}">أوامر الشراء</a><a href="{{url_for('manage_module',module_name='suppliers')}}">الموردون</a></div></div></div>
+  <div class="col-md-6 col-xl-3"><div class="section-card"><div class="section-icon">▧</div><h5>المواد والمخزون</h5><p class="text-muted small">الأصناف والمستودعات والحركات والجرد.</p><div class="section-links"><a href="{{url_for('inventory')}}">الأصناف</a><a href="{{url_for('warehouses')}}">المستودعات</a><a href="{{url_for('inventory_movements')}}">الحركات</a></div></div></div>
+  <div class="col-md-6 col-xl-3"><div class="section-card"><div class="section-icon">♙</div><h5>الموارد البشرية</h5><p class="text-muted small">الموظفون والعقود والحضور والرواتب.</p><div class="section-links"><a href="{{url_for('hr_complete_center')}}">المركز</a><a href="{{url_for('manage_module',module_name='employees')}}">الموظفون</a><a href="{{url_for('hr_payroll_center')}}">الرواتب</a></div></div></div>
+  <div class="col-md-6 col-xl-3"><div class="section-card"><div class="section-icon">▥</div><h5>المشاريع والعقود</h5><p class="text-muted small">المشاريع والمقاولين والمستخلصات والعقود.</p><div class="section-links"><a href="{{url_for('projects_center')}}">المشاريع</a><a href="{{url_for('contracts_center')}}">العقود</a><a href="{{url_for('fixed_assets_center')}}">الأصول</a></div></div></div>
+  <div class="col-md-6 col-xl-3"><div class="section-card"><div class="section-icon">▦</div><h5>التقارير والتحليلات</h5><p class="text-muted small">التقارير المالية والتشغيلية وذكاء الأعمال.</p><div class="section-links"><a href="{{url_for('reports')}}">مركز التقارير</a><a href="{{url_for('bi_dashboard')}}">ذكاء الأعمال</a><a href="{{url_for('executive_dashboard')}}">التنفيذية</a></div></div></div>
+  <div class="col-md-6 col-xl-3"><div class="section-card"><div class="section-icon">⚙</div><h5>الإعدادات والإدارة</h5><p class="text-muted small">الإعدادات والصلاحيات واستيراد البيانات.</p><div class="section-links"><a href="{{url_for('settings')}}">الإعدادات</a><a href="{{url_for('data_import_center')}}">إدارة البيانات</a><a href="{{url_for('system_health')}}">صحة النظام</a></div></div></div>
+</div>
+
 <div class="form-card">
-<h5>آخر الفواتير</h5>
-<table class="table"><thead><tr><th>الرقم</th><th>العميل</th><th>الإجمالي</th><th>الحالة</th></tr></thead>
-<tbody>{% for r in recent %}<tr><td>{{ r.invoice_no }}</td><td>{{ r.customer_name }}</td><td>{{ r.total }}</td><td>{{ r.status }}</td></tr>{% endfor %}</tbody>
-</table>
+  <div class="d-flex justify-content-between align-items-center mb-3"><h5 class="mb-0">آخر الفواتير</h5><a class="btn btn-sm btn-outline-primary" href="{{url_for('invoices')}}">عرض الكل</a></div>
+  <div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr><th>الرقم</th><th>العميل</th><th>الإجمالي</th><th>الحالة</th></tr></thead><tbody>{% for r in recent %}<tr><td>{{r.invoice_no}}</td><td>{{r.customer_name}}</td><td>{{r.total}}</td><td><span class="badge bg-light text-dark border">{{r.status}}</span></td></tr>{% else %}<tr><td colspan="4" class="text-center text-muted py-4">لا توجد فواتير حديثة</td></tr>{% endfor %}</tbody></table></div>
 </div>
 {% endblock %}
