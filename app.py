@@ -1672,7 +1672,54 @@ def ensure_hr_and_sales_schema():
         "ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_iban VARCHAR(100) DEFAULT ''",
         "ALTER TABLE employees ADD COLUMN IF NOT EXISTS housing_allowance NUMERIC(18,2) DEFAULT 0",
         "ALTER TABLE employees ADD COLUMN IF NOT EXISTS transport_allowance NUMERIC(18,2) DEFAULT 0",
-        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS other_allowance NUMERIC(18,2) DEFAULT 0"
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS other_allowance NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS national_id VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS birth_date DATE",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS marital_status VARCHAR(50) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS gender VARCHAR(30) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS department VARCHAR(150) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS work_location VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS manager_name VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS food_allowance NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS fuel_allowance NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS communication_allowance NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS overtime_fixed NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS commission NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS annual_leave_days NUMERIC(8,2) DEFAULT 21",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS working_hours NUMERIC(8,2) DEFAULT 8",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS ticket_entitlement VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS medical_insurance_no VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_name VARCHAR(150) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_account_no VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS emergency_contact_name VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS emergency_contact_phone VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'نشط'",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT ''",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS customer_type VARCHAR(50) DEFAULT ''",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS commercial_registration VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS national_address TEXT DEFAULT ''",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS city VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS country VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS mobile VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS contact_person VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_terms_days INTEGER DEFAULT 0",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'SAR'",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS opening_balance NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE customers ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS supplier_type VARCHAR(50) DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS commercial_registration VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS national_address TEXT DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS city VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS country VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS mobile VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS contact_person VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS payment_terms_days INTEGER DEFAULT 0",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'SAR'",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS bank_name VARCHAR(150) DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS bank_account_no VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS iban VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS opening_balance NUMERIC(18,2) DEFAULT 0",
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT ''"
     ]
     for statement in statements:
         try:
@@ -1950,15 +1997,15 @@ def invoice_is_editable(invoice):
 EXCEL_IMPORT_DEFINITIONS = {
     "customers": {
         "title": "العملاء",
-        "headers": ["system_id","code","name","name_en","vat_no","phone","email","address","credit_limit"],
+        "headers": ["system_id","code","name","name_en","customer_type","vat_no","commercial_registration","national_address","city","country","phone","mobile","email","contact_person","address","credit_limit","payment_terms_days","currency","opening_balance","notes"],
         "required": ["name"],
-        "sample": ["","CUST-001","شركة العميل","Customer Co.","300000000000003","0500000000","info@example.com","الدمام",50000],
+        "sample": ["","CUST-001","شركة العميل","Customer Co.","شركة","300000000000003","1010000000","العنوان الوطني","الدمام","السعودية","0130000000","0500000000","info@example.com","مسؤول الحساب","الدمام",50000,30,"SAR",0,""],
     },
     "suppliers": {
         "title": "الموردون",
-        "headers": ["system_id","code","name","name_en","vat_no","phone","email","address"],
+        "headers": ["system_id","code","name","name_en","supplier_type","vat_no","commercial_registration","national_address","city","country","phone","mobile","email","contact_person","address","payment_terms_days","currency","bank_name","bank_account_no","iban","opening_balance","notes"],
         "required": ["name"],
-        "sample": ["","SUP-001","شركة المورد","Supplier Co.","300000000000003","0500000000","sales@example.com","الرياض"],
+        "sample": ["","SUP-001","شركة المورد","Supplier Co.","شركة","300000000000003","1010000000","العنوان الوطني","الرياض","السعودية","0110000000","0500000000","sales@example.com","مسؤول الحساب","الرياض",30,"SAR","اسم البنك","000000","SA0000000000000000000000",0,""],
     },
     "inventory": {
         "title": "الأصناف",
@@ -1968,9 +2015,9 @@ EXCEL_IMPORT_DEFINITIONS = {
     },
     "employees": {
         "title": "الموظفون",
-        "headers": ["system_id","employee_no","name","name_en","job_title","basic_salary","phone","email","hire_date","nationality"],
+        "headers": ["system_id","employee_no","name","name_en","nationality","national_id","iqama_no","iqama_expiry","passport_no","passport_expiry","birth_date","marital_status","gender","job_title","department","work_location","manager_name","hire_date","contract_no","contract_type","contract_start_date","contract_end_date","probation_end_date","basic_salary","housing_allowance","transport_allowance","food_allowance","fuel_allowance","communication_allowance","other_allowance","overtime_fixed","commission","annual_leave_days","working_hours","ticket_entitlement","medical_insurance_no","medical_insurance_expiry","bank_name","bank_account_no","bank_iban","phone","email","emergency_contact_name","emergency_contact_phone","status","notes"],
         "required": ["name"],
-        "sample": ["","EMP-001","اسم الموظف","Employee Name","محاسب",5000,"0500000000","employee@example.com","2026-01-01","سوداني"],
+        "sample": ["","EMP-001","اسم الموظف","Employee Name","سوداني","","","","","","1990-01-01","أعزب","ذكر","محاسب","المالية","الدمام","","2026-01-01","CONT-001","محدد المدة","2026-01-01","2027-01-01","2026-06-30",5000,1250,500,0,0,0,0,0,0,21,8,"سنوية","","","اسم البنك","","SA0000000000000000000000","0500000000","employee@example.com","","","نشط",""],
     },
     "accounts": {
         "title": "دليل الحسابات",
@@ -2007,6 +2054,55 @@ IMPORT_HEADER_ALIASES = {
     "basic_salary": ["basic salary", "salary", "الراتب الاساسي", "الراتب"],
     "hire_date": ["hire date", "joining date", "date of joining", "تاريخ التعيين", "تاريخ المباشرة"],
     "nationality": ["nationality", "الجنسية"],
+    "national_id": ["national id", "id number", "رقم الهوية"],
+    "iqama_no": ["iqama no", "residency no", "رقم الاقامة", "رقم الإقامة"],
+    "iqama_expiry": ["iqama expiry", "residency expiry", "انتهاء الاقامة", "انتهاء الإقامة"],
+    "passport_no": ["passport no", "passport number", "رقم الجواز"],
+    "passport_expiry": ["passport expiry", "انتهاء الجواز"],
+    "birth_date": ["birth date", "date of birth", "تاريخ الميلاد"],
+    "marital_status": ["marital status", "الحالة الاجتماعية"],
+    "gender": ["gender", "الجنس"],
+    "department": ["department", "القسم"],
+    "work_location": ["work location", "موقع العمل"],
+    "manager_name": ["manager", "manager name", "المدير المباشر"],
+    "contract_no": ["contract no", "contract number", "رقم العقد"],
+    "contract_type": ["contract type", "نوع العقد"],
+    "contract_start_date": ["contract start", "contract start date", "بداية العقد"],
+    "contract_end_date": ["contract end", "contract end date", "نهاية العقد"],
+    "probation_end_date": ["probation end", "نهاية التجربة"],
+    "housing_allowance": ["housing allowance", "بدل السكن"],
+    "transport_allowance": ["transport allowance", "بدل النقل"],
+    "food_allowance": ["food allowance", "بدل الطعام"],
+    "fuel_allowance": ["fuel allowance", "بدل الوقود"],
+    "communication_allowance": ["communication allowance", "بدل الاتصال"],
+    "other_allowance": ["other allowance", "بدلات اخرى", "بدلات أخرى"],
+    "overtime_fixed": ["fixed overtime", "overtime", "العمل الاضافي", "العمل الإضافي"],
+    "commission": ["commission", "العمولة"],
+    "annual_leave_days": ["annual leave days", "ايام الاجازة", "أيام الإجازة"],
+    "working_hours": ["working hours", "ساعات العمل"],
+    "ticket_entitlement": ["ticket entitlement", "استحقاق التذكرة"],
+    "medical_insurance_no": ["medical insurance no", "رقم التأمين الطبي"],
+    "medical_insurance_expiry": ["medical insurance expiry", "انتهاء التأمين الطبي"],
+    "bank_name": ["bank name", "اسم البنك"],
+    "bank_account_no": ["bank account no", "رقم الحساب البنكي"],
+    "bank_iban": ["iban", "bank iban", "الايبان", "الآيبان"],
+    "emergency_contact_name": ["emergency contact", "اسم اتصال الطوارئ"],
+    "emergency_contact_phone": ["emergency phone", "هاتف الطوارئ"],
+    "status": ["status", "الحالة"],
+    "notes": ["notes", "ملاحظات"],
+    "customer_type": ["customer type", "نوع العميل"],
+    "supplier_type": ["supplier type", "نوع المورد"],
+    "commercial_registration": ["commercial registration", "cr no", "السجل التجاري"],
+    "national_address": ["national address", "العنوان الوطني"],
+    "city": ["city", "المدينة"],
+    "country": ["country", "الدولة"],
+    "mobile": ["mobile", "الجوال"],
+    "contact_person": ["contact person", "مسؤول الاتصال"],
+    "payment_terms_days": ["payment terms", "payment days", "مدة السداد"],
+    "currency": ["currency", "العملة"],
+    "opening_balance": ["opening balance", "الرصيد الافتتاحي"],
+    "bank_account_no": ["bank account no", "رقم الحساب البنكي"],
+    "iban": ["iban", "الآيبان", "الايبان"],
     "account_code": ["account code", "gl code", "كود الحساب", "رمز الحساب"],
     "account_name_ar": ["account name ar", "arabic account name", "اسم الحساب", "اسم الحساب عربي"],
     "account_name_en": ["account name en", "english account name", "اسم الحساب انجليزي"],
@@ -2053,7 +2149,7 @@ def clean_import_value(value, field=""):
         return re.sub(r"[^0-9+]","",translated)
     if field in {"system_id","employee_no","code","account_code","parent_code"}:
         return normalize_import_code(text_value)
-    if field in {"credit_limit","quantity","unit_cost","reorder_level","basic_salary"}:
+    if field in {"credit_limit","quantity","unit_cost","reorder_level","basic_salary","housing_allowance","transport_allowance","food_allowance","fuel_allowance","communication_allowance","other_allowance","overtime_fixed","commission","annual_leave_days","working_hours","payment_terms_days","opening_balance"}:
         return normalize_import_number(text_value)
     if field in {"active","accepts_entries"}:
         lowered=text_value.lower()
@@ -2305,7 +2401,7 @@ def validate_import_row(module_name, row_data, row_no):
             parse_import_date(row_data.get("hire_date"),"تاريخ التعيين")
         except ValueError as exc:
             errors.append(str(exc))
-    numeric_fields={"customers":["credit_limit"],"inventory":["quantity","unit_cost","reorder_level"],"employees":["basic_salary"]}.get(module_name,[])
+    numeric_fields={"customers":["credit_limit","payment_terms_days","opening_balance"],"suppliers":["payment_terms_days","opening_balance"],"inventory":["quantity","unit_cost","reorder_level"],"employees":["basic_salary","housing_allowance","transport_allowance","food_allowance","fuel_allowance","communication_allowance","other_allowance","overtime_fixed","commission","annual_leave_days","working_hours"]}.get(module_name,[])
     for field in numeric_fields:
         value=row_data.get(field)
         if value not in (None, ""):
@@ -10373,10 +10469,10 @@ def data_import_export_current(module_name):
     if module_name not in EXCEL_IMPORT_DEFINITIONS:
         return "الوحدة غير مدعومة",404
     queries={
-      "customers": """SELECT id system_id,code,name,name_en,vat_number vat_no,phone,email,address,credit_limit FROM customers ORDER BY id""",
-      "suppliers": """SELECT id system_id,code,name,name_en,vat_number vat_no,phone,email,address FROM suppliers ORDER BY id""",
+      "customers": """SELECT id system_id,code,name,name_en,customer_type,vat_number vat_no,commercial_registration,national_address,city,country,phone,mobile,email,contact_person,address,credit_limit,payment_terms_days,currency,opening_balance,notes FROM customers ORDER BY id""",
+      "suppliers": """SELECT id system_id,code,name,name_en,supplier_type,vat_number vat_no,commercial_registration,national_address,city,country,phone,mobile,email,contact_person,address,payment_terms_days,currency,bank_name,bank_account_no,iban,opening_balance,notes FROM suppliers ORDER BY id""",
       "inventory": """SELECT id system_id,COALESCE(code,sku) code,name,description,unit,quantity,COALESCE(unit_cost,cost,0) unit_cost,reorder_level,active FROM inventory ORDER BY id""",
-      "employees": """SELECT id system_id,employee_no,name,name_en,job_title,basic_salary,phone,email,hire_date,nationality FROM employees ORDER BY id""",
+      "employees": """SELECT e.id system_id,e.employee_no,e.name,e.name_en,e.nationality,e.national_id,e.iqama_no,e.iqama_expiry,e.passport_no,e.passport_expiry,e.birth_date,e.marital_status,e.gender,e.job_title,e.department,e.work_location,e.manager_name,e.hire_date,c.contract_no,c.contract_type,c.start_date contract_start_date,c.end_date contract_end_date,c.probation_end_date,COALESCE(c.basic_salary,e.basic_salary) basic_salary,COALESCE(c.housing_allowance,e.housing_allowance) housing_allowance,COALESCE(c.transport_allowance,e.transport_allowance) transport_allowance,e.food_allowance,e.fuel_allowance,e.communication_allowance,COALESCE(c.other_allowance,e.other_allowance) other_allowance,e.overtime_fixed,e.commission,COALESCE(c.annual_leave_days,e.annual_leave_days) annual_leave_days,COALESCE(c.working_hours,e.working_hours) working_hours,e.ticket_entitlement,e.medical_insurance_no,e.medical_insurance_expiry,e.bank_name,e.bank_account_no,e.bank_iban,e.phone,e.email,e.emergency_contact_name,e.emergency_contact_phone,e.status,e.notes FROM employees e LEFT JOIN LATERAL (SELECT * FROM employee_contracts ec WHERE ec.employee_id=e.id ORDER BY ec.start_date DESC,ec.id DESC LIMIT 1) c ON TRUE ORDER BY e.id""",
       "accounts": """SELECT a.id system_id,a.account_code,a.account_name_ar,a.account_name_en,a.account_type,p.account_code parent_code,a.accepts_entries,a.active FROM chart_of_accounts a LEFT JOIN chart_of_accounts p ON p.id=a.parent_id ORDER BY a.account_code""",
       "cost_centers": """SELECT c.id system_id,c.code,c.name,p.code parent_code,c.active FROM cost_centers c LEFT JOIN cost_centers p ON p.id=c.parent_id ORDER BY c.code""",
     }
@@ -10397,10 +10493,6 @@ def data_import_export_current(module_name):
         ws.column_dimensions[column[0].column_letter].width=min(max(max_length+3,12),45)
     ws.freeze_panes="A2"
     ws.auto_filter.ref=ws.dimensions
-    ws.protection.sheet=True
-    ws.protection.password="west-erp"
-    ws.protection.selectLockedCells=False
-    ws.protection.selectUnlockedCells=True
     note=wb.create_sheet("تعليمات")
     note.sheet_view.rightToLeft=True
     note.append(["تعليمات التعديل وإعادة الاستيراد"]); note["A1"].font=Font(bold=True,size=14)
