@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from sqlalchemy import text
 from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 import os
 import csv
 import io
@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "21.0.0"
+APP_VERSION = "21.0.2"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -1657,6 +1657,8 @@ def ensure_hr_and_sales_schema():
         "ALTER TABLE sales_returns ADD COLUMN IF NOT EXISTS status VARCHAR(40) DEFAULT 'معتمد'",
         "ALTER TABLE sales_return_items ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(18,4) DEFAULT 0",
         "ALTER TABLE employees ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS phone VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT ''",
         "ALTER TABLE employees ADD COLUMN IF NOT EXISTS department_id INTEGER",
         "ALTER TABLE employees ADD COLUMN IF NOT EXISTS cost_center_id INTEGER",
         "ALTER TABLE employees ADD COLUMN IF NOT EXISTS hire_date DATE",
@@ -2019,19 +2021,38 @@ def normalize_header_name(value):
     return re.sub(r"\s+", " ", value).strip()
 
 
+def normalize_import_number(value):
+    """Normalize Arabic/English spreadsheet numbers and common separators."""
+    text_value=normalize_excel_value(value)
+    translation=str.maketrans("٠١٢٣٤٥٦٧٨٩٫٬", "0123456789.,")
+    text_value=text_value.translate(translation)
+    text_value=re.sub(r"[\s,]", "", text_value)
+    text_value=re.sub(r"[^0-9.+-]", "", text_value)
+    return text_value
+
+
+def normalize_import_code(value):
+    text_value=normalize_excel_value(value)
+    text_value=unicodedata.normalize("NFKC",text_value)
+    return re.sub(r"[​-‏‪-‮﻿]","",text_value).strip()
+
+
 def clean_import_value(value, field=""):
     """Conservative cleaning: remove invisible characters and normalize common formats."""
     text_value=normalize_excel_value(value)
     text_value=unicodedata.normalize("NFKC",text_value)
     text_value=re.sub(r"[\u200b-\u200f\u202a-\u202e\ufeff]","",text_value).strip()
     text_value=re.sub(r"[ \t]+"," ",text_value)
-    if field in {"phone","vat_no","employee_no"}:
+    if field in {"phone","vat_no"}:
         # Keep leading + for international phone numbers; VAT remains digits only.
+        translated=text_value.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
         if field=="vat_no":
-            return re.sub(r"\D","",text_value)
-        return re.sub(r"[^0-9+]","",text_value)
+            return re.sub(r"\D","",translated)
+        return re.sub(r"[^0-9+]","",translated)
+    if field in {"employee_no","code","account_code","parent_code"}:
+        return normalize_import_code(text_value)
     if field in {"credit_limit","quantity","unit_cost","reorder_level","basic_salary"}:
-        return text_value.replace(",","")
+        return normalize_import_number(text_value)
     if field in {"active","accepts_entries"}:
         lowered=text_value.lower()
         if lowered in {"yes","true","active","enabled","نعم","نشط","فعال"}: return "1"
@@ -2144,27 +2165,28 @@ def import_quality_score(preview, definition=None):
 
 
 def find_existing_import_record(module_name,data):
+    """Find duplicates deterministically, prioritising true identifiers over names."""
     checks={
       "customers":("customers",[("code","code"),("vat_number","vat_no"),("email","email"),("name","name")]),
       "suppliers":("suppliers",[("code","code"),("vat_number","vat_no"),("email","email"),("name","name")]),
-      "inventory":("inventory",[("code","code"),("name","name")]),
+      "inventory":("inventory",[("code","code"),("sku","code"),("name","name")]),
       "employees":("employees",[("employee_no","employee_no"),("email","email"),("name","name")]),
       "accounts":("chart_of_accounts",[("account_code","account_code")]),
       "cost_centers":("cost_centers",[("code","code"),("name","name")]),
     }
     if module_name not in checks: return None
     table,fields=checks[module_name]
-    clauses=[]; params={}
     for db_field,input_field in fields:
         value=str(data.get(input_field) or "").strip()
-        if value:
-            key=f"v{len(params)}"; params[key]=value
-            clauses.append(f"LOWER(CAST({db_field} AS TEXT))=LOWER(:{key})")
-    if not clauses: return None
-    try:
-        return row(f"SELECT id FROM {table} WHERE {' OR '.join(clauses)} ORDER BY id LIMIT 1",params)
-    except Exception:
-        db.session.rollback(); return None
+        if not value:
+            continue
+        try:
+            found=row(f"SELECT id FROM {table} WHERE LOWER(CAST({db_field} AS TEXT))=LOWER(:value) ORDER BY id LIMIT 1",{"value":value})
+            if found:
+                return found
+        except Exception:
+            db.session.rollback()
+    return None
 
 
 def preview_cache_path(token):
@@ -2206,6 +2228,29 @@ def normalize_excel_value(value):
         return value.isoformat()
     return str(value).strip()
 
+def parse_import_date(value, field_label="التاريخ"):
+    """Return an ISO date or None and reject invalid spreadsheet date text clearly."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value,(int,float)) and not isinstance(value,bool):
+        try:
+            # Excel serial dates use 1899-12-30 as the practical epoch.
+            return (date(1899,12,30)+timedelta(days=float(value))).isoformat()
+        except Exception:
+            pass
+    text_value=str(value).strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text_value, fmt).date().isoformat()
+        except ValueError:
+            pass
+    raise ValueError(f"{field_label} غير صحيح. استخدم YYYY-MM-DD أو DD/MM/YYYY.")
+
+
 def validate_import_row(module_name, row_data, row_no):
     definition=EXCEL_IMPORT_DEFINITIONS[module_name]
     errors=[]
@@ -2222,6 +2267,20 @@ def validate_import_row(module_name, row_data, row_no):
     phone=re.sub(r"\D", "", str(row_data.get("phone") or ""))
     if phone and len(phone)<8:
         warnings.append("رقم الهاتف قصير ويحتاج مراجعة")
+    if module_name=="accounts":
+        allowed_types={"أصل","التزام","حقوق ملكية","إيراد","مصروف"}
+        if str(row_data.get("account_type") or "").strip() not in allowed_types:
+            errors.append("نوع الحساب يجب أن يكون: أصل، التزام، حقوق ملكية، إيراد، أو مصروف")
+    if module_name=="inventory" and row_data.get("unit"):
+        try:
+            normalize_item_unit(str(row_data.get("unit") or ""))
+        except ValueError as exc:
+            errors.append(str(exc))
+    if module_name=="employees" and row_data.get("hire_date"):
+        try:
+            parse_import_date(row_data.get("hire_date"),"تاريخ التعيين")
+        except ValueError as exc:
+            errors.append(str(exc))
     numeric_fields={"customers":["credit_limit"],"inventory":["quantity","unit_cost","reorder_level"],"employees":["basic_salary"]}.get(module_name,[])
     for field in numeric_fields:
         value=row_data.get(field)
@@ -2234,6 +2293,10 @@ def validate_import_row(module_name, row_data, row_no):
     return errors,warnings
 
 def import_excel_row(module_name, data, import_mode):
+    if module_name not in EXCEL_IMPORT_DEFINITIONS:
+        raise ValueError("نوع الاستيراد غير مدعوم.")
+    if import_mode not in {"إضافة فقط","إضافة وتحديث"}:
+        raise ValueError("وضع الاستيراد غير صحيح.")
     updated=False
     if module_name=="customers":
         code=data.get("code") or None
@@ -2321,7 +2384,7 @@ def import_excel_row(module_name, data, import_mode):
                  "name_en":(data.get("name_en") or "").strip() or transliterate_arabic_name(data["name"]),
                  "job":data.get("job_title",""),"salary":float(data.get("basic_salary") or 0),
                  "phone":data.get("phone",""),"email":data.get("email",""),
-                 "hire":data.get("hire_date") or None,"nationality":data.get("nationality","")}
+                 "hire":parse_import_date(data.get("hire_date"), "تاريخ التعيين"),"nationality":data.get("nationality","")}
         if existing:
             if import_mode=="إضافة وتحديث":
                 execute("""UPDATE employees SET name=:name,name_en=:name_en,
@@ -3826,6 +3889,8 @@ def init_db():
         'ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP',
         'ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password INTEGER DEFAULT 0',
         "ALTER TABLE employees ADD COLUMN IF NOT EXISTS name_en VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS phone VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT ''",
         'ALTER TABLE employees ADD COLUMN IF NOT EXISTS department_id INTEGER',
         'ALTER TABLE employees ADD COLUMN IF NOT EXISTS cost_center_id INTEGER',
         'ALTER TABLE employees ADD COLUMN IF NOT EXISTS hire_date DATE',
@@ -10342,7 +10407,24 @@ def data_import_confirm(module_name):
         flash("لا توجد معاينة صالحة للاستيراد.","danger")
         return redirect(url_for("data_import_upload",module_name=module_name))
     import_mode=request.form.get("import_mode","إضافة فقط")
+    if import_mode not in {"إضافة فقط","إضافة وتحديث"}:
+        import_mode="إضافة فقط"
     rows_data=preview.get("rows",[])
+    if module_name in {"accounts","cost_centers"}:
+        # Parents must be queued before children even when Excel rows are unordered.
+        key_field="account_code" if module_name=="accounts" else "code"
+        pending=list(rows_data); ordered=[]; known=set()
+        while pending:
+            moved=False
+            for item in pending[:]:
+                data=item.get("data",{})
+                parent=(data.get("parent_code") or "").strip()
+                if not parent or parent in known or find_existing_import_record(module_name,{key_field:parent}):
+                    ordered.append(item); known.add((data.get(key_field) or "").strip())
+                    pending.remove(item); moved=True
+            if not moved:
+                ordered.extend(pending); break
+        rows_data=ordered
     import_no=next_import_number()
     now=datetime.now()
     db.session.execute(text("""INSERT INTO data_import_jobs(import_no,module_name,file_name,import_mode,total_rows,
