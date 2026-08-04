@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.11.6"
+APP_VERSION = "20.11.7"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -356,13 +356,16 @@ def create_system_journal(journal_date, description, reference, source_type, sou
     return journal_id
 
 def post_invoice_to_ledger(invoice_id):
-    inv = row("""SELECT i.*,c.vat_number customer_vat FROM invoices i
+    inv = row("""SELECT i.*,c.vat_number customer_vat,c.receivable_account_id customer_linked_account_id FROM invoices i
                  JOIN customers c ON c.id=i.customer_id WHERE i.id=:id""",{"id":invoice_id})
     if not inv: raise ValueError("الفاتورة غير موجودة.")
     if inv.get("journal_id"): return inv["journal_id"]
-    a = require_accounts(["customer_account_id","sales_account_id","vat_output_account_id"])
+    a = require_accounts(["sales_account_id","vat_output_account_id"])
+    customer_account_id = inv.get("customer_linked_account_id")
+    if not customer_account_id:
+        raise ValueError("العميل غير مربوط بحساب في دليل الحسابات. افتح بطاقة العميل وحدد حساب الذمم المدينة.")
     lines = [
-      {"account_id":a["customer_account_id"],"debit":inv["total"],"customer_id":inv["customer_id"],
+      {"account_id":customer_account_id,"debit":inv["total"],"customer_id":inv["customer_id"],
        "party_type":"عميل","tax_number":inv["customer_vat"] or "","invoice_number":inv["invoice_no"],
        "invoice_date":inv["invoice_date"],"line_description":"إجمالي فاتورة المبيعات"},
       {"account_id":a["sales_account_id"],"credit":inv["subtotal"],"customer_id":inv["customer_id"],
@@ -543,7 +546,7 @@ def get_required_approver(document_type, amount):
     return rule["approver_role"] if rule else "المدير المالي"
 
 def post_supplier_invoice(invoice_id):
-    inv = row("""SELECT si.*,s.vat_number supplier_vat
+    inv = row("""SELECT si.*,s.vat_number supplier_vat,s.payable_account_id supplier_linked_account_id
                  FROM supplier_invoices si
                  JOIN suppliers s ON s.id=si.supplier_id
                  WHERE si.id=:id""", {"id":invoice_id})
@@ -551,7 +554,10 @@ def post_supplier_invoice(invoice_id):
         raise ValueError("فاتورة المورد غير موجودة.")
     if inv.get("journal_id"):
         return inv["journal_id"]
-    acc = require_accounts(["supplier_account_id","vat_input_account_id"])
+    acc = require_accounts(["vat_input_account_id"])
+    supplier_account_id = inv.get("supplier_linked_account_id")
+    if not supplier_account_id:
+        raise ValueError("المورد غير مربوط بحساب في دليل الحسابات. افتح بطاقة المورد وحدد حساب الذمم الدائنة.")
     common = {
         "supplier_id":inv["supplier_id"],"party_type":"مورد",
         "tax_number":inv["supplier_vat"] or "",
@@ -567,7 +573,7 @@ def post_supplier_invoice(invoice_id):
         lines.append({"account_id":acc["vat_input_account_id"],"debit":inv["vat"],
                       "taxable":1,"tax_direction":"مدخلات",
                       "line_description":"ضريبة القيمة المضافة - مدخلات",**common})
-    lines.append({"account_id":acc["supplier_account_id"],"credit":inv["total"],
+    lines.append({"account_id":supplier_account_id,"credit":inv["total"],
                   "line_description":"ذمم المورد",**common})
     jid = create_system_journal(
         inv["invoice_date"], f"فاتورة مورد {inv['supplier_invoice_no']}",
@@ -1135,14 +1141,15 @@ def post_payroll_run(run_id):
         raise ValueError("أكمل ربط حسابات الرواتب من إعدادات الرواتب.")
 
     lines=[]
-    for x in rows("""SELECT pl.*,e.name FROM payroll_lines pl
+    for x in rows("""SELECT pl.*,e.name,e.employee_account_id FROM payroll_lines pl
                      JOIN employees e ON e.id=pl.employee_id
                      WHERE pl.run_id=:id""",{"id":run_id}):
         common={"cost_center_id":x["cost_center_id"],
                 "line_description":f"راتب الموظف {x['name']}"}
         lines.append({"account_id":cfg["salary_expense_account_id"],
                       "debit":x["gross_salary"],**common})
-        lines.append({"account_id":cfg["payroll_payable_account_id"],
+        payable_account_id = x.get("employee_account_id") or cfg["payroll_payable_account_id"]
+        lines.append({"account_id":payable_account_id,
                       "credit":x["net_salary"],**common})
         if float(x["total_deductions"] or 0)>0:
             lines.append({"account_id":cfg["deduction_account_id"],
@@ -3790,6 +3797,7 @@ def init_db():
         'ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS code VARCHAR(100)',
         "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS address TEXT DEFAULT ''",
         'ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS payable_account_id INTEGER',
+        'ALTER TABLE employees ADD COLUMN IF NOT EXISTS employee_account_id INTEGER',
         'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS code VARCHAR(100)',
         "ALTER TABLE inventory ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''",
         'ALTER TABLE inventory ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(18,2) DEFAULT 0',
@@ -4786,18 +4794,36 @@ def inventory_export():
 @login_required
 def employees():
     if request.method == "POST":
-        execute("""INSERT INTO employees(employee_no,name,job_title,branch_id,basic_salary,allowances)
-                   VALUES(:eno,:n,:job,:bid,:sal,:allow)""",
+        employee_account_id=request.form.get("employee_account_id") or None
+        if employee_account_id:
+            account=row("""SELECT id FROM chart_of_accounts WHERE id=:id AND active=1
+                           AND accepts_entries=1 AND account_type IN ('خصم','التزام')""",{"id":employee_account_id})
+            if not account:
+                flash("اختر حساب موظف صحيحًا من دليل الحسابات", "danger")
+                return redirect(url_for("employees"))
+            if row("SELECT id FROM employees WHERE employee_account_id=:id",{"id":employee_account_id}):
+                flash("هذا الحساب مرتبط بموظف آخر مسبقًا", "danger")
+                return redirect(url_for("employees"))
+        execute("""INSERT INTO employees(employee_no,name,job_title,branch_id,basic_salary,allowances,employee_account_id)
+                   VALUES(:eno,:n,:job,:bid,:sal,:allow,:account)""",
                 {"eno": request.form["employee_no"] or None, "n": request.form["name"],
                  "job": request.form["job_title"], "bid": request.form["branch_id"],
                  "sal": float(request.form["basic_salary"] or 0),
-                 "allow": float(request.form["allowances"] or 0)})
+                 "allow": float(request.form["allowances"] or 0),
+                 "account":employee_account_id})
         audit("CREATE", "EMPLOYEE", f"إضافة موظف: {request.form['name']}")
-        flash("تمت إضافة الموظف", "success")
-    employee_rows = rows("""SELECT e.*, b.name branch_name FROM employees e
-                            LEFT JOIN branches b ON b.id=e.branch_id ORDER BY e.id DESC""")
+        flash("تمت إضافة الموظف وربطه بالحساب", "success")
+    employee_rows = rows("""SELECT e.*, b.name branch_name,a.account_code,a.account_name_ar employee_account_name
+                            FROM employees e
+                            LEFT JOIN branches b ON b.id=e.branch_id
+                            LEFT JOIN chart_of_accounts a ON a.id=e.employee_account_id
+                            ORDER BY e.id DESC""")
     return render_template("employees.html", rows=employee_rows,
-                           branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"))
+                           branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
+                           employee_accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+                             WHERE active=1 AND accepts_entries=1 AND account_type IN ('خصم','التزام')
+                             AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.employee_account_id=chart_of_accounts.id)
+                             ORDER BY account_code"""))
 
 
 
@@ -4906,10 +4932,13 @@ def chart_of_accounts():
             elif linked_type=="supplier":
                 linked_record=row("SELECT id,name,name_en,payable_account_id linked_account_id FROM suppliers WHERE id=:id",{"id":linked_id})
                 linked_account_type="خصم"
+            elif linked_type=="employee":
+                linked_record=row("SELECT id,name,'' AS name_en,employee_account_id linked_account_id FROM employees WHERE id=:id",{"id":linked_id})
+                linked_account_type="خصم"
             else:
                 linked_record=None
             if not linked_record or linked_record["linked_account_id"]:
-                flash("العميل أو المورد غير موجود أو مرتبط بحساب مسبقًا","danger")
+                flash("العميل أو المورد أو الموظف غير موجود أو مرتبط بحساب مسبقًا","danger")
                 return redirect(url_for("chart_of_accounts"))
         parent_id = request.form.get("parent_id") or None
         parent_level = 0
@@ -4946,8 +4975,10 @@ def chart_of_accounts():
             created_account=row("SELECT id FROM chart_of_accounts WHERE account_code=:code",{"code":request.form["account_code"].strip()})
             if linked_type=="customer":
                 execute("UPDATE customers SET receivable_account_id=:account WHERE id=:id",{"account":created_account["id"],"id":linked_id})
-            else:
+            elif linked_type=="supplier":
                 execute("UPDATE suppliers SET payable_account_id=:account WHERE id=:id",{"account":created_account["id"],"id":linked_id})
+            else:
+                execute("UPDATE employees SET employee_account_id=:account WHERE id=:id",{"account":created_account["id"],"id":linked_id})
         audit("CREATE", "ACCOUNT", f"إضافة حساب {request.form['account_code']}")
         flash("تمت إضافة الحساب", "success")
         return redirect(url_for("chart_of_accounts"))
@@ -5009,7 +5040,8 @@ def chart_of_accounts():
         selected_type=account_type,
         selected_active=active,
         customers_for_accounts=rows("SELECT id,name,name_en,receivable_account_id FROM customers ORDER BY name"),
-        suppliers_for_accounts=rows("SELECT id,name,name_en,payable_account_id FROM suppliers ORDER BY name")
+        suppliers_for_accounts=rows("SELECT id,name,name_en,payable_account_id FROM suppliers ORDER BY name"),
+        employees_for_accounts=rows("SELECT id,name,employee_account_id FROM employees ORDER BY name")
     )
 
 
