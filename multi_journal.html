@@ -83,22 +83,64 @@
 </div>
 
 <div class="form-card">
-<h5>الدفعات السابقة</h5>
-<table class="table table-striped">
-<thead><tr><th>رقم الدفعة</th><th>التاريخ</th><th>الوصف</th><th>الحالة</th><th>الإجراءات</th></tr></thead>
-<tbody>{% for b in batches %}<tr><td>{{b.batch_no}}</td><td>{{b.batch_date}}</td><td>{{b.description}}</td><td>{{b.status}}</td>
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h5 class="mb-0">الدفعات السابقة</h5>
+  <form id="bulkPostForm" method="post" action="{{url_for('multi_journal_bulk_post')}}"
+        onsubmit="return confirmBulkPost();" class="d-flex align-items-center gap-2 flex-wrap">
+    <span class="badge bg-secondary" id="selectedBatchCount">0 محدد</span>
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="clearBatchSelection" disabled>إلغاء التحديد</button>
+    <button type="submit" class="btn btn-sm btn-success" id="bulkPostButton" disabled>ترحيل المحدد</button>
+  </form>
+</div>
+<div class="table-responsive">
+<table class="table table-striped align-middle">
+<thead><tr><th style="width:42px" class="text-center"><input type="checkbox" id="selectAllBatches" title="تحديد كل الدفعات المسودة"></th><th>رقم الدفعة</th><th>التاريخ</th><th>الوصف</th><th>الحالة</th><th>الإجراءات</th></tr></thead>
+<tbody>{% for b in batches %}<tr>
+<td class="text-center">
+{% if b.status != 'مرحّل' %}<input class="batch-select" type="checkbox" name="batch_ids" value="{{b.id}}" form="bulkPostForm" aria-label="تحديد الدفعة {{b.batch_no}}">{% else %}<span class="text-muted">—</span>{% endif %}
+</td>
+<td>{{b.batch_no}}</td><td>{{b.batch_date}}</td><td>{{b.description}}</td><td><span class="badge {% if b.status == 'مرحّل' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{b.status}}</span></td>
 <td class="text-nowrap">
 <a class="btn btn-sm btn-outline-primary" href="{{url_for('multi_journal_view',batch_id=b.id)}}">عرض</a>
 <form class="d-inline" method="post" action="{{url_for('multi_journal_post',batch_id=b.id)}}" onsubmit="return confirm('تأكيد ترحيل الدفعة إلى ميزان المراجعة؟')"><button class="btn btn-sm btn-outline-success" type="submit">ترحيل/فحص</button></form>
 <a class="btn btn-sm btn-dark" target="_blank" href="{{url_for('multi_journal_view',batch_id=b.id,print=1)}}">طباعة الدفعة / PDF</a>
 <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{url_for('multi_journal_view',batch_id=b.id)}}#print-each">كل قيد صفحة</a>
 <a class="btn btn-sm btn-outline-success" href="{{url_for('multi_journal_export',batch_id=b.id)}}">📊 Excel</a>
-<form class="d-inline" method="post" action="{{url_for('multi_journal_delete',batch_id=b.id)}}" onsubmit="return confirm('تأكيد الحذف؟')">
-<button class="btn btn-sm btn-outline-danger">حذف</button>
-</form>
-</td></tr>{% endfor %}</tbody>
+<form class="d-inline" method="post" action="{{url_for('multi_journal_delete',batch_id=b.id)}}" onsubmit="return confirm('تأكيد الحذف؟')"><button class="btn btn-sm btn-outline-danger">حذف</button></form>
+</td></tr>{% else %}<tr><td colspan="6" class="text-center text-muted py-4">لا توجد دفعات محفوظة</td></tr>{% endfor %}</tbody>
 </table>
 </div>
+</div>
+
+<script>
+(function(){
+  const boxes = Array.from(document.querySelectorAll('.batch-select'));
+  const selectAll = document.getElementById('selectAllBatches');
+  const bulkButton = document.getElementById('bulkPostButton');
+  const clearButton = document.getElementById('clearBatchSelection');
+  const countBadge = document.getElementById('selectedBatchCount');
+  function refreshSelection(){
+    const selected = boxes.filter(box => box.checked).length;
+    countBadge.textContent = selected + ' محدد';
+    bulkButton.disabled = selected === 0;
+    clearButton.disabled = selected === 0;
+    if (selectAll) {
+      selectAll.checked = boxes.length > 0 && selected === boxes.length;
+      selectAll.indeterminate = selected > 0 && selected < boxes.length;
+      selectAll.disabled = boxes.length === 0;
+    }
+  }
+  boxes.forEach(box => box.addEventListener('change', refreshSelection));
+  if (selectAll) selectAll.addEventListener('change', function(){ boxes.forEach(box => box.checked = this.checked); refreshSelection(); });
+  if (clearButton) clearButton.addEventListener('click', function(){ boxes.forEach(box => box.checked = false); refreshSelection(); });
+  window.confirmBulkPost = function(){
+    const selected = boxes.filter(box => box.checked).length;
+    if (!selected) { alert('حدد دفعة واحدة على الأقل.'); return false; }
+    return confirm('تأكيد ترحيل ' + selected + ' دفعة محددة إلى الأستاذ وميزان المراجعة؟');
+  };
+  refreshSelection();
+})();
+</script>
 
 
 <style>

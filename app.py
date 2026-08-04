@@ -20,7 +20,7 @@ from decimal import Decimal
 import qrcode
 from openpyxl import Workbook
 
-APP_VERSION = "20.11.5"
+APP_VERSION = "20.11.6"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -6089,6 +6089,56 @@ def multi_journal():
         employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name"),
         centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code")
     )
+
+
+@app.route("/multi-journal/bulk-post", methods=["POST"])
+@login_required
+def multi_journal_bulk_post():
+    raw_ids = request.form.getlist("batch_ids")
+    batch_ids = []
+    for value in raw_ids:
+        try:
+            batch_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if batch_id not in batch_ids:
+            batch_ids.append(batch_id)
+
+    if not batch_ids:
+        flash("حدد دفعة واحدة على الأقل للترحيل.", "warning")
+        return redirect(url_for("multi_journal"))
+
+    posted_batches = 0
+    posted_entries = 0
+    skipped_batches = 0
+    failures = []
+
+    for batch_id in batch_ids:
+        batch = row("SELECT * FROM journal_batches WHERE id=:id", {"id": batch_id})
+        if not batch:
+            failures.append(f"دفعة رقم {batch_id}: غير موجودة")
+            continue
+        if batch["status"] == "مرحّل":
+            skipped_batches += 1
+            continue
+        try:
+            count = post_multi_journal_batch(batch_id)
+            posted_batches += 1
+            posted_entries += count
+            audit("BULK_POST", "JOURNAL_BATCH", f"ترحيل جماعي للدفعة {batch['batch_no']} بعدد {count} قيود")
+        except Exception as exc:
+            failures.append(f"{batch['batch_no']}: {exc}")
+
+    if posted_batches:
+        flash(f"تم ترحيل {posted_batches} دفعة بنجاح، بإجمالي {posted_entries} قيد.", "success")
+    if skipped_batches:
+        flash(f"تم تجاهل {skipped_batches} دفعة لأنها مرحّلة مسبقًا.", "info")
+    if failures:
+        preview = " | ".join(failures[:5])
+        if len(failures) > 5:
+            preview += f" | وغيرها {len(failures)-5} دفعات"
+        flash(f"تعذر ترحيل بعض الدفعات: {preview}", "danger")
+    return redirect(url_for("multi_journal"))
 
 
 @app.route("/multi-journal/<int:batch_id>/post", methods=["POST"])
