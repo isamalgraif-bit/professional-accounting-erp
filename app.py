@@ -22,7 +22,7 @@ import qrcode
 from openpyxl import Workbook
 from openpyxl.styles import Protection, Font, PatternFill
 
-APP_VERSION = "21.0.7"
+APP_VERSION = "21.0.9"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -3306,6 +3306,15 @@ def init_db():
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(employee_id,attendance_date)
+        )""",
+        """CREATE TABLE IF NOT EXISTS employee_attendance_months(
+            id SERIAL PRIMARY KEY,
+            employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+            month_key VARCHAR(7) NOT NULL,
+            status VARCHAR(30) DEFAULT 'معتمد',
+            saved_by INTEGER,
+            saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(employee_id,month_key)
         )""",
         """CREATE TABLE IF NOT EXISTS payroll_runs(
             id SERIAL PRIMARY KEY,
@@ -8941,19 +8950,30 @@ def hr_leave_types():
 @login_required
 def hr_leaves():
     if request.method=="POST":
-        days=calculate_leave_days(request.form["start_date"],request.form["end_date"])
-        no=next_hr_number("leave_requests","LEV")
-        execute("""INSERT INTO leave_requests(request_no,employee_id,leave_type_id,
-          start_date,end_date,days,reason,status,created_by,created_at)
-          VALUES(:no,:employee,:type,:start,:end,:days,:reason,'قيد الاعتماد',
-          :uid,:created)""",
-          {"no":no,"employee":request.form["employee_id"],
-           "type":request.form["leave_type_id"],
-           "start":request.form["start_date"],"end":request.form["end_date"],
-           "days":days,"reason":request.form.get("reason",""),
-           "uid":session.get("user_id"),"created":datetime.now()})
-        flash(f"تم إنشاء طلب الإجازة {no}","success")
-        return redirect(url_for("hr_leaves"))
+        try:
+            start_date=(request.form.get("start_date") or "").strip()
+            end_date=(request.form.get("end_date") or "").strip()
+            if not start_date or not end_date:
+                raise ValueError("يرجى إدخال تاريخ بداية ونهاية الإجازة.")
+            days=calculate_leave_days(start_date,end_date)
+            no=next_hr_number("leave_requests","LEV")
+            execute("""INSERT INTO leave_requests(request_no,employee_id,leave_type_id,
+              start_date,end_date,days,reason,status,created_by,created_at)
+              VALUES(:no,:employee,:type,:start,:end,:days,:reason,'قيد الاعتماد',
+              :uid,:created)""",
+              {"no":no,"employee":request.form["employee_id"],
+               "type":request.form["leave_type_id"],
+               "start":start_date,"end":end_date,
+               "days":days,"reason":request.form.get("reason",""),
+               "uid":session.get("user_id"),"created":datetime.now()})
+            flash(f"تم إنشاء طلب الإجازة {no}","success")
+            return redirect(url_for("hr_leaves"))
+        except ValueError as exc:
+            flash(str(exc),"danger")
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("Failed to create leave request")
+            flash("تعذر حفظ طلب الإجازة. يرجى مراجعة البيانات والمحاولة مرة أخرى.","danger")
     return render_template("hr_leaves.html",
       requests=rows("""SELECT lr.*,e.employee_no,e.name,lt.name leave_type_name
                        FROM leave_requests lr
@@ -10080,43 +10100,67 @@ def attendance():
         selected_month=first_day.strftime("%Y-%m")
     last_day=date(first_day.year,first_day.month,calendar.monthrange(first_day.year,first_day.month)[1])
 
+    employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name")
+    employee_id=request.values.get("employee_id",type=int)
+    if not employee_id and employees:
+        employee_id=int(employees[0]["id"])
+    employee=next((e for e in employees if int(e["id"])==int(employee_id or 0)),None)
+
     if request.method=="POST":
-        employee_ids=request.form.getlist("employee_ids")
+        if not employee:
+            flash("يرجى اختيار موظف صالح","danger")
+            return redirect(url_for("attendance",month=selected_month))
         present_keys=set(request.form.getlist("present"))
         saved=0
-        for employee_id in employee_ids:
-            employee_id=int(employee_id)
-            for day_no in range(1,last_day.day+1):
-                dt=date(first_day.year,first_day.month,day_no)
-                key=f"{employee_id}_{dt.isoformat()}"
-                status="حاضر" if key in present_keys else "غائب"
-                check_in=request.form.get(f"check_in_{key}") or None
-                check_out=request.form.get(f"check_out_{key}") or None
-                overtime=float(request.form.get(f"overtime_{key}") or 0)
-                notes=request.form.get(f"notes_{key}","")
-                execute("""INSERT INTO attendance_records(employee_id,attendance_date,status,
-                  check_in,check_out,overtime_hours,absence_hours,notes,created_by,created_at)
-                  VALUES(:employee,:dt,:status,:check_in,:check_out,:ot,0,:notes,:uid,:created)
-                  ON CONFLICT(employee_id,attendance_date) DO UPDATE SET
-                  status=EXCLUDED.status,check_in=EXCLUDED.check_in,check_out=EXCLUDED.check_out,
-                  overtime_hours=EXCLUDED.overtime_hours,
-                  absence_hours=CASE WHEN EXCLUDED.status='غائب' THEN 0 ELSE attendance_records.absence_hours END,
-                  notes=EXCLUDED.notes""",
-                  {"employee":employee_id,"dt":dt,"status":status,"check_in":check_in,
-                   "check_out":check_out,"ot":overtime,"notes":notes,
-                   "uid":session.get("user_id"),"created":datetime.now()})
-                saved+=1
-        flash(f"تم حفظ حضور الشهر بالكامل ({saved} سجل)","success")
-        return redirect(url_for("attendance",month=selected_month))
+        allowed_statuses={"حاضر","غائب","إجازة","إجازة مرضية","عطلة أسبوعية","مأمورية"}
+        for day_no in range(1,last_day.day+1):
+            dt=date(first_day.year,first_day.month,day_no)
+            key=f"{employee_id}_{dt.isoformat()}"
+            status=(request.form.get(f"status_{key}") or ("حاضر" if key in present_keys else "غائب")).strip()
+            if status not in allowed_statuses:
+                status="غائب"
+            check_in=request.form.get(f"check_in_{key}") or None
+            check_out=request.form.get(f"check_out_{key}") or None
+            overtime=float(request.form.get(f"overtime_{key}") or 0)
+            absence_hours=float(request.form.get(f"absence_hours_{key}") or 0)
+            notes=request.form.get(f"notes_{key}","")
+            execute("""INSERT INTO attendance_records(employee_id,attendance_date,status,
+              check_in,check_out,overtime_hours,absence_hours,notes,created_by,created_at)
+              VALUES(:employee,:dt,:status,:check_in,:check_out,:ot,:absence_hours,:notes,:uid,:created)
+              ON CONFLICT(employee_id,attendance_date) DO UPDATE SET
+              status=EXCLUDED.status,check_in=EXCLUDED.check_in,check_out=EXCLUDED.check_out,
+              overtime_hours=EXCLUDED.overtime_hours,absence_hours=EXCLUDED.absence_hours,
+              notes=EXCLUDED.notes""",
+              {"employee":employee_id,"dt":dt,"status":status,"check_in":check_in,
+               "check_out":check_out,"ot":overtime,"absence_hours":absence_hours,"notes":notes,
+               "uid":session.get("user_id"),"created":datetime.now()})
+            saved+=1
+        execute("""INSERT INTO employee_attendance_months(employee_id,month_key,status,saved_by,saved_at)
+          VALUES(:employee,:month,'معتمد',:uid,:saved)
+          ON CONFLICT(employee_id,month_key) DO UPDATE SET
+          status='معتمد',saved_by=EXCLUDED.saved_by,saved_at=EXCLUDED.saved_at""",
+          {"employee":employee_id,"month":selected_month,"uid":session.get("user_id"),"saved":datetime.now()})
+        flash(f"تم حفظ واعتماد شيت حضور الموظف {employee['name']} لشهر {selected_month} ({saved} يوم)","success")
+        return redirect(url_for("attendance",month=selected_month,employee_id=employee_id))
 
-    employees=rows("SELECT id,employee_no,name FROM employees WHERE active=1 ORDER BY name")
-    existing=rows("""SELECT * FROM attendance_records
-                     WHERE attendance_date BETWEEN :start AND :end""",
-                  {"start":first_day,"end":last_day})
-    record_map={(int(r["employee_id"]),str(r["attendance_date"])):r for r in existing}
+    existing=[]
+    if employee:
+        existing=rows("""SELECT * FROM attendance_records
+                         WHERE employee_id=:employee AND attendance_date BETWEEN :start AND :end""",
+                      {"employee":employee_id,"start":first_day,"end":last_day})
+    record_map={str(r["attendance_date"]):r for r in existing}
     days=[date(first_day.year,first_day.month,d) for d in range(1,last_day.day+1)]
+    sheet=row("""SELECT * FROM employee_attendance_months
+                 WHERE employee_id=:employee AND month_key=:month""",
+              {"employee":employee_id,"month":selected_month}) if employee else None
+    monthly_status=rows("""SELECT e.id,e.employee_no,e.name,
+      CASE WHEN m.id IS NULL THEN 0 ELSE 1 END has_sheet
+      FROM employees e LEFT JOIN employee_attendance_months m
+        ON m.employee_id=e.id AND m.month_key=:month
+      WHERE e.active=1 ORDER BY e.name""",{"month":selected_month})
     return render_template("attendance.html",month=selected_month,days=days,
-                           employees=employees,record_map=record_map)
+                           employees=employees,employee=employee,employee_id=employee_id,
+                           record_map=record_map,sheet=sheet,monthly_status=monthly_status)
 
 @app.route("/attendance/export")
 @login_required
@@ -10184,7 +10228,19 @@ def payroll_runs():
         total_gross=total_deductions=total_net=0
         employees_data=rows("""SELECT e.*,COALESCE(e.cost_center_id,cc.id) resolved_cc
           FROM employees e LEFT JOIN cost_centers cc ON cc.id=e.cost_center_id
-          WHERE e.active=1 ORDER BY e.id""")
+          WHERE e.active=1
+            AND EXISTS(SELECT 1 FROM employee_attendance_months am
+                       WHERE am.employee_id=e.id
+                         AND am.month_key BETWEEN TO_CHAR(CAST(:start AS DATE),'YYYY-MM')
+                                              AND TO_CHAR(CAST(:end AS DATE),'YYYY-MM')
+                         AND am.status='معتمد')
+          ORDER BY e.id""",{"start":start,"end":end})
+        excluded_count=row("""SELECT COUNT(*) c FROM employees e WHERE e.active=1
+          AND NOT EXISTS(SELECT 1 FROM employee_attendance_months am
+                         WHERE am.employee_id=e.id
+                           AND am.month_key BETWEEN TO_CHAR(CAST(:start AS DATE),'YYYY-MM')
+                                                AND TO_CHAR(CAST(:end AS DATE),'YYYY-MM')
+                           AND am.status='معتمد')""",{"start":start,"end":end})["c"]
         for employee in employees_data:
             calc=calculate_employee_payroll(employee,start,end)
             execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,
@@ -10206,7 +10262,7 @@ def payroll_runs():
                    total_net=:net WHERE id=:id""",
                 {"gross":round(total_gross,2),"deductions":round(total_deductions,2),
                  "net":round(total_net,2),"id":run_id})
-        flash(f"تم إنشاء مسير الرواتب {no}","success")
+        flash(f"تم إنشاء مسير الرواتب {no} لعدد {len(employees_data)} موظف. تم استبعاد {excluded_count} موظف لعدم وجود شيت حضور معتمد للفترة.","success")
         return redirect(url_for("payroll_run_view",run_id=run_id))
     return render_template("payroll_runs.html",
       runs=rows("""SELECT r.*,j.journal_no FROM payroll_runs r

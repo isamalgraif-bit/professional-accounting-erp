@@ -1,26 +1,34 @@
 {% extends "base.html" %}{% block content %}
-<div class="erp-page-title"><div><h3>الحضور والانصراف الشهري</h3><small>Monthly Attendance & Overtime</small></div></div>
+<div class="erp-page-title"><div><h3>الحضور والانصراف الشهري</h3><small>شيت طولي مستقل لكل موظف — Vertical Monthly Attendance Sheet</small></div></div>
 <div class="form-card mb-3">
 <form method="get" class="row g-2 align-items-end">
 <div class="col-md-3"><label>الشهر</label><input class="form-control" type="month" name="month" value="{{month}}" required></div>
-<div class="col-md-2"><button class="btn btn-primary w-100">تحميل كامل الشهر</button></div>
-<div class="col-md-3"><a class="btn btn-outline-success w-100" href="{{url_for('attendance_export',month=month)}}">تنزيل الشهر Excel</a></div>
-<div class="col-md-4"><div class="alert alert-info mb-0 py-2">المربع المحدد = حاضر، وغير المحدد = غائب. يمكن إدخال الإضافي في نفس الشاشة.</div></div>
+<div class="col-md-5"><label>الموظف</label><select class="form-select" name="employee_id" required>{% for e in employees %}<option value="{{e.id}}" {% if e.id==employee_id %}selected{% endif %}>{{e.employee_no or '-'}} — {{e.name}}</option>{% endfor %}</select></div>
+<div class="col-md-2"><button class="btn btn-primary w-100">فتح الشيت</button></div>
+<div class="col-md-2"><a class="btn btn-outline-success w-100" href="{{url_for('attendance_export',month=month)}}">Excel الشهر</a></div>
 </form></div>
-<form method="post">
-<input type="hidden" name="month" value="{{month}}">
-{% for e in employees %}<input type="hidden" name="employee_ids" value="{{e.id}}">{% endfor %}
-<div class="form-card mb-3" style="overflow:auto;max-height:68vh">
-<table class="table table-bordered table-sm align-middle text-center" style="min-width:1500px;">
-<thead class="sticky-top bg-white"><tr><th style="min-width:210px">الموظف</th>{% for d in days %}<th style="min-width:115px">{{d.day}}<br><small>{{d.strftime('%a')}}</small></th>{% endfor %}</tr></thead>
-<tbody>{% for e in employees %}<tr><th class="text-start sticky-start bg-white">{{e.employee_no or ''}} - {{e.name}}</th>
-{% for d in days %}{% set key=e.id|string+'_'+d.isoformat() %}{% set r=record_map.get((e.id,d.isoformat())) %}
-<td class="{% if d.weekday() in [4,5] %}table-light{% endif %}">
-<div class="form-check d-flex justify-content-center"><input class="form-check-input" type="checkbox" name="present" value="{{key}}" {% if not r or r.status != 'غائب' %}checked{% endif %} title="حاضر"></div>
-<div class="input-group input-group-sm mt-1"><span class="input-group-text">د</span><input type="time" class="form-control" name="check_in_{{key}}" value="{{r.check_in.strftime('%H:%M') if r and r.check_in else ''}}"></div>
-<div class="input-group input-group-sm mt-1"><span class="input-group-text">خ</span><input type="time" class="form-control" name="check_out_{{key}}" value="{{r.check_out.strftime('%H:%M') if r and r.check_out else ''}}"></div>
-<div class="input-group input-group-sm mt-1"><span class="input-group-text">إضافي</span><input type="number" step=".01" min="0" class="form-control" name="overtime_{{key}}" value="{{r.overtime_hours if r else 0}}"></div>
-<input class="form-control form-control-sm mt-1" name="notes_{{key}}" value="{{r.notes if r else ''}}" placeholder="ملاحظة">
-</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
-<div class="text-end sticky-bottom bg-white py-2"><button class="btn btn-success btn-lg px-5">حفظ الشهر بالكامل</button></div>
-</form>{% endblock %}
+<div class="row g-3 mb-3"><div class="col-xl-9">
+{% if employee %}<div class="form-card">
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3"><div><h5 class="mb-1">{{employee.employee_no or '-'}} — {{employee.name}}</h5><small>كل يوم في صف مستقل لتسهيل الإدخال والطباعة</small></div><span class="badge {% if sheet %}bg-success{% else %}bg-warning text-dark{% endif %} fs-6">{% if sheet %}شيت معتمد — يستحق الراتب{% else %}غير محفوظ — لا يدخل في الرواتب{% endif %}</span></div>
+<form method="post" id="attendanceForm"><input type="hidden" name="month" value="{{month}}"><input type="hidden" name="employee_id" value="{{employee_id}}">
+<div class="d-flex flex-wrap gap-2 mb-3"><button type="button" class="btn btn-sm btn-outline-success" onclick="setAllStatus('حاضر')">تعيين الكل حاضر</button><button type="button" class="btn btn-sm btn-outline-secondary" onclick="setWeekends()">تعيين الجمعة والسبت عطلة</button></div>
+<div class="attendance-vertical-list">
+{% for d in days %}{% set key=employee_id|string+'_'+d.isoformat() %}{% set r=record_map.get(d.isoformat()) %}{% set current=r.status if r else ('عطلة أسبوعية' if d.weekday() in [4,5] else 'حاضر') %}
+<div class="attendance-day-card mb-2 p-3 border rounded {% if d.weekday() in [4,5] %}bg-light{% endif %}">
+<div class="row g-2 align-items-end">
+<div class="col-lg-2 col-md-3"><label class="small text-muted">التاريخ / اليوم</label><div class="fw-bold">{{d.strftime('%Y-%m-%d')}}</div><div class="small">{{['الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت','الأحد'][d.weekday()]}}</div></div>
+<div class="col-lg-2 col-md-3"><label class="small text-muted">الحالة</label><select class="form-select form-select-sm day-status" name="status_{{key}}"><option {% if current=='حاضر' %}selected{% endif %}>حاضر</option><option {% if current=='غائب' %}selected{% endif %}>غائب</option><option {% if current=='إجازة' %}selected{% endif %}>إجازة</option><option {% if current=='إجازة مرضية' %}selected{% endif %}>إجازة مرضية</option><option {% if current=='عطلة أسبوعية' %}selected{% endif %}>عطلة أسبوعية</option><option {% if current=='مأمورية' %}selected{% endif %}>مأمورية</option></select></div>
+<div class="col-lg-1 col-md-2"><label class="small text-muted">دخول</label><input type="time" class="form-control form-control-sm" name="check_in_{{key}}" value="{{r.check_in.strftime('%H:%M') if r and r.check_in else ''}}"></div>
+<div class="col-lg-1 col-md-2"><label class="small text-muted">خروج</label><input type="time" class="form-control form-control-sm" name="check_out_{{key}}" value="{{r.check_out.strftime('%H:%M') if r and r.check_out else ''}}"></div>
+<div class="col-lg-1 col-md-2"><label class="small text-muted">إضافي</label><input type="number" step=".01" min="0" class="form-control form-control-sm" name="overtime_{{key}}" value="{{r.overtime_hours if r else 0}}"></div>
+<div class="col-lg-1 col-md-2"><label class="small text-muted">غياب/ساعة</label><input type="number" step=".01" min="0" class="form-control form-control-sm" name="absence_hours_{{key}}" value="{{r.absence_hours if r else 0}}"></div>
+<div class="col-lg-4 col-md-12"><label class="small text-muted">ملاحظات</label><input class="form-control form-control-sm" name="notes_{{key}}" value="{{r.notes if r else ''}}"></div>
+</div></div>{% endfor %}
+</div><div class="text-end mt-3"><button class="btn btn-success btn-lg px-5">حفظ واعتماد شيت الموظف</button></div></form></div>
+{% else %}<div class="alert alert-warning">لا يوجد موظفون نشطون.</div>{% endif %}</div>
+<div class="col-xl-3"><div class="form-card"><h5>حالة شيتات الشهر</h5><div style="max-height:72vh;overflow:auto"><table class="table table-sm"><thead><tr><th>الموظف</th><th>الحالة</th><th></th></tr></thead><tbody>{% for e in monthly_status %}<tr><td>{{e.employee_no or '-'}} — {{e.name}}</td><td><span class="badge {% if e.has_sheet %}bg-success{% else %}bg-secondary{% endif %}">{% if e.has_sheet %}معتمد{% else %}غير موجود{% endif %}</span></td><td><a class="btn btn-sm btn-outline-primary" href="{{url_for('attendance',month=month,employee_id=e.id)}}">فتح</a></td></tr>{% endfor %}</tbody></table></div></div></div></div>
+<script>
+function setAllStatus(value){document.querySelectorAll('.day-status').forEach(x=>x.value=value)}
+function setWeekends(){document.querySelectorAll('.attendance-day-card').forEach(card=>{const text=card.innerText;if(text.includes('الجمعة')||text.includes('السبت'))card.querySelector('.day-status').value='عطلة أسبوعية'})}
+</script>
+{% endblock %}
