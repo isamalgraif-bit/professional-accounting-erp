@@ -22,7 +22,7 @@ import qrcode
 from openpyxl import Workbook
 from openpyxl.styles import Protection, Font, PatternFill
 
-APP_VERSION = "21.1.0"
+APP_VERSION = "21.2.0-STAGING"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -37,6 +37,7 @@ ITEM_UNITS = [
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
+STAGING_MODE = os.environ.get("STAGING_MODE", "0").strip().lower() in {"1","true","yes","on"}
 
 database_url = os.environ.get("DATABASE_URL", "sqlite:///erp.db")
 
@@ -4278,7 +4279,36 @@ def inject_settings():
     settings = row("SELECT * FROM settings WHERE id=1")
     return {"app_settings": settings, "app_version": APP_VERSION, "item_units": ITEM_UNITS,
             "journal_account_types": JOURNAL_ACCOUNT_TYPES,
-            "can": has_permission, "current_username": session.get("username")}
+            "can": has_permission, "current_username": session.get("username"),
+            "staging_mode": STAGING_MODE}
+
+@app.route("/staging-checklist")
+@login_required
+def staging_checklist():
+    settings_row = row("SELECT * FROM settings WHERE id=1") or {}
+    counts = {
+        "accounts": row("SELECT COUNT(*) c FROM accounts")["c"],
+        "customers": row("SELECT COUNT(*) c FROM customers")["c"],
+        "suppliers": row("SELECT COUNT(*) c FROM suppliers")["c"],
+        "employees": row("SELECT COUNT(*) c FROM employees")["c"],
+        "items": row("SELECT COUNT(*) c FROM inventory")["c"],
+        "fiscal_periods": row("SELECT COUNT(*) c FROM fiscal_periods")["c"],
+    }
+    default_fields = [
+        "customer_account_id","supplier_account_id","sales_account_id",
+        "purchases_account_id","vat_input_account_id","vat_output_account_id",
+        "cash_account_id","bank_account_id"
+    ]
+    missing_defaults = [field for field in default_fields if not settings_row.get(field)]
+    checks = [
+        {"title":"اتصال قاعدة البيانات","ok":True,"detail":"قاعدة البيانات متصلة وتستجيب."},
+        {"title":"بيانات الشركة","ok":bool((settings_row.get("company_name_ar") or "").strip() not in {"","اسم الشركة"}),"detail":"أدخل اسم الشركة والبيانات النظامية من الإعدادات."},
+        {"title":"الفترات المالية","ok":counts["fiscal_periods"]>0,"detail":f"عدد الفترات: {counts['fiscal_periods']}"},
+        {"title":"دليل الحسابات","ok":counts["accounts"]>0,"detail":f"عدد الحسابات: {counts['accounts']}"},
+        {"title":"الحسابات الافتراضية","ok":not missing_defaults,"detail":("مكتملة" if not missing_defaults else f"حقول ناقصة: {len(missing_defaults)}")},
+        {"title":"تغيير كلمة مرور المدير","ok":False,"detail":"غيّر كلمة المرور الافتراضية admin123 قبل بدء الاختبار."},
+    ]
+    return render_template("staging_checklist.html", checks=checks, counts=counts, missing_defaults=missing_defaults)
 
 @app.route("/health")
 def health():
@@ -4404,6 +4434,26 @@ def accounting_setup():
         "cost_of_sales_account_id", "retained_earnings_account_id"
     ]
 
+    # أنواع الحسابات المسموح بها لكل إعداد. حسابا العملاء والموردين العامان
+    # يمكن أن يكونا حسابين رئيسيين لا يقبلان القيود، لأنهما يستخدمان كحسابي رقابة.
+    allowed_type_tokens = {
+        "customer_account_id": ("أصل", "اصول", "أصول", "asset"),
+        "supplier_account_id": ("خصم", "التزام", "liabil"),
+        "sales_account_id": ("إيراد", "ايراد", "revenue", "income"),
+        "purchases_account_id": ("مصروف", "expense", "تكلفة"),
+        "vat_input_account_id": ("أصل", "اصول", "أصول", "asset"),
+        "vat_output_account_id": ("خصم", "التزام", "liabil"),
+        "cash_account_id": ("أصل", "اصول", "أصول", "asset"),
+        "bank_account_id": ("أصل", "اصول", "أصول", "asset"),
+        "inventory_account_id": ("أصل", "اصول", "أصول", "asset"),
+        "cost_of_sales_account_id": ("مصروف", "expense", "تكلفة"),
+        "retained_earnings_account_id": ("حقوق", "ملكية", "equity"),
+    }
+
+    def account_type_allowed(field, account_type):
+        text = (account_type or "").strip().lower()
+        return any(token.lower() in text for token in allowed_type_tokens.get(field, ()))
+
     if request.method == "POST":
         action = request.form.get("action", "save_defaults")
         try:
@@ -4413,11 +4463,14 @@ def accounting_setup():
                     raw = request.form.get(field)
                     values[field] = int(raw) if raw else None
                     if values[field]:
-                        valid = row("""SELECT id FROM chart_of_accounts
-                                      WHERE id=:id AND active=1 AND accepts_entries=1""",
-                                    {"id": values[field]})
-                        if not valid:
-                            raise ValueError("تم اختيار حساب غير صالح أو لا يقبل القيود.")
+                        selected = row("""SELECT id,account_type,accepts_entries FROM chart_of_accounts
+                                          WHERE id=:id AND active=1""", {"id": values[field]})
+                        if not selected:
+                            raise ValueError("تم اختيار حساب غير صالح أو غير نشط.")
+                        if not account_type_allowed(field, selected.get("account_type")):
+                            raise ValueError("نوع الحساب المختار لا يتوافق مع الإعداد المحاسبي المحدد.")
+                        if field not in {"customer_account_id", "supplier_account_id"} and not selected.get("accepts_entries"):
+                            raise ValueError("الحساب المختار يجب أن يقبل القيود.")
                 execute("""UPDATE settings SET
                     customer_account_id=:customer_account_id,
                     supplier_account_id=:supplier_account_id,
@@ -4476,9 +4529,15 @@ def accounting_setup():
         return redirect(url_for("accounting_setup"))
 
     current = row("SELECT * FROM settings WHERE id=1")
-    accounts = rows("""SELECT id,account_code,account_name_ar,account_type
+    accounts = rows("""SELECT id,account_code,account_name_ar,account_type,accepts_entries
                        FROM chart_of_accounts
-                       WHERE active=1 AND accepts_entries=1 ORDER BY account_code""")
+                       WHERE active=1 ORDER BY account_code""")
+    account_groups = {
+        field: [a for a in accounts if account_type_allowed(field, a.get("account_type"))
+                and (field in {"customer_account_id", "supplier_account_id"} or a.get("accepts_entries"))]
+        for field in default_fields
+    }
+    posting_accounts = [a for a in accounts if a.get("accepts_entries")]
     customers_unlinked = rows("""SELECT id,name,vat_number FROM customers
                                   WHERE receivable_account_id IS NULL ORDER BY name""")
     suppliers_unlinked = rows("""SELECT id,name,vat_number FROM suppliers
@@ -4492,7 +4551,8 @@ def accounting_setup():
     }
     missing_defaults = [f for f in default_fields if not current.get(f)]
     setup_complete = not missing_defaults and not customers_unlinked and not suppliers_unlinked
-    return render_template("accounting_setup.html", row=current, accounts=accounts,
+    return render_template("accounting_setup.html", row=current, accounts=posting_accounts,
+                           account_groups=account_groups,
                            customers_unlinked=customers_unlinked,
                            suppliers_unlinked=suppliers_unlinked,
                            employees_unlinked=employees_unlinked,

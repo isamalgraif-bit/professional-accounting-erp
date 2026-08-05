@@ -37,10 +37,10 @@
       {% for field,label in fields %}
       <div class="col-md-4">
         <label class="form-label">{{ label }}</label>
-        <select class="form-select" name="{{ field }}">
+        <select class="form-select searchable-select" name="{{ field }}" data-search-placeholder="ابحث باسم الحساب أو الكود">
           <option value="">-- اختر الحساب --</option>
-          {% for a in accounts %}
-          <option value="{{a.id}}" {% if row[field]==a.id %}selected{% endif %}>{{a.account_code}} - {{a.account_name_ar}} ({{a.account_type}})</option>
+          {% for a in account_groups[field] %}
+          <option value="{{a.id}}" {% if row[field]==a.id %}selected{% endif %}>{{a.account_code}} - {{a.account_name_ar}} ({{a.account_type}}){% if not a.accepts_entries %} — حساب رئيسي{% endif %}</option>
           {% endfor %}
         </select>
       </div>
@@ -65,14 +65,14 @@
         <input type="hidden" name="action" value="{{action}}">
         <div class="col-12">
           <label class="form-label">{{ title[:-1] if title != 'الموظفون' else 'الموظف' }}</label>
-          <select class="form-select" name="entity_id" required>
+          <select class="form-select searchable-select" name="entity_id" required data-search-placeholder="ابحث بالاسم أو الرقم">
             <option value="">-- اختر --</option>
             {% for item in items %}<option value="{{item.id}}">{{item[name_field]}}{% if item[code_field] %} — {{item[code_field]}}{% endif %}</option>{% endfor %}
           </select>
         </div>
         <div class="col-12">
           <label class="form-label">{{account_label}}</label>
-          <select class="form-select" name="account_id" required>
+          <select class="form-select searchable-select" name="account_id" required data-search-placeholder="ابحث باسم الحساب أو الكود">
             <option value="">-- اختر الحساب --</option>
             {% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}
           </select>

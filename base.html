@@ -245,6 +245,7 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
       <a href="{{ url_for('data_import_center') }}">إدارة واستيراد البيانات</a>
       <a href="{{ url_for('notifications_center') }}">مركز التنبيهات</a>
       <a href="{{ url_for('system_health') }}">صحة النظام</a>
+      {% if staging_mode %}<a href="{{ url_for('staging_checklist') }}">قائمة اختبار التثبيت</a>{% endif %}
       {% if can('users.view') %}
       <a href="{{ url_for('users_admin') }}">المستخدمون</a>
       <a href="{{ url_for('roles_admin') }}">الأدوار والصلاحيات</a>
@@ -258,6 +259,7 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 <div class="sidebar-footer"><span>الإصدار {{ app_version }}</span><a href="{{ url_for('logout') }}">تسجيل الخروج</a></div>
 </aside>
 <main class="content">
+{% if staging_mode %}<div class="alert alert-warning text-center fw-bold no-print">بيئة اختبار مستقلة — لا تستخدم للبيانات الحقيقية | الإصدار {{ app_version }}</div>{% endif %}
 <div class="page-toolbar no-print"><button class="btn btn-outline-primary mobile-menu-btn" type="button" onclick="toggleSidebar()">☰ القائمة</button></div>
 <form id="global-search-form" method="get" action="{{url_for('global_search')}}" class="d-flex gap-2 align-items-center my-2">
   <input class="form-control" name="q" placeholder="بحث شامل: عميل، مورد، فاتورة، مشروع، موظف..." value="{{request.args.get('q','') if request.endpoint=='global_search' else ''}}">
@@ -279,7 +281,51 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 
 <div id="globalSaveToast" class="toast-save">تم حفظ المسودة تلقائيًا</div>
 
+<style>
+.erp-select-search{position:relative;margin-bottom:5px}
+.erp-select-search input{padding-inline-start:34px}
+.erp-select-search .search-icon{position:absolute;inset-inline-start:11px;top:50%;transform:translateY(-50%);color:#64748b;pointer-events:none}
+.erp-select-search .search-count{position:absolute;inset-inline-end:10px;top:50%;transform:translateY(-50%);font-size:11px;color:#64748b;background:#fff;padding:0 3px}
+</style>
 <script>
+function normalizeSearchText(value){
+  return String(value||'').toLowerCase().normalize('NFKD')
+    .replace(/[إأآا]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/\s+/g,' ').trim();
+}
+function enhanceSearchableSelect(select){
+  if(!select || select.dataset.searchEnhanced==='1' || select.multiple || select.dataset.noSearch==='1')return;
+  if(select.options.length < 8 && !select.classList.contains('searchable-select'))return;
+  select.dataset.searchEnhanced='1';
+  const wrap=document.createElement('div');wrap.className='erp-select-search';
+  const input=document.createElement('input');input.type='search';input.className='form-control form-control-sm';
+  input.placeholder=select.dataset.searchPlaceholder||'ابحث داخل القائمة...';input.autocomplete='off';
+  const icon=document.createElement('span');icon.className='search-icon';icon.textContent='🔍';
+  const count=document.createElement('span');count.className='search-count';
+  wrap.append(input,icon,count);select.parentNode.insertBefore(wrap,select);
+  const refresh=()=>{
+    const q=normalizeSearchText(input.value);let shown=0;
+    [...select.options].forEach((option,index)=>{
+      if(index===0 && !option.value){option.hidden=false;return;}
+      const match=!q || normalizeSearchText(option.textContent+' '+option.value).includes(q);
+      option.hidden=!match;if(match)shown++;
+    });
+    count.textContent=q ? shown+' نتيجة' : '';
+    if(q && shown===1){
+      const only=[...select.options].find((o,i)=>i>0&&!o.hidden);
+      if(only){select.value=only.value;select.dispatchEvent(new Event('change',{bubbles:true}));}
+    }
+  };
+  input.addEventListener('input',refresh);
+  input.addEventListener('keydown',e=>{
+    if(e.key==='ArrowDown'){e.preventDefault();select.focus();}
+    if(e.key==='Escape'){input.value='';refresh();}
+  });
+  select.addEventListener('change',()=>{input.value='';refresh();});
+}
+function enhanceSearchableSelects(root=document){
+  root.querySelectorAll?.('select.form-select, select.searchable-select').forEach(enhanceSearchableSelect);
+}
+
 function toggleSidebar(){document.getElementById("erpSidebar")?.classList.toggle("open");}
 document.addEventListener("click",function(e){const sb=document.getElementById("erpSidebar");if(window.innerWidth<=900&&sb?.classList.contains("open")&&!sb.contains(e.target)&&!e.target.closest(".mobile-menu-btn")){sb.classList.remove("open");}});
 window.erpUnsavedChanges = false;
@@ -299,6 +345,7 @@ function upgradeUnitInputs(root=document){
 
 document.addEventListener('DOMContentLoaded', () => {
   upgradeUnitInputs();
+  enhanceSearchableSelects();
   document.querySelectorAll('form[data-track-unsaved="1"]').forEach(form => {
     form.addEventListener('input', () => { window.erpUnsavedChanges = true; });
     form.addEventListener('change', () => { window.erpUnsavedChanges = true; });
@@ -319,7 +366,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
   new MutationObserver(mutations=>mutations.forEach(m=>m.addedNodes.forEach(node=>{
-    if(node.nodeType===1)upgradeUnitInputs(node);
+    if(node.nodeType===1){upgradeUnitInputs(node);enhanceSearchableSelects(node);}
   }))).observe(document.body,{childList:true,subtree:true});
 });
 </script>

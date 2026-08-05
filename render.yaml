@@ -1,15 +1,26 @@
+databases:
+  - name: west-erp-test-db
+    plan: free
+    databaseName: west_erp_test
+    user: west_erp_test_user
+
 services:
   - type: web
-    name: professional-accounting-erp
+    name: west-erp-test
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
     healthCheckPath: /health
+    autoDeploy: false
     envVars:
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: west-erp-test-db
+          property: connectionString
       - key: SECRET_KEY
         generateValue: true
+      - key: STAGING_MODE
+        value: "1"
       - key: PYTHON_VERSION
         value: 3.13.5

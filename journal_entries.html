@@ -142,7 +142,7 @@
   <td><input class="form-control tax-number" name="tax_number[]" readonly></td>
   <td><input class="form-control invoice-number" name="invoice_number[]"></td>
   <td><input class="form-control invoice-date" type="date" name="invoice_date[]"></td>
-  <td><input class="form-control" name="line_description[]"></td>
+  <td><input class="form-control line-description" name="line_description[]" placeholder="يُنسخ من السطر السابق تلقائيًا"></td>
 
   <td>
     <input class="form-control cost-center-search" list="costCenterList" placeholder="ابحث بالكود أو الاسم" autocomplete="off">
@@ -406,6 +406,7 @@ function bind(row){
   row.querySelector('.party-type').addEventListener('change',()=>updateTaxFields(row));
   row.querySelector('.supplier-select').addEventListener('change',()=>updateTaxFields(row));
   row.querySelector('.customer-select').addEventListener('change',()=>updateTaxFields(row));
+  row.querySelector('.line-description')?.addEventListener('focus',()=>fillDescriptionFromPrevious(row));
 
   row.querySelector('.remove-row').addEventListener('click',()=>{
     if(document.querySelectorAll('.journal-row').length>2){
@@ -415,6 +416,18 @@ function bind(row){
   });
 
   updateTaxFields(row);
+}
+
+function previousLineDescription(row){
+  const rows=[...document.querySelectorAll('.journal-row')];
+  const index=rows.indexOf(row);
+  if(index<=0)return '';
+  return rows[index-1].querySelector('.line-description')?.value?.trim() || '';
+}
+
+function fillDescriptionFromPrevious(row){
+  const field=row.querySelector('.line-description');
+  if(field && !field.value.trim())field.value=previousLineDescription(row);
 }
 
 function resetRow(row){
@@ -433,6 +446,8 @@ addRow.addEventListener('click',()=>{
   resetRow(row);
   journalBody.appendChild(row);
   bind(row);
+  fillDescriptionFromPrevious(row);
+  row.querySelector('.account-code')?.focus();
   calc();
 });
 
