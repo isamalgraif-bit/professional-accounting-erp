@@ -22,7 +22,7 @@ import qrcode
 from openpyxl import Workbook
 from openpyxl.styles import Protection, Font, PatternFill
 
-APP_VERSION = "21.2.1-STAGING"
+APP_VERSION = "21.3.0-STAGING"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -3988,8 +3988,91 @@ def init_db():
             active INTEGER DEFAULT 1
         )"""
     ]
-    for statement in statements:
-        db.session.execute(text(statement))
+    def _schema_statement_meta(sql):
+        """Return (kind, object_name, dependencies) for a schema statement.
+
+        This keeps fresh PostgreSQL installations independent from the physical
+        order of the SQL strings below.  Tables are topologically ordered by
+        REFERENCES dependencies; indexes are always created after their table.
+        """
+        import re
+        compact = " ".join(str(sql).strip().split())
+        table_match = re.match(
+            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`]?([A-Za-z_][A-Za-z0-9_]*)",
+            compact, re.IGNORECASE,
+        )
+        if table_match:
+            name = table_match.group(1).lower()
+            refs = {
+                item.lower() for item in re.findall(
+                    r"REFERENCES\s+[\"`]?([A-Za-z_][A-Za-z0-9_]*)",
+                    compact, re.IGNORECASE,
+                )
+                if item.lower() != name
+            }
+            return "table", name, refs
+
+        index_match = re.match(
+            r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`]?([A-Za-z_][A-Za-z0-9_]*)",
+            compact, re.IGNORECASE,
+        )
+        if index_match:
+            on_match = re.search(
+                r"\sON\s+[\"`]?([A-Za-z_][A-Za-z0-9_]*)",
+                compact, re.IGNORECASE,
+            )
+            deps = {on_match.group(1).lower()} if on_match else set()
+            return "index", index_match.group(1).lower(), deps
+        return "other", "", set()
+
+    table_statements = []
+    post_table_statements = []
+    for position, statement in enumerate(statements):
+        kind, name, dependencies = _schema_statement_meta(statement)
+        record = {
+            "position": position,
+            "sql": statement,
+            "kind": kind,
+            "name": name,
+            "dependencies": dependencies,
+        }
+        if kind == "table":
+            table_statements.append(record)
+        else:
+            post_table_statements.append(record)
+
+    known_tables = {item["name"] for item in table_statements}
+    created_tables = set()
+    pending = list(table_statements)
+    ordered_tables = []
+
+    while pending:
+        ready = [
+            item for item in pending
+            if not (item["dependencies"] & known_tables - created_tables)
+        ]
+        if not ready:
+            unresolved = ", ".join(
+                f"{item['name']} -> {sorted(item['dependencies'] & known_tables - created_tables)}"
+                for item in pending
+            )
+            raise RuntimeError(
+                "تعذر ترتيب جداول قاعدة البيانات بسبب علاقات دائرية أو غير مكتملة: "
+                + unresolved
+            )
+        ready.sort(key=lambda item: item["position"])
+        for item in ready:
+            ordered_tables.append(item)
+            created_tables.add(item["name"])
+            pending.remove(item)
+
+    # All base tables first, then indexes/other schema objects.  The transaction
+    # is committed before compatibility migrations so an optional migration
+    # cannot roll back the fresh database schema.
+    for item in ordered_tables:
+        db.session.execute(text(item["sql"]))
+    for item in sorted(post_table_statements, key=lambda value: value["position"]):
+        db.session.execute(text(item["sql"]))
 
     # Commit the base schema before optional compatibility migrations.
     # This is essential for a completely empty PostgreSQL database: if a later
