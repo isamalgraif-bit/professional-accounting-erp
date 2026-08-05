@@ -22,7 +22,7 @@ import qrcode
 from openpyxl import Workbook
 from openpyxl.styles import Protection, Font, PatternFill
 
-APP_VERSION = "21.2.0-STAGING"
+APP_VERSION = "21.2.1-STAGING"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -3991,6 +3991,12 @@ def init_db():
     for statement in statements:
         db.session.execute(text(statement))
 
+    # Commit the base schema before optional compatibility migrations.
+    # This is essential for a completely empty PostgreSQL database: if a later
+    # migration fails, core tables such as settings/users still exist and the
+    # original migration error is not hidden by a secondary UndefinedTable error.
+    db.session.commit()
+
     # Safe schema upgrades for existing Neon databases.
     migrations = [
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS address TEXT DEFAULT ''",
@@ -4276,7 +4282,14 @@ def ensure_database():
 
 @app.context_processor
 def inject_settings():
-    settings = row("SELECT * FROM settings WHERE id=1")
+    # Do not let a brand-new or partially initialized database turn every error
+    # page into a second settings-table exception. ensure_database normally
+    # creates this table first; this fallback keeps startup diagnostics visible.
+    try:
+        settings = row("SELECT * FROM settings WHERE id=1") or {}
+    except Exception:
+        db.session.rollback()
+        settings = {}
     return {"app_settings": settings, "app_version": APP_VERSION, "item_units": ITEM_UNITS,
             "journal_account_types": JOURNAL_ACCOUNT_TYPES,
             "can": has_permission, "current_username": session.get("username"),
