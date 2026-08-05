@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h3 class="mb-1">مركز الربط المحاسبي</h3>
+    <div class="text-muted">إعداد الحسابات الافتراضية وربط العملاء والموردين والموظفين بدليل الحسابات.</div>
+  </div>
+  {% if setup_complete %}
+  <span class="badge bg-success fs-6">الإعداد الأساسي مكتمل</span>
+  {% else %}
+  <span class="badge bg-warning text-dark fs-6">الإعداد يحتاج استكمال</span>
+  {% endif %}
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><div class="stat-card"><div class="stat-label">الحسابات الافتراضية الناقصة</div><div class="stat-number">{{ missing_defaults|length }}</div></div></div>
+  <div class="col-md-3"><div class="stat-card"><div class="stat-label">عملاء غير مربوطين</div><div class="stat-number">{{ customers_unlinked|length }}</div></div></div>
+  <div class="col-md-3"><div class="stat-card"><div class="stat-label">موردون غير مربوطين</div><div class="stat-number">{{ suppliers_unlinked|length }}</div></div></div>
+  <div class="col-md-3"><div class="stat-card"><div class="stat-label">موظفون غير مربوطين</div><div class="stat-number">{{ employees_unlinked|length }}</div></div></div>
+</div>
+
+<div class="form-card mb-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0">1. الحسابات الافتراضية للترحيل</h5>
+    <small class="text-muted">يستخدمها النظام تلقائيًا في الفواتير والضرائب والمخزون.</small>
+  </div>
+  <form method="post">
+    <input type="hidden" name="action" value="save_defaults">
+    {% set fields = [
+      ('customer_account_id','حساب العملاء العام'),('supplier_account_id','حساب الموردين العام'),
+      ('sales_account_id','حساب المبيعات'),('purchases_account_id','حساب المشتريات / المصروف'),
+      ('vat_input_account_id','ضريبة المدخلات'),('vat_output_account_id','ضريبة المخرجات'),
+      ('cash_account_id','الصندوق'),('bank_account_id','البنك'),('inventory_account_id','المخزون'),
+      ('cost_of_sales_account_id','تكلفة المبيعات'),('retained_earnings_account_id','الأرباح المبقاة')
+    ] %}
+    <div class="row g-3">
+      {% for field,label in fields %}
+      <div class="col-md-4">
+        <label class="form-label">{{ label }}</label>
+        <select class="form-select" name="{{ field }}">
+          <option value="">-- اختر الحساب --</option>
+          {% for a in accounts %}
+          <option value="{{a.id}}" {% if row[field]==a.id %}selected{% endif %}>{{a.account_code}} - {{a.account_name_ar}} ({{a.account_type}})</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endfor %}
+      <div class="col-12"><button class="btn btn-primary px-4">حفظ الحسابات الافتراضية</button></div>
+    </div>
+  </form>
+</div>
+
+<div class="row g-4">
+  {% set groups = [
+    ('العملاء','link_customer',customers_unlinked,'name','vat_number','حساب الذمم المدينة'),
+    ('الموردون','link_supplier',suppliers_unlinked,'name','vat_number','حساب الذمم الدائنة'),
+    ('الموظفون','link_employee',employees_unlinked,'name','employee_no','حساب مستحقات الموظف')
+  ] %}
+  {% for title,action,items,name_field,code_field,account_label in groups %}
+  <div class="col-xl-4">
+    <div class="form-card h-100">
+      <h5>{{ loop.index + 1 }}. ربط {{ title }}</h5>
+      {% if items %}
+      <form method="post" class="row g-3">
+        <input type="hidden" name="action" value="{{action}}">
+        <div class="col-12">
+          <label class="form-label">{{ title[:-1] if title != 'الموظفون' else 'الموظف' }}</label>
+          <select class="form-select" name="entity_id" required>
+            <option value="">-- اختر --</option>
+            {% for item in items %}<option value="{{item.id}}">{{item[name_field]}}{% if item[code_field] %} — {{item[code_field]}}{% endif %}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-12">
+          <label class="form-label">{{account_label}}</label>
+          <select class="form-select" name="account_id" required>
+            <option value="">-- اختر الحساب --</option>
+            {% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-12"><button class="btn btn-outline-primary w-100">حفظ الربط</button></div>
+      </form>
+      {% else %}
+      <div class="alert alert-success mb-0">جميع {{title}} مربوطون بحسابات.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="alert alert-info mt-4 mb-0">
+  لن يسمح النظام بترحيل فاتورة مبيعات لعميل غير مربوط، أو فاتورة مورد لمورد غير مربوط. حساب الموظف اختياري؛ عند عدم ربطه يستخدم النظام حساب مستحقات الرواتب العام.
+</div>
+{% endblock %}

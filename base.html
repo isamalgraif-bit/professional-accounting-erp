@@ -151,6 +151,7 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
     <button class="nav-section-btn" type="button" data-bs-toggle="collapse" data-bs-target="#navAccounting" aria-expanded="true"><span><span class="nav-icon">▤</span>الحسابات</span><span class="nav-arrow">⌄</span></button>
     <div class="collapse show nav-submenu" id="navAccounting">
       <a href="{{ url_for('chart_of_accounts') }}">دليل الحسابات</a>
+      <a href="{{ url_for('accounting_setup') }}">مركز الربط المحاسبي</a>
       <a href="{{ url_for('journal_entries') }}">قيد اليومية</a>
       <a href="{{ url_for('multi_journal') }}">قيود اليومية المتعددة</a>
       <a href="{{ url_for('manage_module', module_name='cost-centers') }}">مراكز التكلفة</a>

@@ -22,7 +22,7 @@ import qrcode
 from openpyxl import Workbook
 from openpyxl.styles import Protection, Font, PatternFill
 
-APP_VERSION = "21.0.9"
+APP_VERSION = "21.1.0"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -4391,6 +4391,114 @@ def dashboard():
     """)
     return render_template("dashboard.html", sales=float(sales), expenses=float(expenses_total),
                            customers=customers_count, employees=employees_count, recent=recent)
+
+
+@app.route("/accounting/setup", methods=["GET", "POST"])
+@login_required
+def accounting_setup():
+    """مركز موحد لربط الحسابات الافتراضية والجهات بدليل الحسابات."""
+    default_fields = [
+        "customer_account_id", "supplier_account_id", "sales_account_id",
+        "purchases_account_id", "vat_input_account_id", "vat_output_account_id",
+        "cash_account_id", "bank_account_id", "inventory_account_id",
+        "cost_of_sales_account_id", "retained_earnings_account_id"
+    ]
+
+    if request.method == "POST":
+        action = request.form.get("action", "save_defaults")
+        try:
+            if action == "save_defaults":
+                values = {}
+                for field in default_fields:
+                    raw = request.form.get(field)
+                    values[field] = int(raw) if raw else None
+                    if values[field]:
+                        valid = row("""SELECT id FROM chart_of_accounts
+                                      WHERE id=:id AND active=1 AND accepts_entries=1""",
+                                    {"id": values[field]})
+                        if not valid:
+                            raise ValueError("تم اختيار حساب غير صالح أو لا يقبل القيود.")
+                execute("""UPDATE settings SET
+                    customer_account_id=:customer_account_id,
+                    supplier_account_id=:supplier_account_id,
+                    sales_account_id=:sales_account_id,
+                    purchases_account_id=:purchases_account_id,
+                    vat_input_account_id=:vat_input_account_id,
+                    vat_output_account_id=:vat_output_account_id,
+                    cash_account_id=:cash_account_id,
+                    bank_account_id=:bank_account_id,
+                    inventory_account_id=:inventory_account_id,
+                    cost_of_sales_account_id=:cost_of_sales_account_id,
+                    retained_earnings_account_id=:retained_earnings_account_id
+                    WHERE id=1""", values)
+                audit("UPDATE", "ACCOUNTING_SETUP", "تحديث الحسابات الافتراضية")
+                flash("تم حفظ الحسابات الافتراضية بنجاح.", "success")
+
+            elif action in {"link_customer", "link_supplier", "link_employee"}:
+                entity_id = int(request.form.get("entity_id") or 0)
+                account_id = int(request.form.get("account_id") or 0)
+                if not entity_id or not account_id:
+                    raise ValueError("اختر الجهة والحساب المطلوب ربطه.")
+                valid = row("""SELECT id FROM chart_of_accounts
+                              WHERE id=:id AND active=1 AND accepts_entries=1""", {"id": account_id})
+                if not valid:
+                    raise ValueError("الحساب المحدد غير صالح أو لا يقبل القيود.")
+
+                if action == "link_customer":
+                    duplicate = row("SELECT id FROM customers WHERE receivable_account_id=:aid AND id<>:eid",
+                                    {"aid": account_id, "eid": entity_id})
+                    if duplicate:
+                        raise ValueError("هذا الحساب مرتبط بعميل آخر.")
+                    execute("UPDATE customers SET receivable_account_id=:aid WHERE id=:eid",
+                            {"aid": account_id, "eid": entity_id})
+                    label = "عميل"
+                elif action == "link_supplier":
+                    duplicate = row("SELECT id FROM suppliers WHERE payable_account_id=:aid AND id<>:eid",
+                                    {"aid": account_id, "eid": entity_id})
+                    if duplicate:
+                        raise ValueError("هذا الحساب مرتبط بمورد آخر.")
+                    execute("UPDATE suppliers SET payable_account_id=:aid WHERE id=:eid",
+                            {"aid": account_id, "eid": entity_id})
+                    label = "مورد"
+                else:
+                    duplicate = row("SELECT id FROM employees WHERE employee_account_id=:aid AND id<>:eid",
+                                    {"aid": account_id, "eid": entity_id})
+                    if duplicate:
+                        raise ValueError("هذا الحساب مرتبط بموظف آخر.")
+                    execute("UPDATE employees SET employee_account_id=:aid WHERE id=:eid",
+                            {"aid": account_id, "eid": entity_id})
+                    label = "موظف"
+                audit("UPDATE", "ACCOUNTING_LINK", f"ربط حساب {label} رقم {entity_id}")
+                flash(f"تم ربط حساب {label} بنجاح.", "success")
+        except (ValueError, TypeError) as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+        return redirect(url_for("accounting_setup"))
+
+    current = row("SELECT * FROM settings WHERE id=1")
+    accounts = rows("""SELECT id,account_code,account_name_ar,account_type
+                       FROM chart_of_accounts
+                       WHERE active=1 AND accepts_entries=1 ORDER BY account_code""")
+    customers_unlinked = rows("""SELECT id,name,vat_number FROM customers
+                                  WHERE receivable_account_id IS NULL ORDER BY name""")
+    suppliers_unlinked = rows("""SELECT id,name,vat_number FROM suppliers
+                                  WHERE payable_account_id IS NULL ORDER BY name""")
+    employees_unlinked = rows("""SELECT id,employee_no,name FROM employees
+                                  WHERE active=1 AND employee_account_id IS NULL ORDER BY name""")
+    linked_counts = {
+        "customers": row("SELECT COUNT(*) c FROM customers WHERE receivable_account_id IS NOT NULL")["c"],
+        "suppliers": row("SELECT COUNT(*) c FROM suppliers WHERE payable_account_id IS NOT NULL")["c"],
+        "employees": row("SELECT COUNT(*) c FROM employees WHERE active=1 AND employee_account_id IS NOT NULL")["c"],
+    }
+    missing_defaults = [f for f in default_fields if not current.get(f)]
+    setup_complete = not missing_defaults and not customers_unlinked and not suppliers_unlinked
+    return render_template("accounting_setup.html", row=current, accounts=accounts,
+                           customers_unlinked=customers_unlinked,
+                           suppliers_unlinked=suppliers_unlinked,
+                           employees_unlinked=employees_unlinked,
+                           linked_counts=linked_counts,
+                           missing_defaults=missing_defaults,
+                           setup_complete=setup_complete)
 
 @app.route("/settings", methods=["GET","POST"])
 @login_required
