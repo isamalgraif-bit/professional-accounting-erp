@@ -22,7 +22,7 @@ import qrcode
 from openpyxl import Workbook
 from openpyxl.styles import Protection, Font, PatternFill
 
-APP_VERSION = "21.3.0-STAGING"
+APP_VERSION = "21.4.0-STAGING"
 
 JOURNAL_ACCOUNT_TYPES = [
     "", "عميل", "مورد", "موظف", "مندوب مبيعات", "بنك", "صندوق",
@@ -2924,6 +2924,76 @@ def init_db():
             id SERIAL PRIMARY KEY,fiscal_year_id INTEGER NOT NULL REFERENCES fiscal_years(id) ON DELETE CASCADE,
             name VARCHAR(100) NOT NULL,start_date DATE NOT NULL,end_date DATE NOT NULL,
             status VARCHAR(30) NOT NULL DEFAULT 'مفتوحة'
+        )""",
+        """CREATE TABLE IF NOT EXISTS currencies(
+            code VARCHAR(10) PRIMARY KEY,
+            name_ar VARCHAR(100) NOT NULL,
+            name_en VARCHAR(100) DEFAULT '',
+            symbol VARCHAR(20) DEFAULT '',
+            decimal_places INTEGER NOT NULL DEFAULT 2,
+            active INTEGER NOT NULL DEFAULT 1
+        )""",
+        """CREATE TABLE IF NOT EXISTS exchange_rates(
+            id SERIAL PRIMARY KEY,
+            currency_code VARCHAR(10) NOT NULL REFERENCES currencies(code),
+            rate_date DATE NOT NULL,
+            rate_to_base NUMERIC(18,8) NOT NULL,
+            source VARCHAR(100) DEFAULT 'يدوي',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(currency_code,rate_date)
+        )""",
+        """CREATE TABLE IF NOT EXISTS banks(
+            id SERIAL PRIMARY KEY,
+            bank_code VARCHAR(50) UNIQUE NOT NULL,
+            name_ar VARCHAR(255) NOT NULL,
+            name_en VARCHAR(255) DEFAULT '',
+            swift_code VARCHAR(50) DEFAULT '',
+            country VARCHAR(100) DEFAULT '',
+            active INTEGER NOT NULL DEFAULT 1,
+            notes TEXT DEFAULT ''
+        )""",
+        """CREATE TABLE IF NOT EXISTS bank_accounts(
+            id SERIAL PRIMARY KEY,
+            bank_id INTEGER NOT NULL REFERENCES banks(id),
+            account_name VARCHAR(255) NOT NULL,
+            account_number VARCHAR(100) NOT NULL,
+            iban VARCHAR(100) DEFAULT '',
+            currency_code VARCHAR(10) NOT NULL REFERENCES currencies(code),
+            ledger_account_id INTEGER NOT NULL REFERENCES chart_of_accounts(id),
+            opening_balance_foreign NUMERIC(18,4) NOT NULL DEFAULT 0,
+            opening_balance_base NUMERIC(18,2) NOT NULL DEFAULT 0,
+            active INTEGER NOT NULL DEFAULT 1,
+            notes TEXT DEFAULT '',
+            UNIQUE(bank_id,account_number,currency_code),
+            UNIQUE(ledger_account_id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS bank_transactions(
+            id SERIAL PRIMARY KEY,
+            transaction_no VARCHAR(100) UNIQUE NOT NULL,
+            transaction_date DATE NOT NULL,
+            transaction_type VARCHAR(30) NOT NULL,
+            bank_account_id INTEGER NOT NULL REFERENCES bank_accounts(id),
+            destination_bank_account_id INTEGER REFERENCES bank_accounts(id),
+            counter_account_id INTEGER REFERENCES chart_of_accounts(id),
+            party_type VARCHAR(20) DEFAULT '',
+            customer_id INTEGER REFERENCES customers(id),
+            supplier_id INTEGER REFERENCES suppliers(id),
+            amount_foreign NUMERIC(18,4) NOT NULL,
+            currency_code VARCHAR(10) NOT NULL REFERENCES currencies(code),
+            exchange_rate NUMERIC(18,8) NOT NULL,
+            amount_base NUMERIC(18,2) NOT NULL,
+            destination_amount_foreign NUMERIC(18,4),
+            destination_exchange_rate NUMERIC(18,8),
+            reference VARCHAR(100) DEFAULT '',
+            description TEXT DEFAULT '',
+            cost_center_id INTEGER REFERENCES cost_centers(id),
+            status VARCHAR(30) DEFAULT 'مسودة',
+            posting_status VARCHAR(30) DEFAULT 'غير مرحّل',
+            journal_id INTEGER,
+            created_by INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""",
         """CREATE TABLE IF NOT EXISTS treasury_vouchers(
             id SERIAL PRIMARY KEY,
@@ -8251,6 +8321,162 @@ def receivables_aging_export():
       ["العميل","0-30 يوم","31-60 يوم","61-90 يوم","أكثر من 90 يوم","الإجمالي"],
       [[r["name"],r["b1"],r["b2"],r["b3"],r["b4"],r["total"]] for r in data])
 
+
+
+def get_base_currency():
+    setting = row("SELECT currency FROM settings WHERE id=1")
+    return (setting["currency"] if setting and setting.get("currency") else "SAR").upper()
+
+
+def ensure_default_currencies():
+    defaults = [
+        ("SAR","الريال السعودي","Saudi Riyal","ر.س"),
+        ("USD","الدولار الأمريكي","US Dollar","$"),
+        ("EUR","اليورو","Euro","€"),
+        ("AED","الدرهم الإماراتي","UAE Dirham","د.إ"),
+        ("GBP","الجنيه الإسترليني","British Pound","£"),
+    ]
+    for code,name_ar,name_en,symbol in defaults:
+        db.session.execute(text("""INSERT INTO currencies(code,name_ar,name_en,symbol,active)
+          VALUES(:c,:ar,:en,:s,1) ON CONFLICT (code) DO NOTHING"""),
+          {"c":code,"ar":name_ar,"en":name_en,"s":symbol})
+    db.session.commit()
+
+
+def bank_transaction_number(transaction_date):
+    year = datetime.strptime(transaction_date,"%Y-%m-%d").year if isinstance(transaction_date,str) else transaction_date.year
+    count = db.session.execute(text("SELECT COUNT(*) FROM bank_transactions WHERE EXTRACT(YEAR FROM transaction_date)=:y"),{"y":year}).scalar() or 0
+    return f"BT-{year}-{count+1:06d}"
+
+
+def latest_exchange_rate(currency_code, rate_date=None):
+    currency_code=(currency_code or "").upper()
+    if currency_code == get_base_currency():
+        return Decimal("1")
+    rate_date = rate_date or date.today().isoformat()
+    rec=row("""SELECT rate_to_base FROM exchange_rates
+               WHERE currency_code=:c AND rate_date<=:d
+               ORDER BY rate_date DESC,id DESC LIMIT 1""",{"c":currency_code,"d":rate_date})
+    return Decimal(str(rec["rate_to_base"])) if rec else None
+
+
+def post_bank_transaction(transaction_id):
+    t=row("""SELECT bt.*,src.ledger_account_id source_ledger_id,
+                    dst.ledger_account_id destination_ledger_id
+             FROM bank_transactions bt
+             JOIN bank_accounts src ON src.id=bt.bank_account_id
+             LEFT JOIN bank_accounts dst ON dst.id=bt.destination_bank_account_id
+             WHERE bt.id=:id""",{"id":transaction_id})
+    if not t: raise ValueError("الحركة البنكية غير موجودة.")
+    if t.get("journal_id"): return t["journal_id"]
+    ensure_open_period(t["transaction_date"])
+    amount=round(float(t["amount_base"]),2)
+    common={"line_description":t["description"] or t["transaction_type"],"cost_center_id":t["cost_center_id"]}
+    typ=t["transaction_type"]
+    if typ == "إيداع":
+        if not t["counter_account_id"]: raise ValueError("يجب تحديد الحساب المقابل للإيداع.")
+        lines=[{"account_id":t["source_ledger_id"],"debit":amount,**common},{"account_id":t["counter_account_id"],"credit":amount,**common}]
+    elif typ == "سحب":
+        if not t["counter_account_id"]: raise ValueError("يجب تحديد الحساب المقابل للسحب.")
+        lines=[{"account_id":t["counter_account_id"],"debit":amount,**common},{"account_id":t["source_ledger_id"],"credit":amount,**common}]
+    elif typ == "تحويل":
+        if not t["destination_ledger_id"]: raise ValueError("يجب تحديد الحساب البنكي الوجهة.")
+        if t["destination_bank_account_id"] == t["bank_account_id"]: raise ValueError("لا يمكن التحويل إلى نفس الحساب البنكي.")
+        lines=[{"account_id":t["destination_ledger_id"],"debit":amount,**common},{"account_id":t["source_ledger_id"],"credit":amount,**common}]
+    else:
+        raise ValueError("نوع الحركة البنكية غير صحيح.")
+    jid=create_system_journal(t["transaction_date"],f"حركة بنكية {t['transaction_no']}",t["reference"] or t["transaction_no"],"BANK",transaction_id,lines)
+    execute("UPDATE bank_transactions SET journal_id=:j,status='معتمد',posting_status='مرحّل' WHERE id=:id",{"j":jid,"id":transaction_id})
+    return jid
+
+
+@app.route("/banking", methods=["GET","POST"])
+@login_required
+def banking_center():
+    ensure_default_currencies()
+    if request.method == "POST":
+        action=request.form.get("action")
+        try:
+            if action == "add_currency_rate":
+                code=request.form["currency_code"].upper()
+                rate=Decimal(request.form["rate_to_base"])
+                if rate <= 0: raise ValueError("سعر الصرف يجب أن يكون أكبر من صفر.")
+                db.session.execute(text("""INSERT INTO exchange_rates(currency_code,rate_date,rate_to_base,source,notes,created_by)
+                  VALUES(:c,:d,:r,:s,:n,:u)
+                  ON CONFLICT(currency_code,rate_date) DO UPDATE SET rate_to_base=EXCLUDED.rate_to_base,source=EXCLUDED.source,notes=EXCLUDED.notes"""),
+                  {"c":code,"d":request.form["rate_date"],"r":rate,"s":request.form.get("source","يدوي"),"n":request.form.get("notes",""),"u":session.get("user_id")})
+                db.session.commit(); flash("تم حفظ سعر الصرف.","success")
+            elif action == "add_bank":
+                execute("""INSERT INTO banks(bank_code,name_ar,name_en,swift_code,country,notes)
+                  VALUES(:c,:ar,:en,:sw,:co,:n)""",{"c":request.form["bank_code"].strip(),"ar":request.form["name_ar"].strip(),"en":request.form.get("name_en",""),"sw":request.form.get("swift_code",""),"co":request.form.get("country",""),"n":request.form.get("notes","")})
+                flash("تم إنشاء البنك.","success")
+            elif action == "add_bank_account":
+                acc=row("SELECT id,accepts_entries,active FROM chart_of_accounts WHERE id=:id",{"id":request.form["ledger_account_id"]})
+                if not acc or not acc["active"] or not acc["accepts_entries"]: raise ValueError("الحساب المحاسبي يجب أن يكون نشطًا ويقبل القيود.")
+                rate=latest_exchange_rate(request.form["currency_code"],request.form.get("opening_date") or date.today().isoformat())
+                opening=Decimal(request.form.get("opening_balance_foreign") or "0")
+                if rate is None and opening != 0: raise ValueError("أدخل سعر صرف للعملة قبل تسجيل الرصيد الافتتاحي.")
+                execute("""INSERT INTO bank_accounts(bank_id,account_name,account_number,iban,currency_code,ledger_account_id,
+                  opening_balance_foreign,opening_balance_base,notes)
+                  VALUES(:b,:n,:no,:iban,:cur,:ledger,:of,:ob,:notes)""",
+                  {"b":request.form["bank_id"],"n":request.form["account_name"],"no":request.form["account_number"],"iban":request.form.get("iban",""),"cur":request.form["currency_code"],"ledger":request.form["ledger_account_id"],"of":opening,"ob":opening*(rate or Decimal("1")),"notes":request.form.get("notes","")})
+                flash("تم إنشاء الحساب البنكي وربطه بدليل الحسابات.","success")
+            elif action == "add_transaction":
+                trans_date=request.form["transaction_date"]
+                ensure_open_period(trans_date)
+                ba=row("SELECT * FROM bank_accounts WHERE id=:id AND active=1",{"id":request.form["bank_account_id"]})
+                if not ba: raise ValueError("الحساب البنكي غير موجود أو غير نشط.")
+                amount=Decimal(request.form["amount_foreign"])
+                if amount <= 0: raise ValueError("المبلغ يجب أن يكون أكبر من صفر.")
+                rate=Decimal(request.form.get("exchange_rate") or "0")
+                if rate <= 0:
+                    rate=latest_exchange_rate(ba["currency_code"],trans_date) or Decimal("0")
+                if rate <= 0: raise ValueError("لا يوجد سعر صرف صالح لهذه العملة والتاريخ.")
+                base=(amount*rate).quantize(Decimal("0.01"))
+                dest_id=request.form.get("destination_bank_account_id") or None
+                dest_amount=None; dest_rate=None
+                if request.form["transaction_type"] == "تحويل":
+                    dest=row("SELECT * FROM bank_accounts WHERE id=:id AND active=1",{"id":dest_id})
+                    if not dest: raise ValueError("حدد حسابًا بنكيًا وجهة صالحًا.")
+                    dest_rate=latest_exchange_rate(dest["currency_code"],trans_date)
+                    if not dest_rate: raise ValueError("لا يوجد سعر صرف لعملة حساب الوجهة.")
+                    dest_amount=(base/dest_rate).quantize(Decimal("0.0001"))
+                no=bank_transaction_number(trans_date)
+                execute("""INSERT INTO bank_transactions(transaction_no,transaction_date,transaction_type,bank_account_id,
+                  destination_bank_account_id,counter_account_id,amount_foreign,currency_code,exchange_rate,amount_base,
+                  destination_amount_foreign,destination_exchange_rate,reference,description,cost_center_id,status,posting_status,created_by)
+                  VALUES(:no,:dt,:typ,:ba,:dest,:counter,:amt,:cur,:rate,:base,:damt,:drate,:ref,:des,:cc,:status,'غير مرحّل',:uid)""",
+                  {"no":no,"dt":trans_date,"typ":request.form["transaction_type"],"ba":ba["id"],"dest":dest_id,"counter":request.form.get("counter_account_id") or None,"amt":amount,"cur":ba["currency_code"],"rate":rate,"base":base,"damt":dest_amount,"drate":dest_rate,"ref":request.form.get("reference",""),"des":request.form.get("description",""),"cc":request.form.get("cost_center_id") or None,"status":request.form.get("status","مسودة"),"uid":session.get("user_id")})
+                tid=row("SELECT id FROM bank_transactions WHERE transaction_no=:n",{"n":no})["id"]
+                if request.form.get("status") == "معتمد": post_bank_transaction(tid)
+                flash(f"تم حفظ الحركة البنكية {no}.","success")
+            return redirect(url_for("banking_center"))
+        except Exception as exc:
+            db.session.rollback(); flash(str(exc),"danger")
+    base_currency=get_base_currency()
+    banks=rows("SELECT * FROM banks WHERE active=1 ORDER BY name_ar")
+    currencies=rows("SELECT * FROM currencies WHERE active=1 ORDER BY code")
+    accounts=rows("""SELECT ba.*,b.name_ar bank_name,coa.account_code,coa.account_name_ar,
+      COALESCE(ba.opening_balance_foreign,0)+COALESCE((SELECT SUM(CASE WHEN bt.transaction_type='إيداع' THEN bt.amount_foreign WHEN bt.transaction_type IN ('سحب','تحويل') THEN -bt.amount_foreign ELSE 0 END) FROM bank_transactions bt WHERE bt.bank_account_id=ba.id AND bt.status='معتمد'),0)
+      +COALESCE((SELECT SUM(bt.destination_amount_foreign) FROM bank_transactions bt WHERE bt.destination_bank_account_id=ba.id AND bt.status='معتمد'),0) balance_foreign,
+      COALESCE(ba.opening_balance_base,0)+COALESCE((SELECT SUM(CASE WHEN bt.transaction_type='إيداع' THEN bt.amount_base WHEN bt.transaction_type IN ('سحب','تحويل') THEN -bt.amount_base ELSE 0 END) FROM bank_transactions bt WHERE bt.bank_account_id=ba.id AND bt.status='معتمد'),0)
+      +COALESCE((SELECT SUM(bt.amount_base) FROM bank_transactions bt WHERE bt.destination_bank_account_id=ba.id AND bt.status='معتمد'),0) balance_base
+      FROM bank_accounts ba JOIN banks b ON b.id=ba.bank_id JOIN chart_of_accounts coa ON coa.id=ba.ledger_account_id ORDER BY b.name_ar,ba.currency_code""")
+    transactions=rows("""SELECT bt.*,b.name_ar bank_name,ba.account_name,db.name_ar destination_bank_name,dba.account_name destination_account_name,j.journal_no
+      FROM bank_transactions bt JOIN bank_accounts ba ON ba.id=bt.bank_account_id JOIN banks b ON b.id=ba.bank_id
+      LEFT JOIN bank_accounts dba ON dba.id=bt.destination_bank_account_id LEFT JOIN banks db ON db.id=dba.bank_id
+      LEFT JOIN journal_entries j ON j.id=bt.journal_id ORDER BY bt.transaction_date DESC,bt.id DESC LIMIT 200""")
+    return render_template("banking_center.html",banks=banks,currencies=currencies,bank_accounts=accounts,transactions=transactions,
+      ledger_accounts=rows("SELECT id,account_code,account_name_ar,account_type FROM chart_of_accounts WHERE active=1 AND accepts_entries=1 ORDER BY account_code"),
+      centers=rows("SELECT id,code,name FROM cost_centers WHERE active=1 ORDER BY code"),base_currency=base_currency,today=date.today().isoformat())
+
+
+@app.route("/banking/transaction/<int:transaction_id>/post",methods=["POST"])
+@login_required
+def banking_transaction_post(transaction_id):
+    try: post_bank_transaction(transaction_id); flash("تم ترحيل الحركة البنكية.","success")
+    except Exception as exc: db.session.rollback(); flash(str(exc),"danger")
+    return redirect(url_for("banking_center"))
 
 @app.route("/treasury", methods=["GET","POST"])
 @login_required

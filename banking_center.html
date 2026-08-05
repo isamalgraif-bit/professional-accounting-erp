@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+{% block title %}إدارة البنوك والعملات{% endblock %}
+{% block content %}
+<div class="page-header"><div><h1>إدارة البنوك والعملات</h1><p>الحسابات البنكية متعددة العملات والحركات المحاسبية</p></div></div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-4"><div class="card h-100"><div class="card-body"><h5>إضافة بنك</h5>
+    <form method="post"><input type="hidden" name="action" value="add_bank">
+      <label>كود البنك</label><input class="form-control mb-2" name="bank_code" required>
+      <label>اسم البنك</label><input class="form-control mb-2" name="name_ar" required>
+      <label>الاسم الإنجليزي</label><input class="form-control mb-2" name="name_en">
+      <label>SWIFT</label><input class="form-control mb-2" name="swift_code">
+      <label>الدولة</label><input class="form-control mb-2" name="country">
+      <button class="btn btn-primary w-100">حفظ البنك</button>
+    </form>
+  </div></div></div>
+  <div class="col-lg-4"><div class="card h-100"><div class="card-body"><h5>سعر صرف</h5>
+    <form method="post"><input type="hidden" name="action" value="add_currency_rate">
+      <label>العملة</label><select class="form-select searchable-select mb-2" name="currency_code" required>{% for c in currencies %}<option value="{{c.code}}">{{c.code}} - {{c.name_ar}}</option>{% endfor %}</select>
+      <label>التاريخ</label><input class="form-control mb-2" type="date" name="rate_date" value="{{today}}" required>
+      <label>سعر الوحدة مقابل {{base_currency}}</label><input class="form-control mb-2" type="number" step="0.00000001" min="0.00000001" name="rate_to_base" required>
+      <label>المصدر</label><input class="form-control mb-2" name="source" value="يدوي">
+      <button class="btn btn-primary w-100">حفظ سعر الصرف</button>
+    </form>
+  </div></div></div>
+  <div class="col-lg-4"><div class="card h-100"><div class="card-body"><h5>إضافة حساب بنكي</h5>
+    <form method="post"><input type="hidden" name="action" value="add_bank_account">
+      <label>البنك</label><select class="form-select searchable-select mb-2" name="bank_id" required>{% for b in banks %}<option value="{{b.id}}">{{b.name_ar}}</option>{% endfor %}</select>
+      <label>اسم الحساب</label><input class="form-control mb-2" name="account_name" required>
+      <label>رقم الحساب</label><input class="form-control mb-2" name="account_number" required>
+      <label>IBAN</label><input class="form-control mb-2" name="iban">
+      <label>العملة</label><select class="form-select searchable-select mb-2" name="currency_code" required>{% for c in currencies %}<option value="{{c.code}}">{{c.code}} - {{c.name_ar}}</option>{% endfor %}</select>
+      <label>الحساب في دليل الحسابات</label><select class="form-select searchable-select mb-2" name="ledger_account_id" required>{% for a in ledger_accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select>
+      <label>الرصيد الافتتاحي بالعملة</label><input class="form-control mb-2" type="number" step="0.0001" name="opening_balance_foreign" value="0">
+      <button class="btn btn-primary w-100">حفظ وربط الحساب</button>
+    </form>
+  </div></div></div>
+</div>
+
+<div class="card mb-4"><div class="card-body"><h5>تسجيل حركة بنكية</h5>
+<form method="post" id="bankTxForm"><input type="hidden" name="action" value="add_transaction">
+<div class="row g-2">
+  <div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="transaction_date" value="{{today}}" required></div>
+  <div class="col-md-2"><label>نوع الحركة</label><select class="form-select" name="transaction_type" id="txType"><option>إيداع</option><option>سحب</option><option>تحويل</option></select></div>
+  <div class="col-md-4"><label>الحساب البنكي</label><select class="form-select searchable-select" name="bank_account_id" id="sourceBank" required>{% for a in bank_accounts %}<option value="{{a.id}}" data-currency="{{a.currency_code}}">{{a.bank_name}} - {{a.account_name}} ({{a.currency_code}})</option>{% endfor %}</select></div>
+  <div class="col-md-4" id="destWrap" style="display:none"><label>الحساب البنكي الوجهة</label><select class="form-select searchable-select" name="destination_bank_account_id">{% for a in bank_accounts %}<option value="{{a.id}}">{{a.bank_name}} - {{a.account_name}} ({{a.currency_code}})</option>{% endfor %}</select></div>
+  <div class="col-md-4" id="counterWrap"><label>الحساب المقابل</label><select class="form-select searchable-select" name="counter_account_id">{% for a in ledger_accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+  <div class="col-md-2"><label>المبلغ بالعملة</label><input class="form-control" type="number" step="0.0001" min="0.0001" name="amount_foreign" required></div>
+  <div class="col-md-2"><label>سعر الصرف</label><input class="form-control" type="number" step="0.00000001" min="0" name="exchange_rate" placeholder="تلقائي"></div>
+  <div class="col-md-3"><label>المرجع</label><input class="form-control" name="reference"></div>
+  <div class="col-md-3"><label>مركز التكلفة</label><select class="form-select searchable-select" name="cost_center_id"><option value="">بدون</option>{% for c in centers %}<option value="{{c.id}}">{{c.code}} - {{c.name}}</option>{% endfor %}</select></div>
+  <div class="col-md-8"><label>البيان</label><input class="form-control" name="description" required></div>
+  <div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>مسودة</option><option>معتمد</option></select></div>
+  <div class="col-md-2 d-flex align-items-end"><button class="btn btn-success w-100">حفظ الحركة</button></div>
+</div></form></div></div>
+
+<div class="card mb-4"><div class="card-body"><h5>أرصدة الحسابات البنكية</h5><div class="table-responsive"><table class="table table-striped">
+<thead><tr><th>البنك</th><th>الحساب</th><th>العملة</th><th>الحساب المحاسبي</th><th>الرصيد بالعملة</th><th>الرصيد بـ {{base_currency}}</th></tr></thead>
+<tbody>{% for a in bank_accounts %}<tr><td>{{a.bank_name}}</td><td>{{a.account_name}}<br><small>{{a.account_number}}</small></td><td>{{a.currency_code}}</td><td>{{a.account_code}} - {{a.account_name_ar}}</td><td>{{'%.4f'|format(a.balance_foreign or 0)}}</td><td>{{'%.2f'|format(a.balance_base or 0)}}</td></tr>{% else %}<tr><td colspan="6" class="text-center">لا توجد حسابات بنكية</td></tr>{% endfor %}</tbody>
+</table></div></div></div>
+
+<div class="card"><div class="card-body"><h5>سجل الحركات</h5><div class="table-responsive"><table class="table table-hover">
+<thead><tr><th>الرقم</th><th>التاريخ</th><th>النوع</th><th>الحساب</th><th>المبلغ</th><th>سعر الصرف</th><th>الأساسي</th><th>الوجهة</th><th>الحالة</th><th>القيد</th></tr></thead>
+<tbody>{% for t in transactions %}<tr><td>{{t.transaction_no}}</td><td>{{t.transaction_date}}</td><td>{{t.transaction_type}}</td><td>{{t.bank_name}} - {{t.account_name}}</td><td>{{t.amount_foreign}} {{t.currency_code}}</td><td>{{t.exchange_rate}}</td><td>{{t.amount_base}} {{base_currency}}</td><td>{% if t.destination_account_name %}{{t.destination_bank_name}} - {{t.destination_account_name}}<br>{{t.destination_amount_foreign}}{% else %}-{% endif %}</td><td>{{t.status}} / {{t.posting_status}}</td><td>{% if t.journal_no %}{{t.journal_no}}{% elif t.status!='معتمد' %}<form method="post" action="{{url_for('banking_transaction_post',transaction_id=t.id)}}"><button class="btn btn-sm btn-primary">ترحيل</button></form>{% else %}-{% endif %}</td></tr>{% else %}<tr><td colspan="10" class="text-center">لا توجد حركات</td></tr>{% endfor %}</tbody>
+</table></div></div></div>
+<script>
+(function(){const type=document.getElementById('txType'),dest=document.getElementById('destWrap'),counter=document.getElementById('counterWrap');function toggle(){const tr=type.value==='تحويل';dest.style.display=tr?'block':'none';counter.style.display=tr?'none':'block';}type.addEventListener('change',toggle);toggle();})();
+</script>
+{% endblock %}
