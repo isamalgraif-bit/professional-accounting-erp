@@ -363,10 +363,8 @@ def post_invoice_to_ledger(invoice_id):
                  JOIN customers c ON c.id=i.customer_id WHERE i.id=:id""",{"id":invoice_id})
     if not inv: raise ValueError("الفاتورة غير موجودة.")
     if inv.get("journal_id"): return inv["journal_id"]
-    a = require_accounts(["sales_account_id","vat_output_account_id"])
-    customer_account_id = inv.get("customer_linked_account_id")
-    if not customer_account_id:
-        raise ValueError("العميل غير مربوط بحساب في دليل الحسابات. افتح بطاقة العميل وحدد حساب الذمم المدينة.")
+    a = require_accounts(["customer_account_id","sales_account_id","vat_output_account_id"])
+    customer_account_id = inv.get("customer_linked_account_id") or a["customer_account_id"]
     lines = [
       {"account_id":customer_account_id,"debit":inv["total"],"customer_id":inv["customer_id"],
        "party_type":"عميل","tax_number":inv["customer_vat"] or "","invoice_number":inv["invoice_no"],
@@ -2733,15 +2731,37 @@ def create_quick_entity(entity, payload):
                      {"code":code,"name":name})
         if existing:
             raise ValueError("المادة موجودة مسبقًا.")
+        opening_quantity=round(float(payload.get("quantity") or 0),3)
+        cost=round(float(payload.get("unit_cost") or 0),4)
+        if opening_quantity < 0:
+            raise ValueError("الرصيد الافتتاحي لا يمكن أن يكون سالبًا.")
+        warehouse=None
+        if opening_quantity > 0:
+            requested_warehouse=payload.get("warehouse_id")
+            if requested_warehouse:
+                warehouse=row("SELECT id FROM warehouses WHERE id=:id AND active=1",
+                              {"id":requested_warehouse})
+            if not warehouse:
+                warehouse=row("SELECT id FROM warehouses WHERE code='WH-001' AND active=1 LIMIT 1")
+            if not warehouse:
+                warehouse=row("SELECT id FROM warehouses WHERE active=1 ORDER BY id LIMIT 1")
+            if not warehouse:
+                raise ValueError("لا يوجد مستودع نشط لتسجيل الرصيد الافتتاحي.")
         execute("""INSERT INTO inventory(code,sku,name,description,unit,quantity,unit_cost,cost,
           reorder_level,active)
-          VALUES(:code,:code,:name,:description,:unit,:quantity,:cost,:cost,:reorder,1)""",
+          VALUES(:code,:code,:name,:description,:unit,0,:cost,:cost,:reorder,1)""",
           {"code":code,"name":name,"description":payload.get("description",""),
            "unit":normalize_item_unit(payload.get("unit")),
-           "quantity":float(payload.get("quantity") or 0),
-           "cost":float(payload.get("unit_cost") or 0),
+           "cost":cost,
            "reorder":float(payload.get("reorder_level") or 0)})
         new_id=row("SELECT id FROM inventory WHERE code=:code",{"code":code})["id"]
+        if opening_quantity > 0:
+            record_inventory_movement(
+                datetime.now().date().isoformat(),"رصيد افتتاحي",new_id,warehouse["id"],
+                opening_quantity,cost,reference_type="OPENING_BALANCE",
+                reference_id=new_id,reference_no=code,
+                notes="رصيد افتتاحي من الإنشاء السريع"
+            )
         return "items",smart_entity_row("items",new_id)
     raise ValueError("نوع السجل غير مدعوم.")
 
@@ -4577,7 +4597,7 @@ def logout():
 @login_required
 def dashboard():
     sales = row("SELECT COALESCE(SUM(total),0) s FROM invoices WHERE status='معتمدة'")["s"]
-    expenses_total = row("SELECT COALESCE(SUM(total),0) s FROM expenses")["s"]
+    expenses_total = row("SELECT COALESCE(SUM(amount),0) s FROM expenses")["s"]
     customers_count = row("SELECT COUNT(*) c FROM customers")["c"]
     employees_count = row("SELECT COUNT(*) c FROM employees WHERE active=1")["c"]
     recent = rows("""
@@ -6228,7 +6248,7 @@ def module_edit(module_name, record_id):
         assignments = ", ".join([f"{f}=:{f}" for f in cfg["fields"]])
         params = {"id": record_id}
         for field in cfg["fields"]:
-            value = request.form.get(field, "")
+            value = request.form.get(field, record.get(field) if field in ("phone", "email") else "")
             if field in ("quantity", "cost", "sale_price", "reorder_level", "basic_salary", "allowances"):
                 value = float(value or 0)
             elif field == "active":
