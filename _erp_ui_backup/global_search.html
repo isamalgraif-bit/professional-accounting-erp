@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block content %}
+<div class="erp-page-title"><div><h3>البحث الشامل</h3><small>Global Search</small></div></div>
+<form method="get" class="form-card mb-4"><div class="input-group"><input class="form-control form-control-lg" name="q" value="{{q}}" placeholder="اكتب اسم العميل أو المورد أو رقم الفاتورة أو المشروع أو الموظف"><button class="btn btn-primary">بحث</button></div></form>
+{% if q %}
+{% for title,items in grouped.items() %}
+<div class="form-card mb-3"><h5>{{title}} <span class="badge bg-secondary">{{items|length}}</span></h5>
+<div class="list-group">{% for r in items %}
+{% set link = url_for('invoice_view',invoice_id=r.id) if r.result_type=='invoice'
+ else url_for('project_view',project_id=r.id) if r.result_type=='project'
+ else url_for('hr_employee_profile',employee_id=r.id) if r.result_type=='employee'
+ else url_for('customers') if r.result_type=='customer'
+ else url_for('suppliers') if r.result_type=='supplier'
+ else url_for('inventory') %}
+<a class="list-group-item list-group-item-action" href="{{link}}"><b>{{r.code or '-'}}</b> — {{r.name}}</a>
+{% else %}<div class="text-muted">لا توجد نتائج.</div>{% endfor %}</div></div>
+{% endfor %}
+{% endif %}{% endblock %}
