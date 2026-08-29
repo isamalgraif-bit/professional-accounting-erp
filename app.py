@@ -5628,6 +5628,19 @@ def cost_centers():
     return render_template("cost_centers.html",
         centers=rows("SELECT * FROM cost_centers ORDER BY code"))
 
+def journal_navigation(journal_id=None):
+    """Read-only navigator for journal review screens."""
+    first = row("SELECT id,journal_no FROM journal_entries ORDER BY id ASC LIMIT 1")
+    last = row("SELECT id,journal_no FROM journal_entries ORDER BY id DESC LIMIT 1")
+    previous = next_record = None
+    if journal_id:
+        previous = row("""SELECT id,journal_no FROM journal_entries
+                          WHERE id < :id ORDER BY id DESC LIMIT 1""", {"id": journal_id})
+        next_record = row("""SELECT id,journal_no FROM journal_entries
+                             WHERE id > :id ORDER BY id ASC LIMIT 1""", {"id": journal_id})
+    return {"first": first, "previous": previous, "next": next_record, "last": last}
+
+
 @app.route("/journal-entries", methods=["GET","POST"])
 @login_required
 def journal_entries():
@@ -5834,6 +5847,21 @@ def journal_entries():
         if request.form.get("print_after_save") == "1":
             return redirect(url_for("journal_view", journal_id=journal_id, print=1))
         return redirect(url_for("journal_entries", edit_id=journal_id))
+    journal_no_lookup = request.args.get("journal_no", "").strip()
+    if journal_no_lookup:
+        found_journal = row("""SELECT id,journal_no FROM journal_entries
+                               WHERE LOWER(journal_no)=LOWER(:no)
+                               ORDER BY id DESC LIMIT 1""", {"no": journal_no_lookup})
+        if not found_journal:
+            # Friendly fallback for users who type only part of the number.
+            found_journal = row("""SELECT id,journal_no FROM journal_entries
+                                   WHERE journal_no ILIKE :no
+                                   ORDER BY id DESC LIMIT 1""", {"no": f"%{journal_no_lookup}%"})
+        if found_journal:
+            return redirect(url_for("journal_entries", edit_id=found_journal["id"]))
+        flash(f"لم يتم العثور على القيد رقم {journal_no_lookup}", "warning")
+        return redirect(url_for("journal_entries"))
+
     q = request.args.get("q", "").strip()
     edit_id = request.args.get("edit_id", type=int)
     edit_journal = row("SELECT * FROM journal_entries WHERE id=:id", {"id": edit_id}) if edit_id else None
@@ -5850,6 +5878,7 @@ def journal_entries():
     return render_template("journal_entries.html",
         journals=rows(f"SELECT * FROM journal_entries {journal_where} ORDER BY journal_date DESC,id DESC", journal_params),
         q=q, edit_journal=edit_journal, edit_lines=edit_lines,
+        journal_nav=journal_navigation(edit_id),
         accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
                          WHERE active=1 AND accepts_entries=1 ORDER BY account_code"""),
         suppliers=rows("SELECT id,name,vat_number FROM suppliers ORDER BY name"),
@@ -6057,7 +6086,8 @@ def journal_view(journal_id):
         WHERE l.journal_id=:id ORDER BY l.id
     """, {"id": journal_id})
     company = row("SELECT * FROM settings WHERE id=1")
-    return render_template("journal_view.html", journal=journal, lines=lines, company=company)
+    return render_template("journal_view.html", journal=journal, lines=lines, company=company,
+                           journal_nav=journal_navigation(journal_id))
 
 @app.route("/journal-entries/<int:journal_id>/delete", methods=["POST"])
 @login_required

@@ -2,25 +2,65 @@
 {% block content %}
 
 <div class="erp-sticky-header">
-  <div>
-    <h3 class="mb-1">قيود اليومية</h3>
-    <small class="text-muted">General Journal</small>
+  <div class="journal-heading">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <h3 class="mb-0">قيد يومية</h3>
+      {% if edit_journal %}
+        <span class="journal-number-badge">رقم القيد: <strong>{{edit_journal.journal_no}}</strong></span>
+        <span class="journal-status-badge {{'posted' if edit_journal.status=='مرحّل' else 'draft'}}">{{edit_journal.status}}</span>
+      {% else %}
+        <span class="journal-number-badge new">قيد جديد — الرقم يُنشأ عند الحفظ</span>
+      {% endif %}
+    </div>
+    <small class="text-muted">إدخال ومراجعة القيود اليومية بسرعة</small>
   </div>
+
   <div class="erp-toolbar no-print">
-    <button type="button" class="erp-tool-btn" data-new-document="1" data-new-url="{{ url_for('journal_entries') }}">📄 <span>مستند جديد</span></button>
-    <button type="button" class="erp-tool-btn primary" id="saveJournalTop" title="حفظ — Ctrl+S">💾 <span>{{'تعديل وحفظ' if edit_journal else 'حفظ'}}</span></button>
+    <button type="button" class="erp-tool-btn" data-new-document="1" data-new-url="{{ url_for('journal_entries') }}">📄 <span>جديد</span></button>
+    <button type="button" class="erp-tool-btn primary" id="saveJournalTop" title="حفظ — Ctrl+S">💾 <span>{{'حفظ التعديل' if edit_journal else 'حفظ'}}</span></button>
     <button type="button" class="erp-tool-btn success" id="postJournalTop">✅ <span>حفظ وترحيل</span></button>
-    <button type="button" class="erp-tool-btn dark" id="savePrintJournal">🖨️ <span>حفظ وطباعة</span></button>
-    <button type="button" class="erp-tool-btn" id="previewJournal">👁️ <span>معاينة المسودة</span></button>
-    <a class="erp-tool-btn success" href="{{ url_for('journal_export', q=q) }}">📊 <span>Excel</span></a>
+    <details class="journal-more">
+      <summary class="erp-tool-btn">⋯ <span>المزيد</span></summary>
+      <div class="journal-more-menu">
+        <button type="button" id="savePrintJournal">🖨️ حفظ وطباعة</button>
+        <button type="button" id="previewJournal">👁️ معاينة المسودة</button>
+        <a href="{{ url_for('journal_export', q=q) }}">📊 Excel</a>
+      </div>
+    </details>
   </div>
 </div>
+
+<div class="journal-navigator form-card mb-3 no-print">
+  <form method="get" class="journal-number-search">
+    <label for="journalNoLookup">فتح قيد برقم القيد</label>
+    <div class="input-group">
+      <input class="form-control" id="journalNoLookup" name="journal_no" autocomplete="off"
+             placeholder="مثال: JE-2026-000001">
+      <button class="btn btn-primary" type="submit">فتح</button>
+    </div>
+  </form>
+  <div class="journal-nav-buttons" aria-label="التنقل بين القيود">
+    {% if journal_nav.first %}
+      <a class="btn btn-outline-secondary" title="أول قيد" href="{{url_for('journal_entries',edit_id=journal_nav.first.id)}}">⏮ الأول</a>
+    {% else %}<button class="btn btn-outline-secondary" disabled>⏮ الأول</button>{% endif %}
+    {% if journal_nav.previous %}
+      <a class="btn btn-outline-primary" title="القيد السابق" href="{{url_for('journal_entries',edit_id=journal_nav.previous.id)}}">‹ السابق</a>
+    {% else %}<button class="btn btn-outline-primary" disabled>‹ السابق</button>{% endif %}
+    {% if journal_nav.next %}
+      <a class="btn btn-outline-primary" title="القيد التالي" href="{{url_for('journal_entries',edit_id=journal_nav.next.id)}}">التالي ›</a>
+    {% else %}<button class="btn btn-outline-primary" disabled>التالي ›</button>{% endif %}
+    {% if journal_nav.last %}
+      <a class="btn btn-outline-secondary" title="آخر قيد" href="{{url_for('journal_entries',edit_id=journal_nav.last.id)}}">الأخير ⏭</a>
+    {% else %}<button class="btn btn-outline-secondary" disabled>الأخير ⏭</button>{% endif %}
+  </div>
+</div>
+
 <form method="get" class="form-card mb-4">
 <div class="row g-2">
   <div class="col-md-8">
-    <input class="form-control" name="q" value="{{q or ''}}" placeholder="بحث برقم القيد أو البيان أو المرجع">
+    <input class="form-control" name="q" value="{{q or ''}}" placeholder="تصفية القائمة: رقم القيد أو البيان أو المرجع">
   </div>
-  <div class="col-md-2"><button class="btn btn-primary w-100">بحث</button></div>
+  <div class="col-md-2"><button class="btn btn-outline-primary w-100">تصفية القائمة</button></div>
   <div class="col-md-2"><a class="btn btn-outline-secondary w-100" href="{{url_for('journal_entries')}}">مسح</a></div>
 </div>
 </form>
@@ -34,7 +74,11 @@
   هذا القيد مرحّل. عند الضغط على «تعديل وحفظ» سيتم تحديث أثره مباشرة في الأستاذ العام وميزان المراجعة مع بقائه بحالة «مرحّل».
 </div>
 {% endif %}
-<div class="row g-3 mb-3">
+<div class="row g-3 mb-3 journal-meta-grid">
+  <div class="col-md-2">
+    <label class="form-label">رقم القيد</label>
+    <input class="form-control fw-bold" value="{{edit_journal.journal_no if edit_journal else 'يُنشأ تلقائيًا'}}" readonly>
+  </div>
   <div class="col-md-2">
     <label class="form-label">تاريخ القيد</label>
     <input class="form-control" type="date" name="journal_date" id="journalDate" value="{{edit_journal.journal_date if edit_journal else ''}}" required>
@@ -43,11 +87,11 @@
     <label class="form-label">الحالة</label>
     <select class="form-select" name="status" id="journalStatus"><option {% if not edit_journal or edit_journal.status=='مسودة' %}selected{% endif %}>مسودة</option><option {% if edit_journal and edit_journal.status=='مرحّل' %}selected{% endif %}>مرحّل</option></select>
   </div>
-  <div class="col-md-3">
+  <div class="col-md-2">
     <label class="form-label">المرجع</label>
     <input class="form-control" name="reference" value="{{edit_journal.reference if edit_journal else ''}}">
   </div>
-  <div class="col-md-5">
+  <div class="col-md-4">
     <label class="form-label">البيان العام</label>
     <input class="form-control" name="description" value="{{edit_journal.description if edit_journal else ''}}">
   </div>
@@ -175,9 +219,8 @@
   </div>
 </div>
 
-<div class="mt-4 text-end">
-  <button class="btn btn-primary btn-lg" id="saveJournalBottom">💾 {{'تعديل وحفظ' if edit_journal else 'حفظ القيد'}}</button>
-  <button type="button" class="btn btn-success btn-lg" id="postJournalBottom">✅ حفظ وترحيل</button>
+<div class="mt-4 d-flex justify-content-end no-print">
+  <button type="button" class="btn btn-success" id="postJournalBottom">✅ حفظ وترحيل</button>
 </div>
 </form>
 </div>
@@ -202,7 +245,7 @@
 {% for j in journals %}
 <tr>
   <td class="no-print">{% if j.status != 'مرحّل' %}<input type="checkbox" name="journal_ids[]" value="{{j.id}}" class="journal-check">{% endif %}</td>
-  <td>{{j.journal_no}}</td>
+  <td><a class="journal-no-link" href="{{url_for('journal_entries',edit_id=j.id)}}">{{j.journal_no}}</a></td>
   <td>{{j.journal_date}}</td>
   <td>{{j.description}}</td>
   <td>{{"%.2f"|format(j.total_debit)}}</td>
@@ -224,6 +267,13 @@
 
 
 <style>
+
+.journal-heading{min-width:260px}.journal-number-badge{display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border:1px solid #bfd2f5;background:#eef5ff;color:#174ea6;border-radius:9px;font-size:12px}.journal-number-badge.new{color:#64748b;background:#f8fafc;border-color:#dbe3ec}.journal-status-badge{padding:4px 9px;border-radius:999px;font-size:11px;font-weight:800}.journal-status-badge.posted{background:#dcfce7;color:#166534}.journal-status-badge.draft{background:#fef3c7;color:#92400e}
+.journal-navigator{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:18px;align-items:end;padding:12px 14px}.journal-number-search label{display:block;font-size:12px;font-weight:800;color:#475569;margin-bottom:6px}.journal-nav-buttons{display:flex;gap:6px;flex-wrap:wrap}.journal-nav-buttons .btn{min-width:82px}
+.journal-more{position:relative}.journal-more>summary{list-style:none}.journal-more>summary::-webkit-details-marker{display:none}.journal-more-menu{position:absolute;left:0;top:calc(100% + 6px);z-index:1200;min-width:180px;background:#fff;border:1px solid #dbe3ec;border-radius:10px;box-shadow:0 14px 32px rgba(15,23,42,.16);padding:6px}.journal-more-menu button,.journal-more-menu a{display:block;width:100%;text-align:right;border:0;background:transparent;padding:9px 10px;border-radius:7px;text-decoration:none;color:#334155;font-size:12px}.journal-more-menu button:hover,.journal-more-menu a:hover{background:#eef4ff}
+.journal-no-link{font-weight:800;color:#174ea6;text-decoration:none}.journal-no-link:hover{text-decoration:underline}
+@media(max-width:900px){.journal-navigator{grid-template-columns:1fr}.journal-nav-buttons{justify-content:stretch}.journal-nav-buttons .btn{flex:1}}
+
 .erp-sticky-header{
   position:sticky;top:0;z-index:50;
   display:flex;align-items:center;justify-content:space-between;gap:16px;
@@ -538,6 +588,18 @@ document.addEventListener('keydown',e=>{
     e.preventDefault();
     window.print();
   }
+  if(e.ctrlKey && e.key.toLowerCase()==='g'){
+    e.preventDefault();
+    document.getElementById('journalNoLookup')?.focus();
+  }
+  if(e.altKey && e.key==='ArrowLeft'){
+    const prev=document.querySelector('.journal-nav-buttons a[title="القيد السابق"]');
+    if(prev){e.preventDefault();location.href=prev.href;}
+  }
+  if(e.altKey && e.key==='ArrowRight'){
+    const next=document.querySelector('.journal-nav-buttons a[title="القيد التالي"]');
+    if(next){e.preventDefault();location.href=next.href;}
+  }
   if(e.key==='Enter' && e.target.matches('input,select')){
     const fields=[...document.querySelectorAll('#journalForm input:not([type="hidden"]),#journalForm select,#journalForm button')].filter(x=>!x.disabled&&x.offsetParent!==null);
     const idx=fields.indexOf(e.target);
@@ -554,7 +616,6 @@ document.getElementById('saveJournalTop')?.addEventListener('click',()=>submitJo
 document.getElementById('savePrintJournal')?.addEventListener('click',()=>submitJournal(true));
 document.getElementById('postJournalTop')?.addEventListener('click',()=>submitJournal(false,true));
 document.getElementById('postJournalBottom')?.addEventListener('click',()=>submitJournal(false,true));
-document.getElementById('addJournalRowTop')?.addEventListener('click',()=>document.getElementById('addRow')?.click());
 
 function journalEsc(v){
   return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
