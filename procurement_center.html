@@ -1,4 +1,5 @@
 {% extends "base.html" %}{% block content %}
+<div class="erp-module-page">
 <div class="erp-page-title"><div><h3>دورة المشتريات</h3><small class="text-muted">Procure-to-Pay</small></div></div>
 <div class="row g-3">
 {% for title,desc,url,count in [
@@ -9,4 +10,5 @@
 ] %}
 <div class="col-md-3"><a href="{{url}}" class="form-card d-block text-decoration-none text-dark h-100">
 <h5>{{title}}</h5><p class="text-muted">{{desc}}</p><h2>{{count}}</h2></a></div>{% endfor %}
-</div>{% endblock %}
+</div></div>
+{% endblock %}

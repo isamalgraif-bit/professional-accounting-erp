@@ -20,7 +20,7 @@
 <div class="col-md-3 d-flex align-items-end gap-3"><label><input type="checkbox" name="track_batch"> تشغيلات</label><label><input type="checkbox" name="track_serial"> سيريال</label><label><input type="checkbox" name="track_expiry"> صلاحية</label></div>
 <div class="col-12 text-end"><button class="btn btn-primary">💾 حفظ بطاقة الصنف</button></div>
 </div></form></div>
-<div class="form-card"><div class="table-responsive"><table class="table table-striped align-middle">
+<div class="form-card"><div class="table-responsive"><table data-erp-list-type="inventory" class="table table-striped align-middle">
 <thead><tr><th>الكود</th><th>الصنف</th><th>English</th><th>الرصيد</th><th>الوحدة</th><th>متوسط التكلفة</th><th>القيمة</th><th>إعادة الطلب</th><th>الحالة</th><th></th></tr></thead>
 <tbody>{% for r in rows %}<tr class="{{'table-warning' if r.stock_qty<=r.reorder_level else ''}}">
 <td>{{r.sku or '-'}}</td><td>{{r.name}}</td><td>{{r.name_en or '-'}}</td><td>{{"%.3f"|format(r.stock_qty)}}</td><td>{{r.unit}}</td><td>{{"%.4f"|format(r.cost)}}</td><td>{{"%.2f"|format(r.stock_qty*r.cost)}}</td><td>{{r.reorder_level}}</td><td>{{'نشط' if r.active else 'موقوف'}}</td><td><a class="btn btn-sm btn-primary" href="{{url_for('inventory_item_view',item_id=r.id)}}">عرض</a></td>

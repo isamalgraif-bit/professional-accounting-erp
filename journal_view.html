@@ -31,6 +31,8 @@ body{font-family:Tahoma,Arial,sans-serif;margin:0;background:#eee;color:#111}
 .signature{text-align:center;font-weight:bold}
 .signature-line{border-bottom:1px dotted #777;height:55px;margin-top:8px}
 .footer-note{margin-top:18px;font-size:10px;color:#666;text-align:left}
+.summary-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}.summary-card{border:1px solid #d8e0eb;border-radius:10px;padding:10px 12px;background:#f8fafc}.summary-card small{display:block;color:#64748b;margin-bottom:5px}.summary-card strong{font-size:16px}.summary-card.difference strong{color:{% if journal.total_debit==journal.total_credit %}#087f5b{% else %}#b42318{% endif %}}
+.related-docs{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}.related-docs a{padding:7px 10px;border:1px solid #cbd5e1;border-radius:8px;color:#174ea6;text-decoration:none;background:#fff}.status-badge{display:inline-block;padding:4px 9px;border-radius:999px;background:#e8f8f1;color:#087f5b;font-weight:bold}.account-link{color:#174ea6;text-decoration:none;font-weight:700}.account-link:hover{text-decoration:underline}
 .logo{max-width:110px;max-height:65px;object-fit:contain}
 @media print{
   body{background:#fff}
@@ -75,10 +77,16 @@ body{font-family:Tahoma,Arial,sans-serif;margin:0;background:#eee;color:#111}
     <div><b>المرجع:</b> {{journal.reference or '-'}}</div>
     <div><b>الوصف:</b> {{journal.description or '-'}}</div>
   </div>
+  <div class="summary-strip">
+    <div class="summary-card"><small>إجمالي المدين</small><strong>{{"%.3f"|format(journal.total_debit)}}</strong></div>
+    <div class="summary-card"><small>إجمالي الدائن</small><strong>{{"%.3f"|format(journal.total_credit)}}</strong></div>
+    <div class="summary-card difference"><small>الفرق</small><strong>{{"%.3f"|format(journal.total_debit-journal.total_credit)}}</strong></div>
+    <div class="summary-card"><small>الحالة</small><strong class="status-badge">{{journal.status or 'مرحل'}}</strong></div>
+  </div>
 
   <table class="main-table">
     <thead>
-      <tr class="statement-row" data-account-id="{{l.account_id}}" data-party-type="{{l.party_type or ''}}" data-customer-id="{{l.customer_id or ''}}" data-supplier-id="{{l.supplier_id or ''}}">
+      <tr>
         <th style="width:8%">كود الجهة</th>
         <th style="width:21%">اسم الجهة / الحساب</th>
         <th style="width:11%">مدين</th>
@@ -90,9 +98,9 @@ body{font-family:Tahoma,Arial,sans-serif;margin:0;background:#eee;color:#111}
     </thead>
     <tbody>
       {% for l in lines %}
-      <tr>
+      <tr class="statement-row" data-account-id="{{l.account_id}}" data-party-type="{{l.party_type or ''}}" data-customer-id="{{l.customer_id or ''}}" data-supplier-id="{{l.supplier_id or ''}}">
         <td>{{l.account_code}}</td>
-        <td>{{l.account_name_ar}}</td>
+        <td><a class="account-link" href="{{url_for('account_view',account_id=l.account_id)}}">{{l.account_name_ar}}</a></td>
         <td>{{"%.3f"|format(l.debit)}}</td>
         <td>{{"%.3f"|format(l.credit)}}</td>
         <td>{{l.tax_direction if l.taxable else '0.000'}}</td>
@@ -132,10 +140,10 @@ document.getElementById('printTime').textContent=now.toLocaleTimeString('en-US')
 {% if request.args.get('print') %}
 window.addEventListener('load',()=>setTimeout(()=>window.print(),350));
 {% endif %}
-const menu=document.createElement('div');menu.className='context-menu';menu.innerHTML='<button>📄 كشف حساب</button>';document.body.appendChild(menu);let selectedRow=null;
+const menu=document.createElement('div');menu.className='context-menu';menu.innerHTML='<button data-a="statement">📄 كشف الحساب / الأستاذ</button><button data-a="account">👁 عرض الحساب</button>';document.body.appendChild(menu);let selectedRow=null;
 document.querySelector('.main-table').addEventListener('contextmenu',event=>{const row=event.target.closest('.statement-row');if(!row)return;event.preventDefault();selectedRow=row;menu.style.left=Math.min(event.clientX,window.innerWidth-190)+'px';menu.style.top=Math.min(event.clientY,window.innerHeight-70)+'px';menu.classList.add('show')});
 document.addEventListener('click',event=>{if(!event.target.closest('.context-menu'))menu.classList.remove('show')});
-menu.addEventListener('click',()=>{if(!selectedRow)return;const type=selectedRow.dataset.partyType;let url='';if(type==='عميل'&&selectedRow.dataset.customerId)url=`{{url_for('party_statements')}}?party_type=customer&party_id=${selectedRow.dataset.customerId}`;else if(type==='مورد'&&selectedRow.dataset.supplierId)url=`{{url_for('party_statements')}}?party_type=supplier&party_id=${selectedRow.dataset.supplierId}`;else url=`{{url_for('accounting_report',slug='ledger-detail')}}?account_id=${selectedRow.dataset.accountId}&status=الكل`;menu.classList.remove('show');window.open(url,'_blank')});
+menu.addEventListener('click',e=>{if(!selectedRow)return;let url='';if(e.target.dataset.a==='account')url=`/chart-of-accounts/${selectedRow.dataset.accountId}`;else{const type=selectedRow.dataset.partyType;if(type==='عميل'&&selectedRow.dataset.customerId)url=`{{url_for('party_statements')}}?party_type=customer&party_id=${selectedRow.dataset.customerId}`;else if(type==='مورد'&&selectedRow.dataset.supplierId)url=`{{url_for('party_statements')}}?party_type=supplier&party_id=${selectedRow.dataset.supplierId}`;else url=`{{url_for('accounting_report',slug='ledger-detail')}}?account_id=${selectedRow.dataset.accountId}&status=الكل`;}menu.classList.remove('show');window.open(url,'_blank')});
 </script>
 <style>.context-menu{display:none;position:fixed;z-index:3000;min-width:175px;background:#fff;border:1px solid #bbb;border-radius:9px;box-shadow:0 10px 30px #0003;padding:6px}.context-menu.show{display:block}.context-menu button{width:100%;border:0;background:#fff;text-align:right;padding:9px;border-radius:6px;cursor:pointer}.context-menu button:hover{background:#eef4ff}</style>
 </body>

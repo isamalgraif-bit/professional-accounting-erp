@@ -12,7 +12,7 @@
   </div>
 </div>
 
-<div class="form-card mb-4">
+<div class="form-card mb-4 erp-document-form">
 <form method="post" id="invoiceForm">
 <input type="hidden" name="print_after_save" id="invoicePrintAfterSave" value="0">
 
@@ -115,7 +115,7 @@
 <div class="form-card">
 <h5 class="mb-3">الفواتير السابقة</h5>
 <div class="table-responsive">
-<table class="table table-striped align-middle">
+<table class="table table-striped align-middle" data-erp-document-list="invoice">
 <thead><tr><th>الرقم</th><th>التاريخ</th><th>العميل</th><th>قبل الضريبة</th><th>الضريبة</th><th>الإجمالي</th><th>الحالة</th><th>الإجراءات</th></tr></thead>
 <tbody>
 {% for r in rows %}
