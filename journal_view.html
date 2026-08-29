@@ -8,6 +8,7 @@
 body{font-family:Tahoma,Arial,sans-serif;margin:0;background:#eee;color:#111}
 .toolbar{max-width:1100px;margin:15px auto;display:flex;gap:8px;justify-content:space-between;align-items:center}.toolbar .actions{display:flex;gap:8px}.toolbar a{padding:9px 15px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#174ea6;text-decoration:none}
 .toolbar button{padding:9px 15px;border:0;border-radius:6px;background:#174ea6;color:white;cursor:pointer}
+.review-toolbar{max-width:1200px;flex-wrap:wrap}.review-id{display:flex;align-items:center;gap:8px}.review-id small{color:#64748b}.review-id b{font-size:17px}.review-nav{display:flex;gap:6px}.review-nav a{padding:7px 10px}.review-search{display:flex;gap:5px}.review-search input{width:150px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px}
 .sheet{width:1100px;min-height:760px;margin:0 auto 25px;background:#fff;padding:24px 26px;box-shadow:0 4px 20px rgba(0,0,0,.12)}
 .top-grid{display:grid;grid-template-columns:1.5fr 1fr 1fr;border:1px solid #777}
 .top-grid>div{border-left:1px solid #777;padding:7px 10px;min-height:30px}
@@ -43,7 +44,23 @@ body{font-family:Tahoma,Arial,sans-serif;margin:0;background:#eee;color:#111}
 </style>
 </head>
 <body>
-<div class="toolbar"><div><b>قيد {{journal.journal_no}}</b></div><div class="actions"><a href="{{url_for('journal_entries')}}" title="العودة إلى قائمة القيود">العودة للقيود</a><button onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div></div>
+<div class="toolbar review-toolbar">
+  <div class="review-id"><small>رقم القيد</small><b>{{journal.journal_no}}</b><span class="status-badge">{{journal.status}}</span></div>
+  <div class="review-nav">
+    {% if journal_nav.first %}<a href="{{url_for('journal_view',journal_id=journal_nav.first.id)}}">⏮ الأول</a>{% endif %}
+    {% if journal_nav.previous %}<a href="{{url_for('journal_view',journal_id=journal_nav.previous.id)}}">‹ السابق</a>{% endif %}
+    {% if journal_nav.next %}<a href="{{url_for('journal_view',journal_id=journal_nav.next.id)}}">التالي ›</a>{% endif %}
+    {% if journal_nav.last %}<a href="{{url_for('journal_view',journal_id=journal_nav.last.id)}}">الأخير ⏭</a>{% endif %}
+  </div>
+  <form class="review-search" method="get" action="{{url_for('journal_entries')}}">
+    <input name="journal_no" placeholder="رقم القيد" aria-label="البحث برقم القيد">
+    <button type="submit">فتح</button>
+  </form>
+  <div class="actions">
+    <a href="{{url_for('journal_entries',edit_id=journal.id)}}" title="فتح القيد في شاشة القيود">فتح القيد</a>
+    <button onclick="window.print()">🖨️ طباعة / PDF</button>
+  </div>
+</div>
 
 <div class="sheet">
   <div class="top-grid">
