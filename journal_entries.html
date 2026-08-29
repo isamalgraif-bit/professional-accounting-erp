@@ -219,9 +219,7 @@
   </div>
 </div>
 
-<div class="mt-4 d-flex justify-content-end no-print">
-  <button type="button" class="btn btn-success" id="postJournalBottom">✅ حفظ وترحيل</button>
-</div>
+
 </form>
 </div>
 
@@ -297,7 +295,7 @@
 
 <style>
 .journal-grid-wrap{max-height:520px;border:1px solid #dbe3ec;border-radius:10px}
-.journal-grid{min-width:2300px;margin-bottom:0}
+.journal-grid{min-width:1880px;margin-bottom:0}
 .journal-grid th{white-space:nowrap;text-align:center;background:#f8fafc;position:sticky;top:0;z-index:2}
 .journal-grid td{min-width:120px}
 .journal-grid td:nth-child(1){min-width:45px}
@@ -305,6 +303,14 @@
 .journal-grid td:nth-child(3){min-width:210px}
 .journal-grid td:nth-child(13){min-width:220px}
 .journal-grid td:nth-child(14){min-width:200px}
+
+.journal-grid th:nth-child(1),.journal-grid td:nth-child(1){position:sticky;right:0;z-index:6;width:44px;min-width:44px;background:#fff}
+.journal-grid th:nth-child(2),.journal-grid td:nth-child(2){position:sticky;right:44px;z-index:6;width:115px;min-width:115px;background:#fff}
+.journal-grid th:nth-child(3),.journal-grid td:nth-child(3){position:sticky;right:159px;z-index:6;width:205px;min-width:205px;background:#fff}
+.journal-grid th:nth-child(4),.journal-grid td:nth-child(4){position:sticky;right:364px;z-index:6;width:105px;min-width:105px;background:#fff}
+.journal-grid th:nth-child(5),.journal-grid td:nth-child(5){position:sticky;right:469px;z-index:6;width:105px;min-width:105px;background:#fff;box-shadow:-5px 0 8px rgba(15,23,42,.05)}
+.journal-grid thead th:nth-child(-n+5){background:#edf3f9!important;z-index:8}.journal-grid tbody tr:nth-child(even) td:nth-child(-n+5){background:#fbfcfe}.journal-grid tbody tr:hover td:nth-child(-n+5){background:#f1f6ff}
+
 .summary-box{min-width:360px;background:#f8fafc;border:1px solid #dbe3ec;border-radius:12px;padding:14px 18px}
 .summary-box div{display:flex;justify-content:space-between;gap:30px;padding:5px 0}
 .summary-box .grand{border-top:2px solid #dbe3ec;margin-top:5px;padding-top:10px;font-size:17px}

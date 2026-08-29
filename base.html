@@ -183,6 +183,22 @@ label,.form-label{font-weight:650;color:#334155;margin-bottom:6px}
 .erp-page-breadcrumb{display:flex;gap:6px;align-items:center;color:#64748b;font-size:11px;margin:-4px 0 8px}.erp-page-breadcrumb a{color:#526b8c;text-decoration:none}.erp-page-breadcrumb span{opacity:.6}
 .erp-page-meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:5px}.erp-page-meta .erp-chip{padding:3px 8px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;color:#64748b;font-size:11px}
 .erp-more-wrap{position:relative;display:inline-flex}.erp-more-menu{position:absolute;top:calc(100% + 6px);left:0;display:none;min-width:180px;background:#fff;border:1px solid #d8e0eb;border-radius:10px;padding:6px;box-shadow:0 16px 35px rgba(15,23,42,.16);z-index:1100}.erp-more-wrap.open .erp-more-menu{display:block}.erp-more-menu>a,.erp-more-menu>button{display:flex!important;width:100%!important;text-align:right!important;margin:0!important;border:0!important;background:transparent!important;color:#334155!important;padding:8px 10px!important;border-radius:7px!important;text-decoration:none!important}.erp-more-menu>a:hover,.erp-more-menu>button:hover{background:#eef4ff!important}
+
+/* FINAL UI/UX RELEASE — shared usability standard */
+.erp-command-actions{flex-wrap:nowrap;align-items:center}.erp-global-more{position:relative}.erp-global-more>summary{list-style:none}.erp-global-more>summary::-webkit-details-marker{display:none}
+.erp-global-more-menu{position:absolute;left:0;top:calc(100% + 6px);z-index:1800;min-width:210px;background:#fff;border:1px solid #d8e0eb;border-radius:11px;padding:6px;box-shadow:0 16px 36px rgba(15,23,42,.18)}
+.erp-global-more-menu button{display:block;width:100%;border:0;background:transparent;text-align:right;color:#334155;padding:9px 10px;border-radius:8px;font-size:12px}.erp-global-more-menu button:hover{background:#eef4ff}.erp-global-more-menu .erp-fav.active{color:#9a6700;background:#fff8db}
+.form-card{padding:16px}.form-card .row.g-2,.form-card .row.g-3{align-items:end}
+.table-responsive{scrollbar-width:thin;scrollbar-color:#aebfd4 #eef2f6}.table-responsive::-webkit-scrollbar{height:9px;width:9px}.table-responsive::-webkit-scrollbar-thumb{background:#aebfd4;border-radius:8px}
+.form-control:focus,.form-select:focus{border-color:#6695dc;box-shadow:0 0 0 .18rem rgba(23,105,224,.12)}
+.btn:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid rgba(23,105,224,.24);outline-offset:2px}
+.erp-doc-number{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid #bfd2f5;background:#eef5ff;color:#174ea6;border-radius:9px;font-size:12px;font-weight:750}
+.erp-record-nav{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.erp-record-nav .btn{min-width:78px}
+.erp-direct-search{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:6px;align-items:end}.erp-direct-search label{grid-column:1/-1;font-size:12px;margin-bottom:0}
+.erp-entry-help{font-size:11px;color:#64748b;margin-top:5px}.erp-primary-summary{position:sticky;bottom:27px;z-index:18;background:rgba(255,255,255,.97);backdrop-filter:blur(7px);border:1px solid #dbe3ec;border-radius:10px;padding:8px 10px;box-shadow:0 6px 20px rgba(15,23,42,.08)}
+@media(max-width:900px){.erp-command-actions{display:flex!important;overflow-x:auto}.erp-command-actions>button{white-space:nowrap}.erp-global-more-menu{left:auto;right:0}.form-card{padding:12px}}
+@media print{.erp-global-more{display:none!important}}
+
 .erp-command-palette{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;align-items:flex-start;justify-content:center;padding-top:10vh;z-index:12000}.erp-command-palette.show{display:flex}.erp-command-panel{width:min(720px,92vw);background:#fff;border-radius:16px;box-shadow:0 28px 70px rgba(15,23,42,.28);overflow:hidden}.erp-command-search{padding:14px;border-bottom:1px solid #e8edf3}.erp-command-search input{width:100%;border:0;outline:0;font-size:16px}.erp-command-list{max-height:62vh;overflow:auto;padding:8px}.erp-command-item{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;background:#fff;padding:10px 12px;border-radius:9px;text-align:right}.erp-command-item:hover,.erp-command-item.active{background:#eef4ff}.erp-command-item small{color:#94a3b8}.erp-command-group{padding:8px 12px 4px;color:#64748b;font-size:11px;font-weight:800}
 .erp-shortcuts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;padding:10px 12px 14px;border-top:1px solid #edf0f4;color:#64748b;font-size:11px}.erp-shortcuts kbd{direction:ltr;background:#f1f5f9;color:#334155;border:1px solid #d9e2ec;border-bottom-width:2px;border-radius:5px;padding:2px 5px}
 .erp-toast{position:fixed;bottom:42px;left:22px;z-index:13000;background:#172033;color:#fff;padding:9px 13px;border-radius:9px;opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none;font-size:12px}.erp-toast.show{opacity:1;transform:none}
@@ -337,7 +353,20 @@ label,.form-label{font-weight:650;color:#334155;margin-bottom:6px}
 <div class="erp-command-bar no-print"><form id="global-search-form" method="get" action="{{url_for('global_search')}}" class="d-flex gap-2 align-items-center my-2">
   <input class="form-control" name="q" placeholder="بحث شامل: عميل، مورد، فاتورة، مشروع، موظف..." value="{{request.args.get('q','') if request.endpoint=='global_search' else ''}}">
   <button class="btn btn-outline-primary">بحث</button>
-</form><div class="erp-command-actions"><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn" id="erpBackBtn" title="رجوع">↩</button><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn" id="erpForwardBtn" title="تقدم">↪</button><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn" id="erpRefreshBtn" title="تحديث">⟳</button><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn erp-fav" id="erpFavoriteBtn" title="إضافة للمفضلة">☆</button><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn" id="erpDensityBtn" title="كثافة العرض">≡</button><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn" id="erpSidebarBtn" title="طي القائمة">☰</button><button type="button" class="btn btn-primary btn-sm" id="erpCommandBtn" title="الأوامر السريعة (Alt+K)">أوامر</button></div></div>
+</form><div class="erp-command-actions">
+<button type="button" class="btn btn-outline-secondary btn-sm" id="erpBackBtn" title="الرجوع إلى الشاشة السابقة">‹ رجوع</button>
+<button type="button" class="btn btn-outline-secondary btn-sm" id="erpForwardBtn" title="الانتقال إلى الشاشة التالية">تقدم ›</button>
+<button type="button" class="btn btn-primary btn-sm" id="erpCommandBtn" title="الأوامر السريعة (Alt+K)">أوامر</button>
+<details class="erp-global-more">
+  <summary class="btn btn-outline-secondary btn-sm" title="أدوات مساحة العمل">المزيد ⋯</summary>
+  <div class="erp-global-more-menu">
+    <button type="button" id="erpRefreshBtn">⟳ تحديث الشاشة</button>
+    <button type="button" class="erp-fav" id="erpFavoriteBtn">☆ إضافة للمفضلة</button>
+    <button type="button" id="erpDensityBtn">≡ تغيير كثافة العرض</button>
+    <button type="button" id="erpSidebarBtn">☰ طي/فتح القائمة</button>
+  </div>
+</details>
+</div></div>
 
 {% else %}
 <main class="content full-width">
@@ -455,7 +484,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('erpCommandPalette')?.addEventListener('click',e=>{if(e.target.id==='erpCommandPalette')erpCloseCommands()});
   new MutationObserver(()=>erpSmartEnhance()).observe(document.querySelector('main.content')||document.body,{childList:true,subtree:true});
 });
-document.addEventListener('click',e=>{document.querySelectorAll('.erp-more-wrap.open').forEach(x=>x.classList.remove('open'));document.querySelectorAll('details.erp-row-more[open]').forEach(d=>{if(!d.contains(e.target))d.removeAttribute('open')})});
+document.addEventListener('click',e=>{document.querySelectorAll('.erp-more-wrap.open').forEach(x=>x.classList.remove('open'));document.querySelectorAll('details.erp-row-more[open],details.erp-global-more[open]').forEach(d=>{if(!d.contains(e.target))d.removeAttribute('open')})});
 document.addEventListener('keydown',e=>{if(e.altKey&&e.key.toLowerCase()==='k'){e.preventDefault();erpOpenCommands()}if(e.key==='Escape')erpCloseCommands()});
 
 document.addEventListener("click",function(e){const sb=document.getElementById("erpSidebar");if(window.innerWidth<=900&&sb?.classList.contains("open")&&!sb.contains(e.target)&&!e.target.closest(".mobile-menu-btn")){sb.classList.remove("open");}});
