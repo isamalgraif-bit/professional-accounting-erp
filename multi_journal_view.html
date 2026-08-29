@@ -7,6 +7,11 @@
 *{box-sizing:border-box}
 body{font-family:Tahoma,Arial,sans-serif;background:#eef1f5;margin:0;color:#172033}
 .toolbar{max-width:1200px;margin:18px auto;display:flex;gap:10px;flex-wrap:wrap}
+
+.review-toolbar{align-items:center;background:#fff;padding:10px 12px;border-radius:10px;box-shadow:0 4px 18px rgba(15,23,42,.08)}.batch-identity{display:flex;align-items:center;gap:8px}.batch-identity small{color:#64748b}.batch-identity b{font-size:17px;color:#174ea6}.state{padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800}.state.posted{background:#dcfce7;color:#166534}.state.draft{background:#fef3c7;color:#92400e}
+.record-nav,.actions{display:flex;gap:5px;align-items:center;flex-wrap:wrap}.batch-search{display:flex;gap:5px}.batch-search input{width:155px;padding:9px 10px;border:1px solid #cbd5e1;border-radius:7px}.view-more{position:relative}.view-more>summary{list-style:none}.view-more>summary::-webkit-details-marker{display:none}.view-more-menu{position:absolute;left:0;top:calc(100% + 5px);z-index:50;min-width:170px;background:#fff;border:1px solid #dbe3ec;border-radius:9px;padding:6px;box-shadow:0 14px 30px rgba(15,23,42,.17)}.view-more-menu button,.view-more-menu a{display:block;width:100%;border:0;background:transparent;text-align:right;padding:8px 9px;border-radius:6px;color:#334155;text-decoration:none}.view-more-menu button:hover,.view-more-menu a:hover{background:#eef4ff}.journal-link{color:#174ea6;font-weight:800;text-decoration:underline;text-underline-offset:3px}
+@media(max-width:900px){.review-toolbar{align-items:stretch}.batch-search{width:100%}.batch-search input{flex:1}.record-nav{width:100%}}
+
 .btn{padding:10px 15px;background:#174ea6;color:#fff;border:0;border-radius:7px;text-decoration:none;cursor:pointer}
 .btn.secondary{background:#4b5563}
 .btn.success{background:#16803b}
@@ -36,14 +41,28 @@ th{background:#edf2f7}
 </head>
 <body>
 
-<div class="toolbar" id="print-each">
-<button class="btn" onclick="window.print()">طباعة الدفعة كاملة / PDF</button>
-<button id="printEachButton" class="btn secondary" onclick="printEachGroup()">طباعة كل قيد في صفحة مستقلة</button>
-<a class="btn success" href="{{url_for('multi_journal_export',batch_id=batch.id)}}">تصدير Excel</a>
-<form method="post" action="{{url_for('multi_journal_post',batch_id=batch.id)}}" style="display:inline" onsubmit="return confirm('تأكيد ترحيل جميع قيود الدفعة إلى الأستاذ وميزان المراجعة؟')">
-<button class="btn success" type="submit">{{'فحص واستكمال الترحيل' if batch.status=='مرحّل' else 'ترحيل إلى ميزان المراجعة'}}</button>
-</form>
-<span style="align-self:center;background:#fff;padding:8px 12px;border-radius:7px">يمكن حفظ PDF من نافذة الطباعة</span>
+<div class="toolbar review-toolbar" id="print-each">
+  <div class="batch-identity"><small>رقم الدفعة</small><b>{{batch.batch_no}}</b><span class="state {{'posted' if batch.status=='مرحّل' else 'draft'}}">{{batch.status}}</span></div>
+  <div class="record-nav">
+    {% if batch_nav.first %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.first.id)}}">⏮ الأول</a>{% endif %}
+    {% if batch_nav.previous %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.previous.id)}}">‹ السابق</a>{% endif %}
+    {% if batch_nav.next %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.next.id)}}">التالي ›</a>{% endif %}
+    {% if batch_nav.last %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.last.id)}}">الأخير ⏭</a>{% endif %}
+  </div>
+  <form class="batch-search" method="get" action="{{url_for('multi_journal')}}">
+    <input name="batch_no" placeholder="رقم الدفعة" aria-label="البحث برقم الدفعة"><button class="btn" type="submit">فتح</button>
+  </form>
+  <div class="actions">
+    <a class="btn" href="{{url_for('multi_journal')}}">+ دفعة جديدة</a>
+    <details class="view-more"><summary class="btn secondary">المزيد ⋯</summary><div class="view-more-menu">
+      <button onclick="window.print()">طباعة / PDF</button>
+      <button id="printEachButton" onclick="printEachGroup()">كل قيد في صفحة</button>
+      <a href="{{url_for('multi_journal_export',batch_id=batch.id)}}">Excel</a>
+    </div></details>
+    <form method="post" action="{{url_for('multi_journal_post',batch_id=batch.id)}}" onsubmit="return confirm('تأكيد فحص/استكمال ترحيل جميع قيود الدفعة؟')">
+      <button class="btn success" type="submit">{{'فحص واستكمال الترحيل' if batch.status=='مرحّل' else 'ترحيل الدفعة'}}</button>
+    </form>
+  </div>
 </div>
 
 <div class="sheet">
@@ -74,7 +93,7 @@ th{background:#edf2f7}
 
 {% for g in groups %}
 <section class="group-page" data-group="{{g.group_no}}">
-<div style="text-align:center;margin:10px 0"><h3 style="display:inline-block;border:3px double #555;padding:7px 28px;margin:0">مستند قيد يومية</h3></div><div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #777;margin-bottom:10px"><div style="padding:7px;border-left:1px solid #777"><b>رقم المستند:</b> {{g.journal_no}}</div><div style="padding:7px"><b>التاريخ:</b> {{batch.batch_date}}</div></div>
+<div style="text-align:center;margin:10px 0"><h3 style="display:inline-block;border:3px double #555;padding:7px 28px;margin:0">مستند قيد يومية</h3></div><div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #777;margin-bottom:10px"><div style="padding:7px;border-left:1px solid #777"><b>رقم المستند:</b> {% if g.journal_id %}<a class="journal-link" href="{{url_for('journal_view',journal_id=g.journal_id)}}">{{g.journal_no}}</a>{% else %}{{g.journal_no}}{% endif %}</div><div style="padding:7px"><b>التاريخ:</b> {{batch.batch_date}}</div></div>
 
 <div class="group-tools">
 <a class="btn secondary" target="_blank"
@@ -126,6 +145,8 @@ th{background:#edf2f7}
 </div>
 
 <script>
+document.addEventListener('click',e=>{document.querySelectorAll('details.view-more[open]').forEach(d=>{if(!d.contains(e.target))d.removeAttribute('open')})});
+document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.key.toLowerCase()==='g'){e.preventDefault();document.querySelector('.batch-search input')?.focus()}});
 function printEachGroup(){
   document.body.classList.add('print-groups');
   window.print();

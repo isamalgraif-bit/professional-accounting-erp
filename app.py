@@ -214,7 +214,12 @@ def post_multi_journal_batch(batch_id):
     if not batch:
         raise ValueError("دفعة القيود غير موجودة.")
     ensure_open_period(batch["batch_date"])
-    groups = rows("SELECT * FROM journal_batch_groups WHERE batch_id=:id ORDER BY group_no", {"id": batch_id})
+    groups = rows("""SELECT g.*,
+                            (SELECT j.id FROM journal_entries j
+                             WHERE j.source_type='MULTI_JOURNAL' AND j.source_id=g.id
+                             ORDER BY j.id DESC LIMIT 1) AS journal_id
+                     FROM journal_batch_groups g
+                     WHERE g.batch_id=:id ORDER BY g.group_no""", {"id": batch_id})
     if not groups:
         raise ValueError("لا توجد قيود داخل الدفعة.")
 
@@ -5641,6 +5646,19 @@ def journal_navigation(journal_id=None):
     return {"first": first, "previous": previous, "next": next_record, "last": last}
 
 
+def batch_navigation(batch_id=None):
+    """Read-only navigator for multi-journal batches."""
+    first = row("SELECT id,batch_no FROM journal_batches ORDER BY id ASC LIMIT 1")
+    last = row("SELECT id,batch_no FROM journal_batches ORDER BY id DESC LIMIT 1")
+    previous = next_record = None
+    if batch_id:
+        previous = row("""SELECT id,batch_no FROM journal_batches
+                          WHERE id < :id ORDER BY id DESC LIMIT 1""", {"id": batch_id})
+        next_record = row("""SELECT id,batch_no FROM journal_batches
+                             WHERE id > :id ORDER BY id ASC LIMIT 1""", {"id": batch_id})
+    return {"first": first, "previous": previous, "next": next_record, "last": last}
+
+
 @app.route("/journal-entries", methods=["GET","POST"])
 @login_required
 def journal_entries():
@@ -6489,10 +6507,25 @@ def multi_journal():
             return redirect(url_for("multi_journal_view", batch_id=batch_id, print=1))
         return redirect(url_for("multi_journal_view", batch_id=batch_id))
 
+    batch_no_lookup = request.args.get("batch_no", "").strip()
+    if batch_no_lookup:
+        found_batch = row("""SELECT id,batch_no FROM journal_batches
+                             WHERE LOWER(batch_no)=LOWER(:no)
+                             ORDER BY id DESC LIMIT 1""", {"no": batch_no_lookup})
+        if not found_batch:
+            found_batch = row("""SELECT id,batch_no FROM journal_batches
+                                 WHERE batch_no ILIKE :no
+                                 ORDER BY id DESC LIMIT 1""", {"no": f"%{batch_no_lookup}%"})
+        if found_batch:
+            return redirect(url_for("multi_journal_view", batch_id=found_batch["id"]))
+        flash(f"لم يتم العثور على دفعة القيود رقم {batch_no_lookup}", "warning")
+        return redirect(url_for("multi_journal"))
+
     batches = rows("SELECT * FROM journal_batches ORDER BY batch_date DESC,id DESC")
     return render_template(
         "multi_journal.html",
         batches=batches,
+        batch_nav=batch_navigation(),
         accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
                          WHERE active=1 AND accepts_entries=1 ORDER BY account_code"""),
         suppliers=rows("SELECT id,name,vat_number FROM suppliers ORDER BY name"),
@@ -6589,7 +6622,9 @@ def multi_journal_view(batch_id):
         WHERE g.batch_id=:id ORDER BY g.group_no,l.id
     """, {"id": batch_id})
     company = row("SELECT * FROM settings WHERE id=1")
-    return render_template("multi_journal_view.html", batch=batch, groups=groups, lines=lines, company=company, auto_print=request.args.get("print")=="1")
+    return render_template("multi_journal_view.html", batch=batch, groups=groups, lines=lines,
+                           company=company, batch_nav=batch_navigation(batch_id),
+                           auto_print=request.args.get("print")=="1")
 
 
 @app.route("/multi-journal/<int:batch_id>/group/<int:group_no>/print")

@@ -3,21 +3,35 @@
 
 <div class="multi-page-header">
   <div>
-    <h3 class="mb-1">قيود يومية متعددة</h3>
-    <small class="text-muted">Multiple Journal Entries</small>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <h3 class="mb-0">قيود يومية متعددة</h3>
+      <span class="erp-doc-number">دفعة جديدة — الرقم يُنشأ عند الحفظ</span>
+    </div>
+    <small class="text-muted">إدخال عدة قيود مستقلة في دفعة واحدة بسرعة ووضوح</small>
   </div>
-
   <div class="multi-toolbar no-print">
-    <button type="button" class="tool-btn" data-new-document="1" data-new-url="{{ url_for('multi_journal') }}">📄 <span>مستند جديد</span></button>
-    <button type="button" class="tool-btn primary" id="saveBatchTop" title="حفظ الدفعة — Ctrl+S">
-      💾 <span>حفظ</span>
-    </button>
-    <button type="button" class="tool-btn dark" id="savePrintBatch" title="حفظ ثم فتح الطباعة">
-      🖨️ <span>حفظ وطباعة</span>
-    </button>
-    <button type="button" class="tool-btn" id="previewDraft" title="معاينة وطباعة المسودة الحالية">
-      👁️ <span>معاينة المسودة</span>
-    </button>
+    <button type="button" class="tool-btn" data-new-document="1" data-new-url="{{ url_for('multi_journal') }}">📄 <span>جديد</span></button>
+    <button type="button" class="tool-btn primary" id="saveBatchTop" title="حفظ — Ctrl+S">💾 <span>حفظ</span></button>
+    <details class="multi-more">
+      <summary class="tool-btn">⋯ <span>المزيد</span></summary>
+      <div class="multi-more-menu">
+        <button type="button" id="savePrintBatch">🖨️ حفظ وطباعة</button>
+        <button type="button" id="previewDraft">👁️ معاينة المسودة</button>
+      </div>
+    </details>
+  </div>
+</div>
+<div class="form-card multi-navigator mb-3 no-print">
+  <form method="get" class="erp-direct-search">
+    <label for="batchNoLookup">فتح دفعة سابقة برقم الدفعة</label>
+    <input class="form-control" id="batchNoLookup" name="batch_no" autocomplete="off" placeholder="مثال: JB-2026-000001">
+    <button class="btn btn-primary" type="submit">فتح</button>
+  </form>
+  <div class="erp-record-nav">
+    {% if batch_nav.first %}<a class="btn btn-outline-secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.first.id)}}">⏮ الأول</a>{% else %}<button class="btn btn-outline-secondary" disabled>⏮ الأول</button>{% endif %}
+    <button class="btn btn-outline-primary" disabled>‹ السابق</button>
+    <button class="btn btn-outline-primary" disabled>التالي ›</button>
+    {% if batch_nav.last %}<a class="btn btn-outline-secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.last.id)}}">الأخير ⏭</a>{% else %}<button class="btn btn-outline-secondary" disabled>الأخير ⏭</button>{% endif %}
   </div>
 </div>
 
@@ -25,16 +39,17 @@
 <form method="post" id="batchForm" data-track-unsaved="1">
 <input type="hidden" name="print_after_save" id="printAfterSave" value="0">
 <div class="row g-3 mb-3">
+<div class="col-md-2"><label>رقم الدفعة</label><input class="form-control fw-bold" value="يُنشأ تلقائيًا" readonly></div>
 <div class="col-md-2"><label>تاريخ الدفعة</label><input class="form-control" type="date" name="batch_date" id="batchDate" required></div>
 <div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>مسودة</option><option>مرحّل</option></select></div>
-<div class="col-md-8"><label>وصف الدفعة</label><input class="form-control" name="description"></div>
+<div class="col-md-6"><label>وصف الدفعة</label><input class="form-control" name="description" placeholder="وصف مختصر يوضح الغرض من الدفعة"></div>
 </div>
 
 <div class="table-responsive" style="max-height:540px">
-<table class="table table-bordered table-sm align-middle" style="min-width:2400px">
+<table class="table table-bordered table-sm align-middle" class="multi-entry-grid">
 <thead class="table-light" style="position:sticky;top:0">
 <tr>
-<th>الكود</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th>
+<th>المجموعة</th><th>الكود</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th>
 <th>خاضع للضريبة</th><th>مدخلات / مخرجات</th><th>نوع الحساب</th><th>الجهة المرتبطة</th>
 <th>الرقم الضريبي</th><th>رقم الفاتورة</th>
 <th>تاريخ الفاتورة</th><th>البيان</th><th>مركز التكلفة</th><th></th>
@@ -42,7 +57,8 @@
 </thead>
 <tbody id="batchBody">
 <tr class="batch-row">
-<td><input class="group-no" type="hidden" name="group_no[]" value="1"><input class="form-control account-code" list="accountCodeList" placeholder="الكود"></td>
+<td class="group-cell"><span class="group-badge">1</span><input class="group-no" type="hidden" name="group_no[]" value="1"></td>
+<td><input class="form-control account-code" list="accountCodeList" placeholder="الكود"></td>
 <td><input class="form-control account-name" list="accountNameList" placeholder="اسم الحساب"><input type="hidden" class="account-id" name="account_id[]"></td>
 <td><input class="form-control debit" type="number" step="0.01" min="0" name="debit[]" value="0"></td>
 <td><input class="form-control credit" type="number" step="0.01" min="0" name="credit[]" value="0"></td>
@@ -66,9 +82,9 @@
 
 <div class="d-flex justify-content-between mt-3">
 <div class="d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addLine" title="F2">+ إضافة سطر</button><button type="button" class="btn btn-outline-secondary" id="newGroup" title="F3">+ مجموعة جديدة</button></div>
-<div id="groupStatus" class="fw-bold text-danger">لم يتم التحقق بعد</div>
+<div class="erp-primary-summary"><div id="groupStatus" class="fw-bold text-danger">لم يتم التحقق بعد</div><div class="erp-entry-help">F2 إضافة سطر • F3 مجموعة جديدة • Ctrl+S حفظ • Ctrl+G فتح دفعة</div></div>
 </div>
-<div class="text-end mt-4"><button class="btn btn-primary btn-lg" id="saveBatchBottom">💾 حفظ دفعة القيود</button></div>
+
 </form>
 </div>
 
@@ -89,7 +105,7 @@
 <td class="text-center">
 {% if b.status != 'مرحّل' %}<input class="batch-select" type="checkbox" name="batch_ids" value="{{b.id}}" form="bulkPostForm" aria-label="تحديد الدفعة {{b.batch_no}}">{% else %}<span class="text-muted">—</span>{% endif %}
 </td>
-<td>{{b.batch_no}}</td><td>{{b.batch_date}}</td><td>{{b.description}}</td><td><span class="badge {% if b.status == 'مرحّل' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{b.status}}</span></td>
+<td><a class="batch-no-link" href="{{url_for('multi_journal_view',batch_id=b.id)}}">{{b.batch_no}}</a></td><td>{{b.batch_date}}</td><td>{{b.description}}</td><td><span class="badge {% if b.status == 'مرحّل' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{b.status}}</span></td>
 <td class="text-nowrap">
 <a class="btn btn-sm btn-primary" href="{{url_for('multi_journal_view',batch_id=b.id)}}">عرض</a>
 {% if b.status != 'مرحّل' %}<form class="d-inline" method="post" action="{{url_for('multi_journal_post',batch_id=b.id)}}" onsubmit="return confirm('تأكيد ترحيل الدفعة إلى ميزان المراجعة؟')"><button class="btn btn-sm btn-success" type="submit">ترحيل</button></form>{% endif %}
@@ -136,6 +152,14 @@
 
 
 <style>
+
+.multi-navigator{display:grid;grid-template-columns:minmax(300px,1fr) auto;gap:18px;align-items:end}.multi-more{position:relative}.multi-more>summary{list-style:none}.multi-more>summary::-webkit-details-marker{display:none}
+.multi-more-menu{position:absolute;left:0;top:calc(100% + 6px);z-index:1200;min-width:180px;background:#fff;border:1px solid #dbe3ec;border-radius:10px;box-shadow:0 14px 32px rgba(15,23,42,.16);padding:6px}.multi-more-menu button{display:block;width:100%;text-align:right;border:0;background:transparent;padding:9px 10px;border-radius:7px;color:#334155;font-size:12px}.multi-more-menu button:hover{background:#eef4ff}
+.multi-entry-grid{min-width:1880px!important;margin-bottom:0}.multi-entry-grid th,.multi-entry-grid td{min-width:105px}.multi-entry-grid th:first-child,.multi-entry-grid td:first-child{min-width:74px;width:74px}
+.multi-entry-grid th:nth-child(1),.multi-entry-grid td:nth-child(1){position:sticky;right:0;z-index:6;background:#fff}.multi-entry-grid th:nth-child(2),.multi-entry-grid td:nth-child(2){position:sticky;right:74px;z-index:6;min-width:115px;width:115px;background:#fff}.multi-entry-grid th:nth-child(3),.multi-entry-grid td:nth-child(3){position:sticky;right:189px;z-index:6;min-width:205px;width:205px;background:#fff}.multi-entry-grid th:nth-child(4),.multi-entry-grid td:nth-child(4){position:sticky;right:394px;z-index:6;min-width:105px;width:105px;background:#fff}.multi-entry-grid th:nth-child(5),.multi-entry-grid td:nth-child(5){position:sticky;right:499px;z-index:6;min-width:105px;width:105px;background:#fff;box-shadow:-5px 0 8px rgba(15,23,42,.05)}
+.multi-entry-grid thead th:nth-child(-n+5){background:#edf3f9!important;z-index:8}.multi-entry-grid tbody tr:nth-child(even) td:nth-child(-n+5){background:#fbfcfe}.multi-entry-grid tbody tr:hover td:nth-child(-n+5){background:#f1f6ff}.group-cell{text-align:center}.group-badge{display:inline-grid;place-items:center;min-width:30px;height:28px;padding:0 7px;border-radius:8px;background:#eaf2ff;color:#174ea6;font-weight:800}.batch-no-link{font-weight:800;text-decoration:none;color:#174ea6}.batch-no-link:hover{text-decoration:underline}
+@media(max-width:900px){.multi-navigator{grid-template-columns:1fr}.multi-navigator .erp-record-nav .btn{flex:1}}
+
 .multi-page-header{
   position:sticky;
   top:0;
@@ -369,4 +393,8 @@ batchContextMenu.addEventListener('click',event=>{const action=event.target.clos
 
 </script>
 <style>.journal-context-menu{display:none;position:fixed;z-index:3000;min-width:180px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 12px 35px rgba(15,23,42,.2);padding:6px}.journal-context-menu.show{display:block}.journal-context-menu button{display:block;width:100%;border:0;background:#fff;text-align:right;padding:9px 11px;border-radius:7px}.journal-context-menu button:hover{background:#eef4ff;color:#174ea6}</style>
+<script>
+document.addEventListener('click',e=>{document.querySelectorAll('details.multi-more[open]').forEach(d=>{if(!d.contains(e.target))d.removeAttribute('open')})});
+document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.key.toLowerCase()==='g'){e.preventDefault();document.getElementById('batchNoLookup')?.focus()}});
+</script>
 {% endblock %}
