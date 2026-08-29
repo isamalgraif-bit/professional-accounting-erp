@@ -143,6 +143,56 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 @media print{.erp-workspace-tabs,.erp-command-bar,.erp-statusbar,.erp-context-menu{display:none!important}}
 @media(max-width:900px){.sidebar{position:fixed;right:-285px;width:280px;height:100vh;transition:.25s;z-index:1050}.sidebar.open{right:0}.mobile-menu-btn{display:inline-flex}.content{padding:12px}.erp-page-title{align-items:flex-start;gap:10px}.page-toolbar{display:flex}}
 
+
+/* ===== ERP PROFESSIONAL WORKSPACE V2 — system-wide progressive enhancement ===== */
+:root{--erp-bg:#f4f7fb;--erp-card:#fff;--erp-muted:#64748b;--erp-soft:#eef4ff;--erp-success:#087f5b;--erp-danger:#b42318;--erp-warning:#b54708;--erp-radius:12px}
+body{background:var(--erp-bg)}
+.content{max-width:none}
+.erp-workspace-tabs{box-shadow:0 4px 14px rgba(15,23,42,.05);background:#edf2f8}
+.erp-workspace-tab{min-width:108px;max-width:210px;padding:7px 9px;font-size:12px}
+.erp-workspace-tools button,.erp-command-actions button{height:36px}
+.erp-command-bar{position:sticky;top:49px;z-index:850;background:var(--erp-bg);padding:3px 0 7px}
+.erp-command-actions{align-items:center}
+.erp-command-actions .erp-icon-btn{width:36px;padding:0;display:grid;place-items:center}
+.erp-command-actions .erp-fav.active{color:#b7791f;background:#fff9db;border-color:#f4d35e}
+.erp-page-title,.erp-sticky-header,.d-flex.justify-content-between.align-items-center.mb-4{position:relative;overflow:visible}
+.erp-page-title h1,.erp-page-title h2,.erp-page-title h3,.erp-sticky-header h1,.erp-sticky-header h2,.erp-sticky-header h3,.d-flex.justify-content-between.align-items-center.mb-4 h3{font-weight:800;color:#172033}
+.erp-page-title small,.erp-sticky-header small{color:var(--erp-muted)!important}
+.form-card{border-color:#dfe7f1;border-radius:14px}
+.form-card>h4,.form-card>h5,.form-card>h6{font-weight:750;color:#27364d;margin-bottom:14px}
+label,.form-label{font-weight:650;color:#334155;margin-bottom:6px}
+.form-control,.form-select{background-color:#fff;border-color:#d5dee9;transition:border-color .15s,box-shadow .15s,background .15s}
+.form-control:hover,.form-select:hover{border-color:#aebfd4}.form-control[readonly],.form-control:disabled,.form-select:disabled{background:#f4f6f9;color:#64748b}
+.input-group>.btn{border-color:#cbd5e1}
+.btn{font-weight:650;box-shadow:none!important}.btn-sm{font-size:12px}
+.btn-outline-primary:hover,.btn-outline-secondary:hover,.btn-outline-dark:hover{transform:translateY(-1px)}
+.table-responsive{border:1px solid #e1e8f0;background:#fff;overflow:auto}
+.table{margin-bottom:0}.table thead th{position:sticky;top:0;background:#edf3f9!important;color:#334155;font-size:12px;white-space:nowrap;z-index:3}
+.table tbody td{font-size:12.5px}.table tbody tr:nth-child(even){background:#fbfcfe}.table tbody tr:hover{background:#f1f6ff!important}
+.table .btn{white-space:nowrap}.erp-grid-row{cursor:context-menu}
+.erp-grid-row.erp-row-selected{outline:2px solid #8fb4ef;outline-offset:-2px;background:#eef5ff!important}
+.erp-status-pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:700;background:#eef2f6;color:#475569}
+.erp-status-pill.success{background:#e8f8f1;color:#087f5b}.erp-status-pill.warning{background:#fff4e5;color:#b54708}.erp-status-pill.danger{background:#feeceb;color:#b42318}.erp-status-pill.info{background:#eaf2ff;color:#175cd3}
+.erp-kpi-card{position:relative;overflow:hidden}.erp-kpi-card::after{content:"";position:absolute;inset-inline-start:0;top:0;bottom:0;width:4px;background:#9bb8e8}
+.erp-auto-responsive{overflow:auto;border-radius:12px;border:1px solid #e2e8f0}
+.erp-auto-responsive>.table{border:0}
+.erp-filter-card{border-top:3px solid #c7d8f3}
+.erp-form-card{border-top:3px solid #d7e2f1}
+.erp-record-card{border-top:3px solid #9bb8e8}
+.erp-section-caption{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #edf0f4}
+.erp-page-breadcrumb{display:flex;gap:6px;align-items:center;color:#64748b;font-size:11px;margin:-4px 0 8px}.erp-page-breadcrumb a{color:#526b8c;text-decoration:none}.erp-page-breadcrumb span{opacity:.6}
+.erp-page-meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:5px}.erp-page-meta .erp-chip{padding:3px 8px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;color:#64748b;font-size:11px}
+.erp-more-wrap{position:relative;display:inline-flex}.erp-more-menu{position:absolute;top:calc(100% + 6px);left:0;display:none;min-width:180px;background:#fff;border:1px solid #d8e0eb;border-radius:10px;padding:6px;box-shadow:0 16px 35px rgba(15,23,42,.16);z-index:1100}.erp-more-wrap.open .erp-more-menu{display:block}.erp-more-menu>a,.erp-more-menu>button{display:flex!important;width:100%!important;text-align:right!important;margin:0!important;border:0!important;background:transparent!important;color:#334155!important;padding:8px 10px!important;border-radius:7px!important;text-decoration:none!important}.erp-more-menu>a:hover,.erp-more-menu>button:hover{background:#eef4ff!important}
+.erp-command-palette{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;align-items:flex-start;justify-content:center;padding-top:10vh;z-index:12000}.erp-command-palette.show{display:flex}.erp-command-panel{width:min(720px,92vw);background:#fff;border-radius:16px;box-shadow:0 28px 70px rgba(15,23,42,.28);overflow:hidden}.erp-command-search{padding:14px;border-bottom:1px solid #e8edf3}.erp-command-search input{width:100%;border:0;outline:0;font-size:16px}.erp-command-list{max-height:62vh;overflow:auto;padding:8px}.erp-command-item{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;background:#fff;padding:10px 12px;border-radius:9px;text-align:right}.erp-command-item:hover,.erp-command-item.active{background:#eef4ff}.erp-command-item small{color:#94a3b8}.erp-command-group{padding:8px 12px 4px;color:#64748b;font-size:11px;font-weight:800}
+.erp-shortcuts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;padding:10px 12px 14px;border-top:1px solid #edf0f4;color:#64748b;font-size:11px}.erp-shortcuts kbd{direction:ltr;background:#f1f5f9;color:#334155;border:1px solid #d9e2ec;border-bottom-width:2px;border-radius:5px;padding:2px 5px}
+.erp-toast{position:fixed;bottom:42px;left:22px;z-index:13000;background:#172033;color:#fff;padding:9px 13px;border-radius:9px;opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none;font-size:12px}.erp-toast.show{opacity:1;transform:none}
+.erp-density-compact .form-card{padding:14px}.erp-density-compact .form-control,.erp-density-compact .form-select{min-height:34px;font-size:12px}.erp-density-compact .table td,.erp-density-compact .table th{padding:.35rem .45rem}.erp-density-compact .erp-page-title,.erp-density-compact .d-flex.justify-content-between.align-items-center.mb-4{padding:10px 13px;margin-bottom:12px!important}
+.erp-side-collapsed{--sidebar-width:74px}.erp-side-collapsed .sidebar{width:74px}.erp-side-collapsed .brand-text,.erp-side-collapsed .nav-section-btn>span:first-child:not(.nav-icon),.erp-side-collapsed .nav-section-btn .nav-arrow,.erp-side-collapsed .nav-submenu,.erp-side-collapsed .sidebar-footer span{display:none}.erp-side-collapsed .brand-block{justify-content:center}.erp-side-collapsed .brand-logo{width:42px}.erp-side-collapsed .nav-home span:last-child{display:none}.erp-side-collapsed .nav-home{text-align:center}.erp-side-collapsed .nav-section-btn{justify-content:center}.erp-side-collapsed .nav-icon{margin:0}.erp-side-collapsed .content{margin-right:74px;width:calc(100% - 74px)}.erp-side-collapsed .erp-statusbar{right:74px}
+.erp-empty-state{text-align:center;color:#94a3b8;padding:28px 12px!important}.erp-empty-state::before{content:'لا توجد بيانات لعرضها';display:block;font-size:13px;color:#64748b}
+.erp-record-actions{display:flex;gap:7px;flex-wrap:wrap}.erp-related-links{display:flex;gap:7px;flex-wrap:wrap}.erp-related-links a{border:1px solid #d8e0eb;background:#fff;padding:6px 9px;border-radius:8px;text-decoration:none;font-size:12px}
+.erp-smart-row-menu .erp-menu-section{padding:6px 10px 3px;color:#94a3b8;font-size:10px;font-weight:800;text-transform:uppercase}
+@media(max-width:900px){.erp-command-bar{top:0}.erp-shortcuts{grid-template-columns:1fr}.erp-side-collapsed .content{margin-right:0;width:100%}.erp-workspace-tabs{max-width:100vw}.erp-page-title,.erp-sticky-header,.d-flex.justify-content-between.align-items-center.mb-4{padding:11px!important}.table td,.table th{white-space:nowrap}}
+
 </style>
 </head>
 <body>
@@ -277,7 +327,7 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 <div class="erp-command-bar no-print"><form id="global-search-form" method="get" action="{{url_for('global_search')}}" class="d-flex gap-2 align-items-center my-2">
   <input class="form-control" name="q" placeholder="بحث شامل: عميل، مورد، فاتورة، مشروع، موظف..." value="{{request.args.get('q','') if request.endpoint=='global_search' else ''}}">
   <button class="btn btn-outline-primary">بحث</button>
-</form><div class="erp-command-actions"><button type="button" class="btn btn-outline-secondary btn-sm" id="erpBackBtn" title="رجوع">↩</button><button type="button" class="btn btn-outline-secondary btn-sm" id="erpForwardBtn" title="تقدم">↪</button><button type="button" class="btn btn-outline-secondary btn-sm" id="erpRefreshBtn" title="تحديث">⟳</button></div></div>
+</form><div class="erp-command-actions"><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn" id="erpBackBtn" title="رجوع">↩</button><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn" id="erpForwardBtn" title="تقدم">↪</button><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn" id="erpRefreshBtn" title="تحديث">⟳</button><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn erp-fav" id="erpFavoriteBtn" title="إضافة للمفضلة">☆</button><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn" id="erpDensityBtn" title="كثافة العرض">≡</button><button type="button" class="btn btn-outline-secondary btn-sm erp-icon-btn" id="erpSidebarBtn" title="طي القائمة">☰</button><button type="button" class="btn btn-primary btn-sm" id="erpCommandBtn" title="الأوامر السريعة (Alt+K)">أوامر</button></div></div>
 
 {% else %}
 <main class="content full-width">
@@ -291,7 +341,7 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 
 {% block content %}{% endblock %}
 </main>
-{% if session.get('user_id') %}<div class="erp-statusbar no-print"><span>West ERP • مساحة العمل</span><span id="erpOpenCount"></span></div><div id="erpGlobalContextMenu" class="erp-context-menu no-print"></div>{% endif %}
+{% if session.get('user_id') %}<div class="erp-statusbar no-print"><span>West ERP • مساحة العمل</span><span id="erpOpenCount"></span></div><div id="erpGlobalContextMenu" class="erp-context-menu erp-smart-row-menu no-print"></div><div id="erpCommandPalette" class="erp-command-palette no-print"><div class="erp-command-panel"><div class="erp-command-search"><input id="erpCommandSearch" placeholder="ابحث عن شاشة أو أمر..." autocomplete="off"></div><div id="erpCommandList" class="erp-command-list"></div><div class="erp-shortcuts"><span><kbd>Alt+K</kbd> الأوامر</span><span><kbd>Ctrl+K</kbd> البحث العام</span><span><kbd>Ctrl+Click</kbd> فتح في شاشة</span><span><kbd>Alt+←/→</kbd> تنقل</span></div></div></div><div id="erpUiToast" class="erp-toast no-print"></div>{% endif %}
 
 <div id="globalSaveToast" class="toast-save">تم حفظ المسودة تلقائيًا</div>
 
@@ -307,11 +357,53 @@ function erpRenderTabs(){const bar=document.getElementById('erpWorkspaceTabs');i
 function erpCloseTab(url){let tabs=erpLoadTabs(),was=erpCleanUrl(location.href)===url;tabs=tabs.filter(t=>t.url!==url);erpSaveTabs(tabs);if(was&&tabs.length)location.href=tabs[tabs.length-1].url;else erpRenderTabs()}
 function erpOpen(url,newTab=false,title=''){if(!url)return;if(newTab){let tabs=erpLoadTabs().filter(t=>t.url!==erpCleanUrl(url));tabs.push({url:erpCleanUrl(url),title:title||'شاشة',ts:Date.now()});erpSaveTabs(tabs)}location.href=url}
 function erpContextMenu(items,x,y){const menu=document.getElementById('erpGlobalContextMenu');if(!menu)return;menu.innerHTML='';items.filter(Boolean).forEach(item=>{if(item.separator){menu.appendChild(document.createElement('hr'));return}const b=document.createElement('button');b.type='button';b.className=item.danger?'danger':'';b.textContent=(item.icon?item.icon+' ':'')+item.label;b.onclick=()=>{menu.classList.remove('show');item.action?.()};menu.appendChild(b)});menu.style.left=Math.max(8,Math.min(x,innerWidth-240))+'px';menu.style.top=Math.max(8,Math.min(y,innerHeight-menu.offsetHeight-15))+'px';menu.classList.add('show')}
-document.addEventListener('contextmenu',e=>{const a=e.target.closest('a[href]');if(!a||a.closest('.erp-workspace-tabs')||a.href.startsWith('javascript:'))return;e.preventDefault();const title=(a.textContent||a.title||'السجل').trim();erpContextMenu([{icon:'↗',label:'فتح',action:()=>location.href=a.href},{icon:'▣',label:'فتح في شاشة جديدة',action:()=>erpOpen(a.href,true,title)},{icon:'□',label:'فتح في نافذة المتصفح',action:()=>window.open(a.href,'_blank')}],e.clientX,e.clientY)});
+document.addEventListener('contextmenu',e=>{const a=e.target.closest('a[href]');if(!a||a.closest('.erp-workspace-tabs')||a.closest('table tbody tr')||a.href.startsWith('javascript:'))return;e.preventDefault();erpLinkMenu(e,a)});
 document.addEventListener('auxclick',e=>{const a=e.target.closest('a[href]');if(a&&e.button===1){e.preventDefault();erpOpen(a.href,true,(a.textContent||'شاشة').trim())}});
 document.addEventListener('click',e=>{document.getElementById('erpGlobalContextMenu')?.classList.remove('show');const a=e.target.closest('a[href]');if(a&&e.ctrlKey&&!a.target){e.preventDefault();erpOpen(a.href,true,(a.textContent||'شاشة').trim())}});
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();const s=document.querySelector('#global-search-form input[name=q]');s?.focus();s?.select()}if(e.altKey&&e.key==='ArrowLeft')history.back();if(e.altKey&&e.key==='ArrowRight')history.forward()});
+
+const ERP_FAVORITES_KEY='west_erp_favorites_v1';
+const ERP_DENSITY_KEY='west_erp_density_v1';
+const ERP_SIDEBAR_KEY='west_erp_sidebar_v1';
+function erpJsonGet(key,def=[]){try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(def))}catch(e){return def}}
+function erpJsonSet(key,val){localStorage.setItem(key,JSON.stringify(val))}
+function erpToast(msg){const el=document.getElementById('erpUiToast');if(!el)return;el.textContent=msg;el.classList.add('show');clearTimeout(el._t);el._t=setTimeout(()=>el.classList.remove('show'),1800)}
+function erpCurrentFavorite(){const url=erpCleanUrl(location.href);return erpJsonGet(ERP_FAVORITES_KEY,[]).some(x=>x.url===url)}
+function erpRenderFavoriteButton(){const b=document.getElementById('erpFavoriteBtn');if(!b)return;const on=erpCurrentFavorite();b.textContent=on?'★':'☆';b.classList.toggle('active',on);b.title=on?'إزالة من المفضلة':'إضافة للمفضلة'}
+function erpToggleFavorite(){const url=erpCleanUrl(location.href),title=erpPageTitle();let fav=erpJsonGet(ERP_FAVORITES_KEY,[]);const exists=fav.some(x=>x.url===url);fav=exists?fav.filter(x=>x.url!==url):[...fav.filter(x=>x.url!==url),{url,title}].slice(-20);erpJsonSet(ERP_FAVORITES_KEY,fav);erpRenderFavoriteButton();erpToast(exists?'تمت الإزالة من المفضلة':'تمت الإضافة للمفضلة')}
+function erpApplyDensity(){const compact=localStorage.getItem(ERP_DENSITY_KEY)==='compact';document.body.classList.toggle('erp-density-compact',compact);const b=document.getElementById('erpDensityBtn');if(b)b.title=compact?'عرض مريح':'عرض مضغوط'}
+function erpToggleDensity(){localStorage.setItem(ERP_DENSITY_KEY,document.body.classList.contains('erp-density-compact')?'comfortable':'compact');erpApplyDensity()}
+function erpApplySidebar(){const c=localStorage.getItem(ERP_SIDEBAR_KEY)==='collapsed';document.body.classList.toggle('erp-side-collapsed',c)}
+function erpToggleSidebarDesktop(){if(innerWidth<=900){toggleSidebar();return}localStorage.setItem(ERP_SIDEBAR_KEY,document.body.classList.contains('erp-side-collapsed')?'open':'collapsed');erpApplySidebar()}
+function erpBuildBreadcrumb(){const main=document.querySelector('main.content');if(!main||document.querySelector('.erp-page-breadcrumb'))return;const title=erpPageTitle();const b=document.createElement('div');b.className='erp-page-breadcrumb no-print';b.innerHTML='<a href="/dashboard">لوحة التحكم</a><span>›</span><strong></strong>';b.querySelector('strong').textContent=title;const target=document.querySelector('.erp-page-title,.erp-sticky-header,.d-flex.justify-content-between.align-items-center.mb-4');if(target)target.before(b);else main.prepend(b)}
+function erpEnhanceCards(){document.querySelectorAll('.form-card').forEach(card=>{if(card.dataset.erpEnhanced)return;card.dataset.erpEnhanced='1';if(card.querySelector('form[method="get"]'))card.classList.add('erp-filter-card');else if(card.querySelector('form'))card.classList.add('erp-form-card');else card.classList.add('erp-record-card')});document.querySelectorAll('.row.g-3.mb-4 > [class*="col-"] > .form-card').forEach(c=>c.classList.add('erp-kpi-card'))}
+function erpEnhanceTables(){document.querySelectorAll('table.table').forEach(table=>{if(table.dataset.erpEnhanced)return;table.dataset.erpEnhanced='1';if(!table.parentElement.classList.contains('table-responsive')&&!table.parentElement.classList.contains('erp-auto-responsive')){const w=document.createElement('div');w.className='erp-auto-responsive';table.parentNode.insertBefore(w,table);w.appendChild(table)}const rows=[...table.querySelectorAll('tbody tr')];if(!rows.length){const tb=table.querySelector('tbody');if(tb){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=Math.max(1,table.querySelectorAll('thead th').length);td.className='erp-empty-state';tr.appendChild(td);tb.appendChild(tr)}}rows.forEach(row=>{row.classList.add('erp-grid-row');row.addEventListener('click',e=>{if(e.target.closest('a,button,input,select,textarea,label'))return;table.querySelectorAll('.erp-row-selected').forEach(r=>r.classList.remove('erp-row-selected'));row.classList.add('erp-row-selected')});row.addEventListener('dblclick',e=>{if(e.target.closest('a,button,input,select,textarea'))return;const a=row.querySelector('a[href]');if(a)erpOpen(a.href,true,(a.textContent||erpPageTitle()).trim())})})})}
+function erpStatusClass(v){v=(v||'').trim();if(/مرح|معتمد|نشط|مكتمل|مدفوع|مغلق|live|approved/i.test(v))return'success';if(/مسودة|قيد|انتظار|جزئي|معلق|open/i.test(v))return'warning';if(/ملغ|مرفوض|متأخر|غير نشط|فشل|خطأ|cancel|reject/i.test(v))return'danger';return''}
+function erpEnhanceStatuses(){document.querySelectorAll('table td').forEach(td=>{if(td.children.length||td.dataset.erpStatus)return;const v=td.textContent.trim();if(!v||v.length>24)return;const c=erpStatusClass(v);if(!c)return;td.dataset.erpStatus='1';const s=document.createElement('span');s.className='erp-status-pill '+c;s.textContent=v;td.textContent='';td.appendChild(s)})}
+function erpRowMenu(row,x,y){if(row.closest('.account-tree-table'))return;const links=[...row.querySelectorAll('a[href]')].filter((a,i,arr)=>arr.findIndex(b=>b.href===a.href)===i);const first=links[0];const items=[];if(first){items.push({icon:'↗',label:'فتح السجل',action:()=>location.href=first.href},{icon:'▣',label:'فتح في شاشة جديدة',action:()=>erpOpen(first.href,true,(first.textContent||'سجل').trim())})}links.slice(first?1:0,5).forEach(a=>items.push({icon:'•',label:(a.textContent||a.title||'إجراء').trim(),action:()=>location.href=a.href}));if(items.length)items.push({separator:true});items.push({icon:'⧉',label:'نسخ بيانات السطر',action:()=>navigator.clipboard?.writeText(row.innerText.replace(/\s+/g,' ').trim()).then(()=>erpToast('تم نسخ بيانات السطر'))},{icon:'🖨',label:'طباعة الصفحة',action:()=>window.print()});erpContextMenu(items,x,y)}
+function erpInstallRowMenus(){document.querySelectorAll('table tbody tr').forEach(row=>{if(row.dataset.erpMenu)return;row.dataset.erpMenu='1';row.addEventListener('contextmenu',e=>{if(e.target.closest('.account-node'))return;e.preventDefault();e.stopPropagation();erpRowMenu(row,e.clientX,e.clientY)})})}
+function erpLinkMenu(e,a){const title=(a.textContent||a.title||'السجل').trim();erpContextMenu([{icon:'↗',label:'فتح',action:()=>location.href=a.href},{icon:'▣',label:'فتح في شاشة جديدة',action:()=>erpOpen(a.href,true,title)},{icon:'□',label:'فتح في نافذة المتصفح',action:()=>window.open(a.href,'_blank')},{separator:true},{icon:'⧉',label:'نسخ الرابط',action:()=>navigator.clipboard?.writeText(a.href).then(()=>erpToast('تم نسخ الرابط'))}],e.clientX,e.clientY)}
+function erpCommandData(){const nav=[...document.querySelectorAll('.erp-nav a[href]')].map(a=>({group:'الوحدات',title:a.textContent.trim(),url:a.href}));const tabs=erpLoadTabs().map(t=>({group:'الشاشات المفتوحة',title:t.title,url:t.url}));const fav=erpJsonGet(ERP_FAVORITES_KEY,[]).map(t=>({group:'المفضلة',title:t.title,url:t.url}));const actions=[{group:'أوامر',title:'طباعة الصفحة',action:()=>window.print()},{group:'أوامر',title:'تحديث الصفحة',action:()=>location.reload()},{group:'أوامر',title:'فتح شاشة جديدة من الحالية',action:()=>erpOpen(location.href,true,erpPageTitle())},{group:'أوامر',title:'إغلاق الشاشات الأخرى',action:()=>{const cur=erpCleanUrl(location.href);erpSaveTabs(erpLoadTabs().filter(t=>t.url===cur));erpRenderTabs();erpToast('تم إغلاق الشاشات الأخرى')}}];return[...actions,...fav,...tabs,...nav]}
+function erpRenderCommands(q=''){const list=document.getElementById('erpCommandList');if(!list)return;const term=q.trim().toLowerCase();const data=erpCommandData().filter(x=>!term||x.title.toLowerCase().includes(term)).slice(0,80);list.innerHTML='';let g='';data.forEach(item=>{if(item.group!==g){g=item.group;const h=document.createElement('div');h.className='erp-command-group';h.textContent=g;list.appendChild(h)}const b=document.createElement('button');b.type='button';b.className='erp-command-item';b.innerHTML='<span></span><small></small>';b.querySelector('span').textContent=item.title;b.querySelector('small').textContent=item.url?'فتح':'تنفيذ';b.onclick=()=>{erpCloseCommands();item.action?item.action():erpOpen(item.url,true,item.title)};list.appendChild(b)})}
+function erpOpenCommands(){const p=document.getElementById('erpCommandPalette');if(!p)return;p.classList.add('show');const s=document.getElementById('erpCommandSearch');s.value='';erpRenderCommands('');setTimeout(()=>s.focus(),30)}
+function erpCloseCommands(){document.getElementById('erpCommandPalette')?.classList.remove('show')}
+function erpGroupSecondaryActions(){document.querySelectorAll('.erp-page-title>div:last-child,.d-flex.justify-content-between.align-items-center.mb-4>div:last-child,.erp-sticky-header .erp-toolbar').forEach(bar=>{if(bar.dataset.erpGrouped)return;bar.dataset.erpGrouped='1';const els=[...bar.children].filter(x=>x.matches('a,button,form'));if(els.length<=6)return;const move=els.slice(5);const wrap=document.createElement('div');wrap.className='erp-more-wrap no-print';const btn=document.createElement('button');btn.type='button';btn.className='btn btn-outline-secondary';btn.textContent='المزيد ▾';const menu=document.createElement('div');menu.className='erp-more-menu';move.forEach(el=>menu.appendChild(el));wrap.append(btn,menu);bar.appendChild(wrap);btn.onclick=e=>{e.stopPropagation();wrap.classList.toggle('open')}})}
+function erpSmartEnhance(){erpBuildBreadcrumb();erpEnhanceCards();erpEnhanceTables();erpEnhanceStatuses();erpInstallRowMenus();erpGroupSecondaryActions()}
+
 document.addEventListener('DOMContentLoaded',()=>{erpRememberPage();document.getElementById('erpBackBtn')?.addEventListener('click',()=>history.back());document.getElementById('erpForwardBtn')?.addEventListener('click',()=>history.forward());document.getElementById('erpRefreshBtn')?.addEventListener('click',()=>location.reload());document.querySelectorAll('.table tbody tr').forEach(r=>{if(r.querySelector('a[href]'))r.style.cursor='default'})});
+document.addEventListener('DOMContentLoaded',()=>{
+  erpApplyDensity();erpApplySidebar();erpRenderFavoriteButton();erpSmartEnhance();
+  document.getElementById('erpFavoriteBtn')?.addEventListener('click',erpToggleFavorite);
+  document.getElementById('erpDensityBtn')?.addEventListener('click',erpToggleDensity);
+  document.getElementById('erpSidebarBtn')?.addEventListener('click',erpToggleSidebarDesktop);
+  document.getElementById('erpCommandBtn')?.addEventListener('click',erpOpenCommands);
+  document.getElementById('erpCommandSearch')?.addEventListener('input',e=>erpRenderCommands(e.target.value));
+  document.getElementById('erpCommandPalette')?.addEventListener('click',e=>{if(e.target.id==='erpCommandPalette')erpCloseCommands()});
+  new MutationObserver(()=>erpSmartEnhance()).observe(document.querySelector('main.content')||document.body,{childList:true,subtree:true});
+});
+document.addEventListener('click',()=>document.querySelectorAll('.erp-more-wrap.open').forEach(x=>x.classList.remove('open')));
+document.addEventListener('keydown',e=>{if(e.altKey&&e.key.toLowerCase()==='k'){e.preventDefault();erpOpenCommands()}if(e.key==='Escape')erpCloseCommands()});
+
 document.addEventListener("click",function(e){const sb=document.getElementById("erpSidebar");if(window.innerWidth<=900&&sb?.classList.contains("open")&&!sb.contains(e.target)&&!e.target.closest(".mobile-menu-btn")){sb.classList.remove("open");}});
 window.erpUnsavedChanges = false;
 window.erpItemUnits = {{ item_units|tojson }};

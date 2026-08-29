@@ -1,4 +1,5 @@
 {% extends "base.html" %}{% block content %}
+<div class="erp-module-page">
 
 <div class="mb-3">
   <a class="btn btn-primary" href="{{ url_for('manage_module', module_name='employees') }}">
@@ -26,4 +27,5 @@
 ('التوظيف','المرشحون والمقابلات',url_for('hr_recruitment')),
 ('الرواتب','مسيرات الرواتب وكشوفها',url_for('hr_payroll_center'))] %}
 <div class="col-md-3"><a class="form-card d-block text-decoration-none text-dark h-100" href="{{u}}"><h5>{{t}}</h5><p>{{d}}</p></a></div>{% endfor %}</div>
-<div class="form-card"><h5>تنبيهات مستندات الموظفين</h5><table class="table table-striped"><thead><tr><th>الموظف</th><th>نوع التنبيه</th><th>تاريخ الانتهاء</th></tr></thead><tbody>{% for a in alerts %}<tr><td><a href="{{url_for('hr_employee_profile',employee_id=a.id)}}">{{a.name}}</a></td><td>{{a.alert_type}}</td><td>{{a.expiry_date}}</td></tr>{% endfor %}</tbody></table></div>{% endblock %}
+<div class="form-card"><h5>تنبيهات مستندات الموظفين</h5><table class="table table-striped"><thead><tr><th>الموظف</th><th>نوع التنبيه</th><th>تاريخ الانتهاء</th></tr></thead><tbody>{% for a in alerts %}<tr><td><a href="{{url_for('hr_employee_profile',employee_id=a.id)}}">{{a.name}}</a></td><td>{{a.alert_type}}</td><td>{{a.expiry_date}}</td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}

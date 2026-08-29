@@ -10,7 +10,7 @@
 <div class="col-md-2"><button class="btn btn-primary w-100">بحث</button></div>
 <div class="col-md-2"><a class="btn btn-outline-secondary w-100" href="{{ url_for('manage_module', module_name=module_name) }}">مسح</a></div>
 </div></form>
-<div class="form-card"><div class="table-responsive"><table class="table table-striped align-middle">
+<div class="form-card" data-erp-list="1"><div class="table-responsive"><table class="table table-striped align-middle">
 <thead><tr>{% for label in cfg.labels %}<th>{{label}}</th>{% endfor %}<th>الإجراءات</th></tr></thead>
 <tbody>{% for r in data %}<tr>
 {% for f in cfg.fields %}<td>{{ r[f] }}</td>{% endfor %}
