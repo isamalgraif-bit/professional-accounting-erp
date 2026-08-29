@@ -117,6 +117,8 @@
 <div id="accountContextMenu" class="account-context-menu no-print">
 <button data-action="add">➕ إضافة حساب فرعي</button>
 <button data-action="view">👁 عرض الحساب</button>
+<button data-action="newtab">▣ فتح في شاشة جديدة</button>
+<button data-action="statement">📄 كشف الحساب / الأستاذ</button>
 <button data-action="edit">✏️ تعديل الحساب</button>
 <button data-action="delete" class="danger-item">🗑️ حذف الحساب</button>
 </div>
@@ -272,6 +274,8 @@ menu.addEventListener('click',e=>{
  const a=e.target.dataset.action;if(!a||!node)return;
  if(a==='add')prepareChild(node.dataset.accountId,node.dataset.accountCode,node.dataset.accountName);
  if(a==='view')location.href=node.dataset.viewUrl;
+ if(a==='newtab')erpOpen(node.dataset.viewUrl,true,node.dataset.accountCode+' - '+node.dataset.accountName);
+ if(a==='statement')erpOpen(`{{url_for('accounting_report',slug='ledger-detail')}}?account_id=${node.dataset.accountId}&status=الكل`,true,'كشف '+node.dataset.accountName);
  if(a==='edit')location.href=node.dataset.editUrl;
  if(a==='delete'&&confirm('تأكيد حذف الحساب؟')){const f=document.createElement('form');f.method='post';f.action=node.dataset.deleteUrl;document.body.appendChild(f);f.submit();}
 });

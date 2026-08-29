@@ -11,7 +11,7 @@
  else url_for('customers') if r.result_type=='customer'
  else url_for('suppliers') if r.result_type=='supplier'
  else url_for('inventory') %}
-<a class="list-group-item list-group-item-action" href="{{link}}"><b>{{r.code or '-'}}</b> — {{r.name}}</a>
+<a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{link}}"><span><b>{{r.code or '-'}}</b> — {{r.name}}</span><small class="text-muted">Ctrl+Click: شاشة جديدة</small></a>
 {% else %}<div class="text-muted">لا توجد نتائج.</div>{% endfor %}</div></div>
 {% endfor %}
 {% endif %}{% endblock %}
