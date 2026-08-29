@@ -2,7 +2,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
 <div><h3 class="mb-1">{{account.account_code}} — {{account.account_name_ar}}</h3><small class="text-muted">{{account.account_name_en}}</small></div>
-<div class="d-flex gap-2"><button class="btn btn-dark" onclick="window.print()">طباعة / PDF</button><a class="btn btn-warning" href="{{url_for('account_edit',account_id=account.id)}}">تعديل</a></div>
+<div class="d-flex gap-2 flex-wrap"><a class="btn btn-primary" href="{{url_for('accounting_report',slug='ledger-detail')}}?account_id={{account.id}}&status=الكل">كشف الحساب</a><button class="btn btn-dark" onclick="window.print()">طباعة / PDF</button><a class="btn btn-warning" href="{{url_for('account_edit',account_id=account.id)}}">تعديل</a></div>
 </div>
 <div class="row g-3 mb-4">
 <div class="col-md-3"><div class="form-card"><small>إجمالي المدين</small><h4>{{"%.2f"|format(account.total_debit)}}</h4></div></div>
@@ -18,6 +18,6 @@
 {% if children %}<div class="form-card mb-4"><h5>الحسابات الفرعية</h5><table class="table table-striped"><thead><tr><th>الكود</th><th>الحساب</th><th>يقبل حركة</th><th>الحالة</th></tr></thead><tbody>{% for c in children %}<tr><td>{{c.account_code}}</td><td><a href="{{url_for('account_view',account_id=c.id)}}">{{c.account_name_ar}}</a></td><td>{{'نعم' if c.accepts_entries else 'لا'}}</td><td>{{'نشط' if c.active else 'غير نشط'}}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
 <div class="form-card"><h5>آخر الحركات</h5><div class="table-responsive"><table class="table table-striped">
 <thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>مدين</th><th>دائن</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>الحالة</th></tr></thead>
-<tbody>{% for m in movements %}<tr><td>{{m.journal_no}}</td><td>{{m.journal_date}}</td><td>{{m.line_description or '-'}}</td><td>{{"%.2f"|format(m.debit)}}</td><td>{{"%.2f"|format(m.credit)}}</td><td>{{m.invoice_number or '-'}}</td><td>{{m.invoice_date or '-'}}</td><td>{{m.status}}</td></tr>{% endfor %}</tbody>
+<tbody>{% for m in movements %}<tr><td><strong>{{m.journal_no}}</strong></td><td>{{m.journal_date}}</td><td>{{m.line_description or '-'}}</td><td>{{"%.2f"|format(m.debit)}}</td><td>{{"%.2f"|format(m.credit)}}</td><td>{{m.invoice_number or '-'}}</td><td>{{m.invoice_date or '-'}}</td><td>{{m.status}}</td></tr>{% endfor %}</tbody>
 </table></div></div>
 {% endblock %}

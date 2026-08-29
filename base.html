@@ -127,6 +127,20 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 .section-card .section-icon{width:46px;height:46px;border-radius:13px;background:#eef4ff;color:#174ea6;display:grid;place-items:center;font-size:23px;margin-bottom:13px}.section-card h5{font-weight:700}.section-links{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.section-links a{font-size:12px;text-decoration:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:6px 9px;color:#334155}.section-links a:hover{background:#eef4ff;color:#174ea6}
 .card-kpi{border:1px solid var(--border);border-radius:15px;box-shadow:0 4px 16px rgba(15,23,42,.05)}.card-kpi h4{margin:8px 0 0;font-weight:800}
 .table-responsive{border-radius:12px}.table>thead{position:sticky;top:0;z-index:2}.btn-primary{background:#174ea6;border-color:#174ea6}
+/* ERP Workspace UI */
+.erp-workspace-tabs{position:sticky;top:0;z-index:900;display:flex;align-items:center;gap:6px;overflow-x:auto;background:#e8eef7;border:1px solid var(--border);border-radius:12px 12px 0 0;padding:6px 8px;margin:0 0 12px;scrollbar-width:thin}
+.erp-workspace-tab{display:inline-flex;align-items:center;gap:7px;min-width:120px;max-width:230px;padding:8px 10px;background:#f8fafc;border:1px solid #d8e0eb;border-radius:9px;color:#475569;text-decoration:none;white-space:nowrap;cursor:pointer}
+.erp-workspace-tab.active{background:#fff;color:var(--primary);border-color:#9bb8e8;box-shadow:0 3px 10px rgba(15,23,42,.08)}
+.erp-workspace-tab .tab-title{overflow:hidden;text-overflow:ellipsis}.erp-workspace-tab .tab-close{border:0;background:transparent;color:#94a3b8;font-size:16px;line-height:1;padding:0}.erp-workspace-tab .tab-close:hover{color:#b91c1c}
+.erp-workspace-tools{display:flex;gap:5px;margin-inline-start:auto;position:sticky;left:0}.erp-workspace-tools button{border:1px solid #d8e0eb;background:#fff;border-radius:8px;padding:6px 9px}
+.erp-command-bar{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:8px;align-items:center;margin:0 0 14px}.erp-command-bar #global-search-form{margin:0!important}.erp-command-actions{display:flex;gap:6px}
+.erp-page-title,.d-flex.justify-content-between.align-items-center.mb-4{background:#fff;border:1px solid var(--border);border-radius:14px;padding:14px 16px;box-shadow:0 4px 18px rgba(15,23,42,.05)}
+.form-card{box-shadow:0 4px 18px rgba(15,23,42,.055)}
+.table tbody tr{transition:.12s}.table tbody tr:hover{background:#f7faff}.table td,.table th{vertical-align:middle}
+.erp-context-menu{position:fixed;display:none;min-width:220px;background:#fff;border:1px solid #d8e0eb;border-radius:11px;box-shadow:0 14px 35px rgba(15,23,42,.2);padding:6px;z-index:99999}.erp-context-menu.show{display:block}.erp-context-menu button{display:flex;width:100%;gap:8px;align-items:center;border:0;background:transparent;text-align:right;padding:9px 10px;border-radius:7px}.erp-context-menu button:hover{background:#eef4ff}.erp-context-menu hr{margin:5px 0;border-color:#e2e8f0}.erp-context-menu .danger{color:#b91c1c}
+.erp-statusbar{position:fixed;bottom:0;left:0;right:var(--sidebar-width);height:26px;background:#fff;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-size:11px;color:#64748b;z-index:800}.content{padding-bottom:42px}
+@media(max-width:900px){.erp-workspace-tabs{position:relative}.erp-command-bar{grid-template-columns:1fr}.erp-command-actions{display:none}.erp-statusbar{right:0}.erp-page-title,.d-flex.justify-content-between.align-items-center.mb-4{align-items:flex-start!important;gap:10px;flex-wrap:wrap}}
+@media print{.erp-workspace-tabs,.erp-command-bar,.erp-statusbar,.erp-context-menu{display:none!important}}
 @media(max-width:900px){.sidebar{position:fixed;right:-285px;width:280px;height:100vh;transition:.25s;z-index:1050}.sidebar.open{right:0}.mobile-menu-btn{display:inline-flex}.content{padding:12px}.erp-page-title{align-items:flex-start;gap:10px}.page-toolbar{display:flex}}
 
 </style>
@@ -262,10 +276,11 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 <main class="content">
 {% if staging_mode %}<div class="alert alert-warning text-center fw-bold no-print">بيئة اختبار مستقلة — لا تستخدم للبيانات الحقيقية | الإصدار {{ app_version }}</div>{% endif %}
 <div class="page-toolbar no-print"><button class="btn btn-outline-primary mobile-menu-btn" type="button" onclick="toggleSidebar()">☰ القائمة</button></div>
-<form id="global-search-form" method="get" action="{{url_for('global_search')}}" class="d-flex gap-2 align-items-center my-2">
+<div id="erpWorkspaceTabs" class="erp-workspace-tabs no-print" aria-label="الشاشات المفتوحة"></div>
+<div class="erp-command-bar no-print"><form id="global-search-form" method="get" action="{{url_for('global_search')}}" class="d-flex gap-2 align-items-center my-2">
   <input class="form-control" name="q" placeholder="بحث شامل: عميل، مورد، فاتورة، مشروع، موظف..." value="{{request.args.get('q','') if request.endpoint=='global_search' else ''}}">
   <button class="btn btn-outline-primary">بحث</button>
-</form>
+</form><div class="erp-command-actions"><button type="button" class="btn btn-outline-secondary btn-sm" id="erpBackBtn" title="رجوع">↩</button><button type="button" class="btn btn-outline-secondary btn-sm" id="erpForwardBtn" title="تقدم">↪</button><button type="button" class="btn btn-outline-secondary btn-sm" id="erpRefreshBtn" title="تحديث">⟳</button></div></div>
 
 {% else %}
 <main class="content full-width">
@@ -279,6 +294,7 @@ body{background:#f1f5f9;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 
 {% block content %}{% endblock %}
 </main>
+{% if session.get('user_id') %}<div class="erp-statusbar no-print"><span>West ERP • مساحة العمل</span><span id="erpOpenCount"></span></div><div id="erpGlobalContextMenu" class="erp-context-menu no-print"></div>{% endif %}
 
 <div id="globalSaveToast" class="toast-save">تم حفظ المسودة تلقائيًا</div>
 
@@ -328,6 +344,21 @@ function enhanceSearchableSelects(root=document){
 }
 
 function toggleSidebar(){document.getElementById("erpSidebar")?.classList.toggle("open");}
+const ERP_WORKSPACE_KEY='west_erp_workspace_v1';
+function erpCleanUrl(value){try{const u=new URL(value,location.origin);return u.pathname+u.search}catch(e){return value}}
+function erpPageTitle(){const h=document.querySelector('h1,h2,h3,h4');return (h?.textContent||document.title||'شاشة').trim().replace(/\s+/g,' ').slice(0,55)}
+function erpLoadTabs(){try{return JSON.parse(sessionStorage.getItem(ERP_WORKSPACE_KEY)||'[]')}catch(e){return []}}
+function erpSaveTabs(tabs){sessionStorage.setItem(ERP_WORKSPACE_KEY,JSON.stringify(tabs.slice(-12)))}
+function erpRememberPage(){if(!document.getElementById('erpWorkspaceTabs'))return;const url=erpCleanUrl(location.href);if(['/login','/logout'].includes(location.pathname))return;let tabs=erpLoadTabs().filter(t=>t.url!==url);tabs.push({url,title:erpPageTitle(),ts:Date.now()});erpSaveTabs(tabs);erpRenderTabs()}
+function erpRenderTabs(){const bar=document.getElementById('erpWorkspaceTabs');if(!bar)return;const current=erpCleanUrl(location.href),tabs=erpLoadTabs();bar.innerHTML='';tabs.forEach(t=>{const a=document.createElement('a');a.className='erp-workspace-tab'+(t.url===current?' active':'');a.href=t.url;a.dataset.erpTab='1';a.innerHTML='<span class="tab-title"></span><button type="button" class="tab-close" aria-label="إغلاق">×</button>';a.querySelector('.tab-title').textContent=t.title;a.querySelector('.tab-close').onclick=e=>{e.preventDefault();e.stopPropagation();erpCloseTab(t.url)};bar.appendChild(a)});const tools=document.createElement('div');tools.className='erp-workspace-tools';tools.innerHTML='<button type="button" title="إغلاق الشاشات الأخرى">إغلاق الباقي</button>';tools.firstChild.onclick=()=>{erpSaveTabs(tabs.filter(t=>t.url===current));erpRenderTabs()};bar.appendChild(tools);const c=document.getElementById('erpOpenCount');if(c)c.textContent=tabs.length+' شاشة مفتوحة'}
+function erpCloseTab(url){let tabs=erpLoadTabs(),was=erpCleanUrl(location.href)===url;tabs=tabs.filter(t=>t.url!==url);erpSaveTabs(tabs);if(was&&tabs.length)location.href=tabs[tabs.length-1].url;else erpRenderTabs()}
+function erpOpen(url,newTab=false,title=''){if(!url)return;if(newTab){let tabs=erpLoadTabs().filter(t=>t.url!==erpCleanUrl(url));tabs.push({url:erpCleanUrl(url),title:title||'شاشة',ts:Date.now()});erpSaveTabs(tabs)}location.href=url}
+function erpContextMenu(items,x,y){const menu=document.getElementById('erpGlobalContextMenu');if(!menu)return;menu.innerHTML='';items.filter(Boolean).forEach(item=>{if(item.separator){menu.appendChild(document.createElement('hr'));return}const b=document.createElement('button');b.type='button';b.className=item.danger?'danger':'';b.textContent=(item.icon?item.icon+' ':'')+item.label;b.onclick=()=>{menu.classList.remove('show');item.action?.()};menu.appendChild(b)});menu.style.left=Math.max(8,Math.min(x,innerWidth-240))+'px';menu.style.top=Math.max(8,Math.min(y,innerHeight-menu.offsetHeight-15))+'px';menu.classList.add('show')}
+document.addEventListener('contextmenu',e=>{const a=e.target.closest('a[href]');if(!a||a.closest('.erp-workspace-tabs')||a.href.startsWith('javascript:'))return;e.preventDefault();const title=(a.textContent||a.title||'السجل').trim();erpContextMenu([{icon:'↗',label:'فتح',action:()=>location.href=a.href},{icon:'▣',label:'فتح في شاشة جديدة',action:()=>erpOpen(a.href,true,title)},{icon:'□',label:'فتح في نافذة المتصفح',action:()=>window.open(a.href,'_blank')}],e.clientX,e.clientY)});
+document.addEventListener('auxclick',e=>{const a=e.target.closest('a[href]');if(a&&e.button===1){e.preventDefault();erpOpen(a.href,true,(a.textContent||'شاشة').trim())}});
+document.addEventListener('click',e=>{document.getElementById('erpGlobalContextMenu')?.classList.remove('show');const a=e.target.closest('a[href]');if(a&&e.ctrlKey&&!a.target){e.preventDefault();erpOpen(a.href,true,(a.textContent||'شاشة').trim())}});
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();const s=document.querySelector('#global-search-form input[name=q]');s?.focus();s?.select()}if(e.altKey&&e.key==='ArrowLeft')history.back();if(e.altKey&&e.key==='ArrowRight')history.forward()});
+document.addEventListener('DOMContentLoaded',()=>{erpRememberPage();document.getElementById('erpBackBtn')?.addEventListener('click',()=>history.back());document.getElementById('erpForwardBtn')?.addEventListener('click',()=>history.forward());document.getElementById('erpRefreshBtn')?.addEventListener('click',()=>location.reload());document.querySelectorAll('.table tbody tr').forEach(r=>{if(r.querySelector('a[href]'))r.style.cursor='default'})});
 document.addEventListener("click",function(e){const sb=document.getElementById("erpSidebar");if(window.innerWidth<=900&&sb?.classList.contains("open")&&!sb.contains(e.target)&&!e.target.closest(".mobile-menu-btn")){sb.classList.remove("open");}});
 window.erpUnsavedChanges = false;
 window.erpItemUnits = {{ item_units|tojson }};
