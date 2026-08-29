@@ -43,7 +43,7 @@ body{font-family:Tahoma,Arial,sans-serif;margin:0;background:#eee;color:#111}
 </style>
 </head>
 <body>
-<div class="toolbar"><div><b>قيد {{journal.journal_no}}</b></div><div class="actions"><a href="{{url_for('journal_entries')}}">العودة للقيود</a><button onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div></div>
+<div class="toolbar"><div><b>قيد {{journal.journal_no}}</b></div><div class="actions"><a href="{{url_for('journal_entries')}}" title="العودة إلى قائمة القيود">العودة للقيود</a><button onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div></div>
 
 <div class="sheet">
   <div class="top-grid">

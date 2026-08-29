@@ -8,22 +8,13 @@
   </div>
   <div class="erp-toolbar no-print">
     <button type="button" class="erp-tool-btn" data-new-document="1" data-new-url="{{ url_for('journal_entries') }}">📄 <span>مستند جديد</span></button>
-    <button type="button" class="erp-tool-btn primary" id="saveJournalTop">💾 <span>{{'تعديل وحفظ' if edit_journal else 'حفظ'}}</span></button>
+    <button type="button" class="erp-tool-btn primary" id="saveJournalTop" title="حفظ — Ctrl+S">💾 <span>{{'تعديل وحفظ' if edit_journal else 'حفظ'}}</span></button>
     <button type="button" class="erp-tool-btn success" id="postJournalTop">✅ <span>حفظ وترحيل</span></button>
     <button type="button" class="erp-tool-btn dark" id="savePrintJournal">🖨️ <span>حفظ وطباعة</span></button>
     <button type="button" class="erp-tool-btn" id="previewJournal">👁️ <span>معاينة المسودة</span></button>
-    <button type="button" class="erp-tool-btn" id="addJournalRowTop">➕ <span>إضافة سطر</span></button>
     <a class="erp-tool-btn success" href="{{ url_for('journal_export', q=q) }}">📊 <span>Excel</span></a>
-    <span class="shortcut-hint">Ctrl+S حفظ</span>
-    <span class="shortcut-hint">F2 سطر جديد</span>
   </div>
 </div>
-  <div class="d-flex gap-2">
-    <a class="btn btn-success" href="{{ url_for('journal_export', q=q) }}">تصدير Excel</a>
-    <button class="btn btn-outline-dark" onclick="window.print()">طباعة القائمة</button>
-  </div>
-</div>
-
 <form method="get" class="form-card mb-4">
 <div class="row g-2">
   <div class="col-md-8">

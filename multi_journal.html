@@ -9,7 +9,7 @@
 
   <div class="multi-toolbar no-print">
     <button type="button" class="tool-btn" data-new-document="1" data-new-url="{{ url_for('multi_journal') }}">📄 <span>مستند جديد</span></button>
-    <button type="button" class="tool-btn primary" id="saveBatchTop" title="حفظ الدفعة">
+    <button type="button" class="tool-btn primary" id="saveBatchTop" title="حفظ الدفعة — Ctrl+S">
       💾 <span>حفظ</span>
     </button>
     <button type="button" class="tool-btn dark" id="savePrintBatch" title="حفظ ثم فتح الطباعة">
@@ -18,17 +18,7 @@
     <button type="button" class="tool-btn" id="previewDraft" title="معاينة وطباعة المسودة الحالية">
       👁️ <span>معاينة المسودة</span>
     </button>
-    <button type="button" class="tool-btn" id="addLineTop" title="إضافة سطر">
-      ➕ <span>إضافة سطر</span>
-    </button>
-    <button type="button" class="tool-btn" id="newGroupTop" title="إضافة مجموعة جديدة">
-      📚 <span>مجموعة جديدة</span>
-    </button>
-    <span class="shortcut-hint">Ctrl+S حفظ</span>
-    <span class="shortcut-hint">F2 سطر</span>
-    <span class="shortcut-hint">F3 مجموعة</span>
   </div>
-</div>
 </div>
 
 <div class="form-card mb-4">
@@ -75,7 +65,7 @@
 <datalist id="accountNameList">{% for a in accounts %}<option value="{{a.account_name_ar}}"></option>{% endfor %}</datalist>
 
 <div class="d-flex justify-content-between mt-3">
-<div class="d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addLine">+ إضافة سطر</button><button type="button" class="btn btn-outline-secondary" id="newGroup">+ مجموعة جديدة</button></div>
+<div class="d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addLine" title="F2">+ إضافة سطر</button><button type="button" class="btn btn-outline-secondary" id="newGroup" title="F3">+ مجموعة جديدة</button></div>
 <div id="groupStatus" class="fw-bold text-danger">لم يتم التحقق بعد</div>
 </div>
 <div class="text-end mt-4"><button class="btn btn-primary btn-lg" id="saveBatchBottom">💾 حفظ دفعة القيود</button></div>
@@ -101,12 +91,14 @@
 </td>
 <td>{{b.batch_no}}</td><td>{{b.batch_date}}</td><td>{{b.description}}</td><td><span class="badge {% if b.status == 'مرحّل' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{b.status}}</span></td>
 <td class="text-nowrap">
-<a class="btn btn-sm btn-outline-primary" href="{{url_for('multi_journal_view',batch_id=b.id)}}">عرض</a>
-<form class="d-inline" method="post" action="{{url_for('multi_journal_post',batch_id=b.id)}}" onsubmit="return confirm('تأكيد ترحيل الدفعة إلى ميزان المراجعة؟')"><button class="btn btn-sm btn-outline-success" type="submit">ترحيل/فحص</button></form>
-<a class="btn btn-sm btn-dark" target="_blank" href="{{url_for('multi_journal_view',batch_id=b.id,print=1)}}">طباعة الدفعة / PDF</a>
-<a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{url_for('multi_journal_view',batch_id=b.id)}}#print-each">كل قيد صفحة</a>
-<a class="btn btn-sm btn-outline-success" href="{{url_for('multi_journal_export',batch_id=b.id)}}">📊 Excel</a>
-<form class="d-inline" method="post" action="{{url_for('multi_journal_delete',batch_id=b.id)}}" onsubmit="return confirm('تأكيد الحذف؟')"><button class="btn btn-sm btn-outline-danger">حذف</button></form>
+<a class="btn btn-sm btn-primary" href="{{url_for('multi_journal_view',batch_id=b.id)}}">عرض</a>
+{% if b.status != 'مرحّل' %}<form class="d-inline" method="post" action="{{url_for('multi_journal_post',batch_id=b.id)}}" onsubmit="return confirm('تأكيد ترحيل الدفعة إلى ميزان المراجعة؟')"><button class="btn btn-sm btn-success" type="submit">ترحيل</button></form>{% endif %}
+<details class="d-inline erp-row-more"><summary class="btn btn-sm btn-outline-secondary">المزيد</summary><div class="erp-row-more-menu">
+<a href="{{url_for('multi_journal_view',batch_id=b.id,print=1)}}" target="_blank">طباعة / PDF</a>
+<a href="{{url_for('multi_journal_view',batch_id=b.id)}}#print-each" target="_blank">كل قيد صفحة</a>
+<a href="{{url_for('multi_journal_export',batch_id=b.id)}}">Excel</a>
+{% if b.status != 'مرحّل' %}<form method="post" action="{{url_for('multi_journal_delete',batch_id=b.id)}}" onsubmit="return confirm('تأكيد الحذف؟')"><button class="text-danger">حذف</button></form>{% endif %}
+</div></details>
 </td></tr>{% else %}<tr><td colspan="6" class="text-center text-muted py-4">لا توجد دفعات محفوظة</td></tr>{% endfor %}</tbody>
 </table>
 </div>

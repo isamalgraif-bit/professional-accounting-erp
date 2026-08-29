@@ -5506,7 +5506,7 @@ def account_view(account_id):
     """, {"id": account_id})
 
     movements = rows("""
-        SELECT j.journal_no,j.journal_date,j.status,l.debit,l.credit,
+        SELECT j.id AS journal_id,j.journal_no,j.journal_date,j.status,l.debit,l.credit,
                l.line_description,l.invoice_number,l.invoice_date
         FROM journal_entry_lines l
         JOIN journal_entries j ON j.id=l.journal_id

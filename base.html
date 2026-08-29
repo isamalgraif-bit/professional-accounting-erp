@@ -191,6 +191,13 @@ label,.form-label{font-weight:650;color:#334155;margin-bottom:6px}
 .erp-empty-state{text-align:center;color:#94a3b8;padding:28px 12px!important}.erp-empty-state::before{content:'لا توجد بيانات لعرضها';display:block;font-size:13px;color:#64748b}
 .erp-record-actions{display:flex;gap:7px;flex-wrap:wrap}.erp-related-links{display:flex;gap:7px;flex-wrap:wrap}.erp-related-links a{border:1px solid #d8e0eb;background:#fff;padding:6px 9px;border-radius:8px;text-decoration:none;font-size:12px}
 .erp-smart-row-menu .erp-menu-section{padding:6px 10px 3px;color:#94a3b8;font-size:10px;font-weight:800;text-transform:uppercase}
+
+.erp-row-more{position:relative}.erp-row-more>summary{list-style:none;cursor:pointer}.erp-row-more>summary::-webkit-details-marker{display:none}
+.erp-row-more-menu{position:absolute;left:0;top:calc(100% + 5px);z-index:1500;min-width:160px;background:#fff;border:1px solid #d8e0eb;border-radius:10px;padding:6px;box-shadow:0 14px 32px rgba(15,23,42,.16)}
+.erp-row-more-menu a,.erp-row-more-menu button{display:block;width:100%;border:0;background:transparent;text-align:right;text-decoration:none;color:#334155;padding:8px 10px;border-radius:7px;font-size:12px}
+.erp-row-more-menu a:hover,.erp-row-more-menu button:hover{background:#eef4ff}
+.erp-clean-toolbar .shortcut-hint{display:none!important}
+
 @media(max-width:900px){.erp-command-bar{top:0}.erp-shortcuts{grid-template-columns:1fr}.erp-side-collapsed .content{margin-right:0;width:100%}.erp-workspace-tabs{max-width:100vw}.erp-page-title,.erp-sticky-header,.d-flex.justify-content-between.align-items-center.mb-4{padding:11px!important}.table td,.table th{white-space:nowrap}}
 
 </style>
@@ -401,7 +408,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('erpCommandPalette')?.addEventListener('click',e=>{if(e.target.id==='erpCommandPalette')erpCloseCommands()});
   new MutationObserver(()=>erpSmartEnhance()).observe(document.querySelector('main.content')||document.body,{childList:true,subtree:true});
 });
-document.addEventListener('click',()=>document.querySelectorAll('.erp-more-wrap.open').forEach(x=>x.classList.remove('open')));
+document.addEventListener('click',e=>{document.querySelectorAll('.erp-more-wrap.open').forEach(x=>x.classList.remove('open'));document.querySelectorAll('details.erp-row-more[open]').forEach(d=>{if(!d.contains(e.target))d.removeAttribute('open')})});
 document.addEventListener('keydown',e=>{if(e.altKey&&e.key.toLowerCase()==='k'){e.preventDefault();erpOpenCommands()}if(e.key==='Escape')erpCloseCommands()});
 
 document.addEventListener("click",function(e){const sb=document.getElementById("erpSidebar");if(window.innerWidth<=900&&sb?.classList.contains("open")&&!sb.contains(e.target)&&!e.target.closest(".mobile-menu-btn")){sb.classList.remove("open");}});
