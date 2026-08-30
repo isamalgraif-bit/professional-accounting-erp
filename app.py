@@ -4905,9 +4905,12 @@ def party_edit(party_type,party_id):
     cfg=party_crud_config(party_type)
     if not cfg:
         return "نوع السجل غير صحيح",404
-    party=row(f"SELECT id,name,name_en,vat_number,phone,email,{cfg['account_field']} AS party_account_id FROM {cfg['table']} WHERE id=:id",{"id":party_id})
-    if not party:
+    party_record=row(f"SELECT id,name,name_en,vat_number,phone,email,{cfg['account_field']} AS party_account_id FROM {cfg['table']} WHERE id=:id",{"id":party_id})
+    if not party_record:
         return f"{cfg['label']} غير موجود",404
+    # Templates must receive stable key/value data rather than depending on
+    # SQLAlchemy RowMapping attribute lookup semantics.
+    party=dict(party_record)
     if request.method=="POST":
         name=(request.form.get("name") or "").strip()
         if not name:
@@ -4918,7 +4921,7 @@ def party_edit(party_type,party_id):
         if duplicate:
             flash(f"يوجد {cfg['label']} آخر بالاسم نفسه","danger")
             return redirect(request.url)
-        requested_account=request.form.get("party_account_id")
+        requested_account=(request.form.get("party_account_id") or "").strip() or party.get("party_account_id")
         account_types=cfg["account_types"]
         placeholders=",".join(f":type{i}" for i in range(len(account_types)))
         account_params={f"type{i}":value for i,value in enumerate(account_types)}
@@ -4947,7 +4950,8 @@ def party_edit(party_type,party_id):
           email=COALESCE(NULLIF(:email,''),email),
           {cfg['account_field']}=:party_account_id WHERE id=:id""",
           {"name":name,"name_en":name_en,"vat":(request.form.get("vat_number") or "").strip(),
-           "phone":(request.form.get("phone") or "").strip(),"email":(request.form.get("email") or "").strip(),
+           "phone":(request.form.get("phone") or "").strip() or (party.get("phone") or "").strip(),
+           "email":(request.form.get("email") or "").strip() or (party.get("email") or "").strip(),
            "party_account_id":requested_account,
            "id":party_id})
         audit("UPDATE",party_type.upper(),f"تعديل {cfg['label']}: {name}")
@@ -4956,8 +4960,8 @@ def party_edit(party_type,party_id):
     account_types=cfg["account_types"]
     placeholders=",".join(f":type{i}" for i in range(len(account_types)))
     params={f"type{i}":value for i,value in enumerate(account_types)}
-    party_accounts=rows(f"""SELECT id,account_code,account_name_ar FROM chart_of_accounts
-      WHERE active=1 AND accepts_entries=1 AND account_type IN ({placeholders}) ORDER BY account_code""",params)
+    party_accounts=[dict(account) for account in rows(f"""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+      WHERE active=1 AND accepts_entries=1 AND account_type IN ({placeholders}) ORDER BY account_code""",params)]
     return render_template("party_edit.html",party=party,party_type=party_type,cfg=cfg,party_accounts=party_accounts)
 
 @app.route("/parties/<party_type>/<int:party_id>/delete",methods=["POST"])
