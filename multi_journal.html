@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block auto_save_toast %}<div id="globalSaveToast" class="toast-save">تم حفظ المسودة تلقائيًا</div>{% endblock %}
 {% block content %}
 
 <div class="multi-page-header">
@@ -46,7 +47,7 @@
 </div>
 
 <div class="table-responsive" style="max-height:540px">
-<table class="table table-bordered table-sm align-middle" class="multi-entry-grid">
+<table class="table table-bordered table-sm align-middle multi-entry-grid">
 <thead class="table-light" style="position:sticky;top:0">
 <tr>
 <th>المجموعة</th><th>الكود</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th>
@@ -82,7 +83,7 @@
 
 <div class="d-flex justify-content-between mt-3">
 <div class="d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addLine" title="F2">+ إضافة سطر</button><button type="button" class="btn btn-outline-secondary" id="newGroup" title="F3">+ مجموعة جديدة</button></div>
-<div class="erp-primary-summary"><div id="groupStatus" class="fw-bold text-danger">لم يتم التحقق بعد</div><div class="erp-entry-help">F2 إضافة سطر • F3 مجموعة جديدة • Ctrl+S حفظ • Ctrl+G فتح دفعة</div></div>
+<div class="erp-primary-summary"><div id="groupSummaries" class="multi-group-summaries"></div><div id="groupStatus" class="fw-bold text-danger">لم يتم التحقق بعد</div><div class="erp-entry-help">F2 إضافة سطر • F3 مجموعة جديدة • Ctrl+S حفظ • Ctrl+G فتح دفعة</div></div>
 </div>
 
 </form>
@@ -155,9 +156,10 @@
 
 .multi-navigator{display:grid;grid-template-columns:minmax(300px,1fr) auto;gap:18px;align-items:end}.multi-more{position:relative}.multi-more>summary{list-style:none}.multi-more>summary::-webkit-details-marker{display:none}
 .multi-more-menu{position:absolute;left:0;top:calc(100% + 6px);z-index:1200;min-width:180px;background:#fff;border:1px solid #dbe3ec;border-radius:10px;box-shadow:0 14px 32px rgba(15,23,42,.16);padding:6px}.multi-more-menu button{display:block;width:100%;text-align:right;border:0;background:transparent;padding:9px 10px;border-radius:7px;color:#334155;font-size:12px}.multi-more-menu button:hover{background:#eef4ff}
-.multi-entry-grid{min-width:1880px!important;margin-bottom:0}.multi-entry-grid th,.multi-entry-grid td{min-width:105px}.multi-entry-grid th:first-child,.multi-entry-grid td:first-child{min-width:74px;width:74px}
-.multi-entry-grid th:nth-child(1),.multi-entry-grid td:nth-child(1){position:sticky;right:0;z-index:6;background:#fff}.multi-entry-grid th:nth-child(2),.multi-entry-grid td:nth-child(2){position:sticky;right:74px;z-index:6;min-width:115px;width:115px;background:#fff}.multi-entry-grid th:nth-child(3),.multi-entry-grid td:nth-child(3){position:sticky;right:189px;z-index:6;min-width:205px;width:205px;background:#fff}.multi-entry-grid th:nth-child(4),.multi-entry-grid td:nth-child(4){position:sticky;right:394px;z-index:6;min-width:105px;width:105px;background:#fff}.multi-entry-grid th:nth-child(5),.multi-entry-grid td:nth-child(5){position:sticky;right:499px;z-index:6;min-width:105px;width:105px;background:#fff;box-shadow:-5px 0 8px rgba(15,23,42,.05)}
+.multi-entry-grid{min-width:2200px!important;margin-bottom:0;table-layout:fixed}.multi-entry-grid th,.multi-entry-grid td{min-width:125px;width:125px;white-space:nowrap}.multi-entry-grid th:first-child,.multi-entry-grid td:first-child{min-width:82px;width:82px}.multi-entry-grid input,.multi-entry-grid select{min-width:100%;text-overflow:ellipsis}.multi-entry-grid th:nth-child(3),.multi-entry-grid td:nth-child(3){min-width:230px;width:230px}.multi-entry-grid th:nth-child(9),.multi-entry-grid td:nth-child(9){min-width:230px;width:230px}.multi-entry-grid th:nth-child(13),.multi-entry-grid td:nth-child(13){min-width:220px;width:220px}
+.multi-entry-grid th:nth-child(1),.multi-entry-grid td:nth-child(1){position:sticky;right:0;z-index:6;background:#fff}.multi-entry-grid th:nth-child(2),.multi-entry-grid td:nth-child(2){position:sticky;right:82px;z-index:6;min-width:125px;width:125px;background:#fff}.multi-entry-grid th:nth-child(3),.multi-entry-grid td:nth-child(3){position:sticky;right:207px;z-index:6;min-width:230px;width:230px;background:#fff}.multi-entry-grid th:nth-child(4),.multi-entry-grid td:nth-child(4){position:sticky;right:437px;z-index:6;min-width:125px;width:125px;background:#fff}.multi-entry-grid th:nth-child(5),.multi-entry-grid td:nth-child(5){position:sticky;right:562px;z-index:6;min-width:125px;width:125px;background:#fff;box-shadow:-5px 0 8px rgba(15,23,42,.08)}
 .multi-entry-grid thead th:nth-child(-n+5){background:#edf3f9!important;z-index:8}.multi-entry-grid tbody tr:nth-child(even) td:nth-child(-n+5){background:#fbfcfe}.multi-entry-grid tbody tr:hover td:nth-child(-n+5){background:#f1f6ff}.group-cell{text-align:center}.group-badge{display:inline-grid;place-items:center;min-width:30px;height:28px;padding:0 7px;border-radius:8px;background:#eaf2ff;color:#174ea6;font-weight:800}.batch-no-link{font-weight:800;text-decoration:none;color:#174ea6}.batch-no-link:hover{text-decoration:underline}
+.multi-group-summaries{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:7px}.multi-group-summary{display:grid;grid-template-columns:auto repeat(3,auto) auto;gap:7px;align-items:center;padding:6px 8px;border:1px solid #dbe3ec;border-radius:9px;background:#f8fafc;font-size:11px}.multi-group-summary strong{font-size:12px}.multi-group-summary .balanced{color:#087f5b}.multi-group-summary .unbalanced{color:#b42318}
 @media(max-width:900px){.multi-navigator{grid-template-columns:1fr}.multi-navigator .erp-record-nav .btn{flex:1}}
 
 .multi-page-header{
@@ -249,6 +251,14 @@ function checkGroups(){
    groups[g].c+=Number(r.querySelector('.credit').value||0);
  });
  const bad=Object.entries(groups).filter(([g,v])=>Math.abs(v.d-v.c)>=.005||v.d===0);
+ const summaries=document.getElementById('groupSummaries');
+ summaries.innerHTML='';
+ Object.entries(groups).sort(([a],[b])=>Number(a)-Number(b)).forEach(([g,v])=>{
+   const diff=Math.abs(v.d-v.c),balanced=diff<.005&&v.d>0;
+   const item=document.createElement('div');item.className='multi-group-summary';
+   item.innerHTML=`<strong>المجموعة ${g}</strong><span>مدين: ${v.d.toFixed(2)}</span><span>دائن: ${v.c.toFixed(2)}</span><span>الفرق: ${diff.toFixed(2)}</span><b class="${balanced?'balanced':'unbalanced'}">${balanced?'متوازن':'غير متوازن'}</b>`;
+   summaries.appendChild(item);
+ });
  groupStatus.textContent=bad.length?`مجموعات غير متوازنة: ${bad.map(x=>x[0]).join(', ')}`:'جميع المجموعات متوازنة';
  groupStatus.className=bad.length?'fw-bold text-danger':'fw-bold text-success';
 }

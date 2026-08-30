@@ -4938,8 +4938,14 @@ def party_edit(party_type,party_id):
             flash(f"يوجد {cfg['label']} آخر بالاسم نفسه","danger")
             return redirect(request.url)
         name_en=(request.form.get("name_en") or "").strip() or transliterate_arabic_name(name)
+        # Preserve contact details when an older/stale form submits blank values.
+        # The edit form normally posts the loaded values; NULLIF is a second line
+        # of defence against silently erasing existing contact information.
         execute(f"""UPDATE {cfg['table']} SET name=:name,name_en=:name_en,
-          vat_number=:vat,phone=:phone,email=:email,{cfg['account_field']}=:party_account_id WHERE id=:id""",
+          vat_number=:vat,
+          phone=COALESCE(NULLIF(:phone,''),phone),
+          email=COALESCE(NULLIF(:email,''),email),
+          {cfg['account_field']}=:party_account_id WHERE id=:id""",
           {"name":name,"name_en":name_en,"vat":(request.form.get("vat_number") or "").strip(),
            "phone":(request.form.get("phone") or "").strip(),"email":(request.form.get("email") or "").strip(),
            "party_account_id":requested_account,
@@ -11596,38 +11602,41 @@ def payables_aging():
 @app.route("/executive-dashboard")
 @login_required
 def executive_dashboard():
-    sales=row("""SELECT COALESCE(SUM(total),0) amount,COUNT(*) count
+    # Executive widgets span optional modules that can be at different schema
+    # revisions during a staging rollout.  Isolate each read-only KPI so one
+    # unavailable widget cannot turn the whole dashboard into HTTP 500.
+    sales=bi_safe_row("""SELECT COALESCE(SUM(total),0) amount,COUNT(*) count
                  FROM invoices WHERE status='معتمدة'""")
-    purchases=row("""SELECT COALESCE(SUM(total),0) amount,COUNT(*) count
+    purchases=bi_safe_row("""SELECT COALESCE(SUM(total),0) amount,COUNT(*) count
                      FROM supplier_invoices WHERE status='معتمدة'""")
-    expenses=row("""SELECT COALESCE(SUM(amount),0) amount,COUNT(*) count
+    expenses=bi_safe_row("""SELECT COALESCE(SUM(amount),0) amount,COUNT(*) count
                     FROM expenses WHERE status='معتمدة'""")
-    receivables=row("""SELECT COALESCE(SUM(i.total-COALESCE(
+    receivables=bi_safe_row("""SELECT COALESCE(SUM(i.total-COALESCE(
       (SELECT SUM(a.allocated_amount) FROM invoice_payment_allocations a
        WHERE a.invoice_id=i.id),0)),0) amount
       FROM invoices i WHERE i.status='معتمدة'""")
-    payables=row("""SELECT COALESCE(SUM(total),0) amount FROM supplier_invoices
+    payables=bi_safe_row("""SELECT COALESCE(SUM(total),0) amount FROM supplier_invoices
                     WHERE status='معتمدة'""")
-    inventory_value=row("""SELECT COALESCE(SUM(quantity*cost),0) amount FROM inventory
+    inventory_value=bi_safe_row("""SELECT COALESCE(SUM(quantity*COALESCE(unit_cost,cost,0)),0) amount FROM inventory
                            WHERE active=1""")
-    cash=row("""SELECT COALESCE(SUM(CASE WHEN l.debit>0 THEN l.debit ELSE -l.credit END),0) amount
+    cash=bi_safe_row("""SELECT COALESCE(SUM(CASE WHEN l.debit>0 THEN l.debit ELSE -l.credit END),0) amount
       FROM journal_entry_lines l JOIN journal_entries j ON j.id=l.journal_id
       JOIN chart_of_accounts a ON a.id=l.account_id
       WHERE j.status='مرحّل' AND a.account_type='أصل'
       AND (a.account_name_ar ILIKE '%صندوق%' OR a.account_name_ar ILIKE '%بنك%'
            OR a.account_name_ar ILIKE '%نقد%')""")
-    top_customers=rows("""SELECT c.name,SUM(i.total) total FROM invoices i
+    top_customers=bi_safe_rows("""SELECT c.name,SUM(i.total) total FROM invoices i
       JOIN customers c ON c.id=i.customer_id WHERE i.status='معتمدة'
       GROUP BY c.id,c.name ORDER BY total DESC LIMIT 10""")
-    top_suppliers=rows("""SELECT s.name,SUM(si.total) total FROM supplier_invoices si
+    top_suppliers=bi_safe_rows("""SELECT s.name,SUM(si.total) total FROM supplier_invoices si
       JOIN suppliers s ON s.id=si.supplier_id WHERE si.status='معتمدة'
       GROUP BY s.id,s.name ORDER BY total DESC LIMIT 10""")
-    low_stock=rows("""SELECT sku,name,quantity,reorder_level FROM inventory
+    low_stock=bi_safe_rows("""SELECT sku,name,quantity,reorder_level FROM inventory
       WHERE active=1 AND quantity<=reorder_level ORDER BY quantity LIMIT 10""")
-    monthly=rows("""SELECT TO_CHAR(invoice_date,'YYYY-MM') month,SUM(total) total
+    monthly=bi_safe_rows("""SELECT TO_CHAR(invoice_date,'YYYY-MM') month,SUM(total) total
       FROM invoices WHERE status='معتمدة'
       GROUP BY TO_CHAR(invoice_date,'YYYY-MM') ORDER BY month DESC LIMIT 12""")
-    net_profit=round(float(sales["amount"] or 0)-float(expenses["amount"] or 0),2)
+    net_profit=round(float(sales.get("amount") or 0)-float(expenses.get("amount") or 0),2)
     return render_template("executive_dashboard.html",sales=sales,purchases=purchases,
       expenses=expenses,receivables=receivables,payables=payables,
       inventory_value=inventory_value,cash=cash,net_profit=net_profit,
