@@ -43,7 +43,10 @@ class PartyEditRouteTests(unittest.TestCase):
         if "FROM customers" in query or "FROM suppliers" in query:
             if "id<>:id" in query:
                 return None
-            return dict(self.party)
+            record=dict(self.party)
+            account_id=record.pop("party_account_id")
+            record["receivable_account_id" if "FROM customers" in query else "payable_account_id"]=account_id
+            return record
         if "FROM chart_of_accounts" in query:
             return dict(self.account)
         if "FROM settings" in query:
@@ -66,6 +69,38 @@ class PartyEditRouteTests(unittest.TestCase):
         self.assertIn('name="phone" value="0500000001"', html)
         self.assertIn('name="email" value="qa-customer-updated@example.invalid"', html)
         self.assertIn('value="113" data-account-name="عميل اختبار" selected', html)
+
+    def test_route_uses_real_database_column_names_and_passes_normalized_values(self):
+        cfg = erp.party_crud_config("customer")
+        model = erp.party_edit_view_model({
+            "id": 8,
+            "name": "عميل اختبار",
+            "name_en": "QA Customer",
+            "vat_number": "300000000000003",
+            "phone": "0500000001",
+            "email": "qa-customer-updated@example.invalid",
+            "receivable_account_id": 113,
+        }, cfg)
+        self.assertEqual(model["phone"], "0500000001")
+        self.assertEqual(model["email"], "qa-customer-updated@example.invalid")
+        self.assertEqual(model["party_account_id"], 113)
+
+    def test_current_linked_account_is_requested_even_outside_new_account_filter(self):
+        captured = {}
+        def capture_rows(query, params=None):
+            captured["query"] = query
+            captured["params"] = params
+            return [dict(self.account)]
+        with erp.app.test_client() as client, \
+             patch.object(erp, "row", side_effect=self._row), \
+             patch.object(erp, "rows", side_effect=capture_rows), \
+             patch.object(erp, "has_permission", return_value=True):
+            with client.session_transaction() as session:
+                session["user_id"] = 1
+            response = client.get("/parties/customer/8/edit")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("OR id=:current_account_id", captured["query"])
+        self.assertEqual(captured["params"]["current_account_id"], 113)
 
     def test_supplier_get_uses_the_same_mapping_safely(self):
         response = self._get("supplier")
