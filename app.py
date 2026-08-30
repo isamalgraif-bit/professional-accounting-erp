@@ -4899,18 +4899,29 @@ def party_crud_config(party_type):
         return {"table":"suppliers","label":"المورد","list_endpoint":"suppliers","statement_type":"supplier","account_field":"payable_account_id","account_types":("خصم","التزام")}
     return None
 
+def party_edit_view_model(party_record,cfg):
+    """Normalize database column names for the shared customer/supplier form."""
+    record=dict(party_record)
+    return {
+        "id":record.get("id"),
+        "name":record.get("name") or "",
+        "name_en":record.get("name_en") or "",
+        "vat_number":record.get("vat_number") or "",
+        "phone":record.get("phone") or "",
+        "email":record.get("email") or "",
+        "party_account_id":record.get(cfg["account_field"]),
+    }
+
 @app.route("/parties/<party_type>/<int:party_id>/edit",methods=["GET","POST"])
 @login_required
 def party_edit(party_type,party_id):
     cfg=party_crud_config(party_type)
     if not cfg:
         return "نوع السجل غير صحيح",404
-    party_record=row(f"SELECT id,name,name_en,vat_number,phone,email,{cfg['account_field']} AS party_account_id FROM {cfg['table']} WHERE id=:id",{"id":party_id})
+    party_record=row(f"SELECT * FROM {cfg['table']} WHERE id=:id",{"id":party_id})
     if not party_record:
         return f"{cfg['label']} غير موجود",404
-    # Templates must receive stable key/value data rather than depending on
-    # SQLAlchemy RowMapping attribute lookup semantics.
-    party=dict(party_record)
+    party=party_edit_view_model(party_record,cfg)
     if request.method=="POST":
         name=(request.form.get("name") or "").strip()
         if not name:
@@ -4960,8 +4971,10 @@ def party_edit(party_type,party_id):
     account_types=cfg["account_types"]
     placeholders=",".join(f":type{i}" for i in range(len(account_types)))
     params={f"type{i}":value for i,value in enumerate(account_types)}
+    params["current_account_id"]=party.get("party_account_id")
     party_accounts=[dict(account) for account in rows(f"""SELECT id,account_code,account_name_ar FROM chart_of_accounts
-      WHERE active=1 AND accepts_entries=1 AND account_type IN ({placeholders}) ORDER BY account_code""",params)]
+      WHERE (active=1 AND accepts_entries=1 AND account_type IN ({placeholders}))
+         OR id=:current_account_id ORDER BY account_code""",params)]
     return render_template("party_edit.html",party=party,party_type=party_type,cfg=cfg,party_accounts=party_accounts)
 
 @app.route("/parties/<party_type>/<int:party_id>/delete",methods=["POST"])
