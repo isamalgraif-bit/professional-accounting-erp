@@ -961,21 +961,23 @@ def financial_where(filters, journal_alias="j", line_alias="l"):
 
 def account_signed_balance(account_type, debit, credit):
     debit=float(debit or 0); credit=float(credit or 0)
-    if account_type in ("التزام","حقوق ملكية","إيراد"):
+    # "خصم" and "التزام" are both used in this system's data as the Liability
+    # account type label (see chart_of_accounts.html account_type options).
+    if account_type in ("التزام","خصم","حقوق ملكية","إيراد"):
         return credit-debit
     return debit-credit
 
 def financial_statement_data(filters):
     where,params=financial_where(filters)
     data=rows(f"""SELECT a.id,a.account_code,a.account_name_ar,a.account_name_en,
-      a.account_type,a.statement_type,a.normal_balance,
+      a.account_type,a.statement_type,a.normal_balance,a.parent_id,
       COALESCE(SUM(l.debit),0) total_debit,COALESCE(SUM(l.credit),0) total_credit
       FROM chart_of_accounts a
       LEFT JOIN journal_entry_lines l ON l.account_id=a.id
       LEFT JOIN journal_entries j ON j.id=l.journal_id AND {where}
       WHERE a.active=1
       GROUP BY a.id,a.account_code,a.account_name_ar,a.account_name_en,
-               a.account_type,a.statement_type,a.normal_balance
+               a.account_type,a.statement_type,a.normal_balance,a.parent_id
       ORDER BY a.account_code""",params)
     result=[]
     for r in data:
@@ -985,20 +987,65 @@ def financial_statement_data(filters):
         result.append(item)
     return result
 
+def expense_root_account(item, accounts_by_id):
+    """Walk an expense-type account up its chart-of-accounts parent chain and
+    return its top-level ancestor. Used to classify Cost of Sales vs Operating
+    Expenses by where an account actually sits in the hierarchy, rather than by
+    matching keywords in the account's own name (a child account such as
+    "5100 مواد المشاريع" carries no such keyword even though its parent,
+    "5000 تكلفة المبيعات والمشاريع", clearly identifies it as Cost of Sales)."""
+    current = item
+    seen = set()
+    while current.get("parent_id") and current["parent_id"] in accounts_by_id and current["id"] not in seen:
+        seen.add(current["id"])
+        current = accounts_by_id[current["parent_id"]]
+    return current
+
+def party_control_account_id(party_type, party_id):
+    """A customer/supplier's own journal_entry_lines rows include their AR/AP
+    control-account line as well as the Revenue/VAT/COGS lines of the same
+    invoice posting (post_invoice_to_ledger tags customer_id on all of them so
+    other reports, e.g. VAT, can find the party on those lines too). A party
+    statement must show only the party's own receivable/payable line, so
+    resolve that one control account here the same way invoice posting does:
+    the party's own linked account if it has one, else the company-wide
+    default from Settings."""
+    if party_type=="customer":
+        party=row("SELECT receivable_account_id FROM customers WHERE id=:id",{"id":party_id})
+        linked=party["receivable_account_id"] if party else None
+        default_field="customer_account_id"
+    else:
+        party=row("SELECT payable_account_id FROM suppliers WHERE id=:id",{"id":party_id})
+        linked=party["payable_account_id"] if party else None
+        default_field="supplier_account_id"
+    if linked:
+        return linked
+    settings_row=row(f"SELECT {default_field} FROM settings WHERE id=1")
+    return settings_row[default_field] if settings_row else None
+
 def party_opening_balance(party_type,party_id,date_from=""):
     if not party_id or not date_from:
         return 0.0
     field="customer_id" if party_type=="customer" else "supplier_id"
+    conditions=[f"l.{field}=:party","j.status='مرحّل'","j.journal_date<:date_from"]
+    params={"party":party_id,"date_from":date_from}
+    control_account=party_control_account_id(party_type,party_id)
+    if control_account:
+        conditions.append("l.account_id=:control_account")
+        params["control_account"]=control_account
     result=row(f"""SELECT COALESCE(SUM(l.debit-l.credit),0) balance
                    FROM journal_entry_lines l JOIN journal_entries j ON j.id=l.journal_id
-                   WHERE l.{field}=:party AND j.status='مرحّل' AND j.journal_date<:date_from""",
-               {"party":party_id,"date_from":date_from})
+                   WHERE {' AND '.join(conditions)}""",params)
     return round(float(result["balance"] or 0),2)
 
 def party_statement_rows(party_type, party_id, date_from="", date_to="", opening_balance=0):
     field="customer_id" if party_type=="customer" else "supplier_id"
     conditions=[f"l.{field}=:party","j.status='مرحّل'"]
     params={"party":party_id}
+    control_account=party_control_account_id(party_type,party_id)
+    if control_account:
+        conditions.append("l.account_id=:control_account")
+        params["control_account"]=control_account
     if date_from:
         conditions.append("j.journal_date>=:date_from");params["date_from"]=date_from
     if date_to:
@@ -1510,7 +1557,8 @@ def budget_summary_rows(budget_id):
         actual=budget_actual_amount(x["account_id"],budget["fiscal_year"],x["month_no"],
                                     x["cost_center_id"],budget["branch_id"])
         # For revenue accounts, actual normally carries a credit sign.
-        if x["account_type"] in ("إيراد","التزام","حقوق ملكية"):
+        # "خصم" and "التزام" are both used in this system's data as the Liability type.
+        if x["account_type"] in ("إيراد","التزام","خصم","حقوق ملكية"):
             actual=-actual
         item["actual_amount"]=actual
         item["variance_amount"]=round(float(x["budget_amount"] or 0)-actual,2)
@@ -1817,12 +1865,26 @@ def executive_dashboard_data():
         FROM employees
     """, defaults={"active_employees":0,"monthly_basic_payroll":0})
 
+    # inventory.quantity is a cached column kept in sync by record_inventory_movement();
+    # an item with no recorded movements (e.g. a leftover test item seeded with a raw
+    # quantity value) never gets that cache corrected, so it can go stale. The Inventory
+    # list screen already works around this by computing live quantity from
+    # inventory_movements (see the "stock_qty" subquery in inventory()); mirror that
+    # here so the BI KPIs match what the Inventory screen actually shows instead of the
+    # stale cached column.
     inventory = bi_safe_row("""
         SELECT
           COUNT(*) item_count,
-          COUNT(*) FILTER (WHERE active=1 AND quantity<=reorder_level) low_stock_count,
-          COALESCE(SUM(quantity*COALESCE(unit_cost,0)),0) inventory_value
-        FROM inventory
+          COUNT(*) FILTER (WHERE active=1 AND stock_qty<=reorder_level) low_stock_count,
+          COALESCE(SUM(stock_qty*COALESCE(unit_cost,cost,0)),0) inventory_value
+        FROM (
+          SELECT i.active,i.reorder_level,i.unit_cost,i.cost,
+            COALESCE((SELECT SUM(CASE
+              WHEN m.movement_type IN ('رصيد افتتاحي','استلام','تسوية زيادة','تحويل وارد','مرتجع مبيعات') THEN m.quantity
+              WHEN m.movement_type IN ('صرف','تسوية نقص','تحويل صادر','بيع','مرتجع مشتريات') THEN -m.quantity ELSE 0 END)
+              FROM inventory_movements m WHERE m.item_id=i.id),0) stock_qty
+          FROM inventory i
+        ) inv
     """, defaults={"item_count":0,"low_stock_count":0,"inventory_value":0})
 
     gross_profit = round(
@@ -2574,15 +2636,24 @@ def import_excel_row(module_name, data, import_mode):
             if not parent:
                 raise ValueError(f"الحساب الأب {data['parent_code']} غير موجود.")
             parent_id=parent["id"]
+        # Compute normal_balance/statement_type from the imported account_type the
+        # same way the manual "Add Account" route does (chart_of_accounts() POST
+        # handler), instead of leaving them unset — an unset normal_balance falls
+        # back to the table's DEFAULT 'مدين', which is only correct for
+        # Asset/Expense accounts, not Liability/Equity/Revenue.
+        normal_balance="مدين" if data["account_type"] in ("أصل","مصروف") else "دائن"
+        statement_type="قائمة الدخل" if data["account_type"] in ("إيراد","مصروف") else "الميزانية العمومية"
         payload={"code":data["account_code"],"ar":data["account_name_ar"],
                  "en":(data.get("account_name_en") or "").strip() or transliterate_arabic_name(data["account_name_ar"]),"type":data["account_type"],
                  "parent":parent_id,"accepts":int(float(data.get("accepts_entries") or 1)),
-                 "active":int(float(data.get("active") or 1))}
+                 "active":int(float(data.get("active") or 1)),
+                 "normal_balance":normal_balance,"statement_type":statement_type}
         if existing:
             if import_mode=="إضافة وتحديث":
                 execute("""UPDATE chart_of_accounts SET account_name_ar=:ar,
                   account_name_en=:en,account_type=:type,parent_id=:parent,
-                  accepts_entries=:accepts,active=:active WHERE id=:id""",
+                  accepts_entries=:accepts,active=:active,
+                  normal_balance=:normal_balance,statement_type=:statement_type WHERE id=:id""",
                   {**payload,"id":existing["id"]})
                 updated=True
             else:
@@ -2590,8 +2661,10 @@ def import_excel_row(module_name, data, import_mode):
         else:
             if import_mode in {"تحديث فقط","تحديث الحقول الفارغة فقط"}: raise ValueError("لم يتم العثور على حساب مطابق لتحديثه.")
             execute("""INSERT INTO chart_of_accounts(account_code,account_name_ar,
-              account_name_en,account_type,parent_id,accepts_entries,active)
-              VALUES(:code,:ar,:en,:type,:parent,:accepts,:active)""",payload)
+              account_name_en,account_type,parent_id,accepts_entries,
+              normal_balance,statement_type,active)
+              VALUES(:code,:ar,:en,:type,:parent,:accepts,
+              :normal_balance,:statement_type,:active)""",payload)
 
     elif module_name=="cost_centers":
         existing=system_record or row("SELECT id FROM cost_centers WHERE code=:code",
@@ -4364,12 +4437,19 @@ def init_db():
         if existing:
             ids[code] = existing
         else:
+            # Compute normal_balance/statement_type the same way the manual
+            # "Add Account" route does (see chart_of_accounts() POST handler),
+            # instead of leaving them to the table's DEFAULT 'مدين' — which is
+            # only correct for Asset/Expense accounts, not Liability/Equity/Revenue.
+            normal_balance = "مدين" if typ in ("أصل", "مصروف") else "دائن"
+            statement_type = "قائمة الدخل" if typ in ("إيراد", "مصروف") else "الميزانية العمومية"
             new_id = db.session.execute(
                 text("""INSERT INTO chart_of_accounts(
                     account_code,account_name_ar,account_name_en,account_type,
-                    parent_id,level,accepts_entries,active)
-                    VALUES(:c,:ar,:en,:t,:p,:l,:a,1) RETURNING id"""),
-                {"c":code,"ar":ar,"en":en,"t":typ,"p":parent_id,"l":level,"a":accepts}
+                    parent_id,level,accepts_entries,normal_balance,statement_type,active)
+                    VALUES(:c,:ar,:en,:t,:p,:l,:a,:nb,:st,1) RETURNING id"""),
+                {"c":code,"ar":ar,"en":en,"t":typ,"p":parent_id,"l":level,"a":accepts,
+                 "nb":normal_balance,"st":statement_type}
             ).scalar_one()
             ids[code] = new_id
     db.session.execute(text("""
@@ -5175,9 +5255,17 @@ def expenses():
       LEFT JOIN journal_entries j ON j.id=e.journal_id ORDER BY e.id DESC""")
     accts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
                   WHERE active=1 AND accepts_entries=1 ORDER BY account_code""")
+    # The "Expense Account" picker previously reused the same unfiltered list as
+    # "Payment Account" (accts), so it allowed selecting AR/Revenue/any account
+    # for the expense side of the entry. Restrict it to Expense-type accounts;
+    # "Payment Account" (cash/bank/etc.) is left as-is (out of this fix's scope).
+    expense_accts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
+                  WHERE active=1 AND accepts_entries=1 AND account_type='مصروف'
+                  ORDER BY account_code""")
     return render_template("expenses.html",rows=expense_rows,
       branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
       suppliers=rows("SELECT * FROM suppliers ORDER BY name"),accounts=accts,
+      expense_accounts=expense_accts,
       centers=rows("SELECT * FROM cost_centers WHERE active=1 ORDER BY code"))
 
 
@@ -10423,7 +10511,16 @@ def projects_center():
       FROM projects p LEFT JOIN customers c ON c.id=p.customer_id
       LEFT JOIN cost_centers cc ON cc.id=p.cost_center_id
       ORDER BY p.id DESC""")
-    return render_template("projects_center.html",projects=data)
+    # Summary KPI tiles, matching the pattern already used on the HR Center
+    # landing page (hr_complete_center.html), for consistency across module
+    # "Center" screens. Computed from the same data already fetched above.
+    stats = {
+        "active_projects": sum(1 for p in data if p["status"]=="نشط"),
+        "total_contract_value": round(sum(float(p["contract_value"] or 0) for p in data),2),
+        "total_revenue": round(sum(float(p["revenue"] or 0) for p in data),2),
+        "total_profit": round(sum(float(p["revenue"] or 0)-float(p["cost"] or 0) for p in data),2),
+    }
+    return render_template("projects_center.html",projects=data,stats=stats)
 
 @app.route("/projects/new",methods=["GET","POST"])
 @login_required
@@ -11478,10 +11575,14 @@ def financial_statements_center():
 def income_statement():
     filters=financial_date_filters()
     data=financial_statement_data(filters)
+    accounts_by_id={x["id"]:x for x in data}
     revenues=[x for x in data if x["account_type"]=="إيراد" and abs(x["balance"])>0.005]
+    def is_cost_of_sales(x):
+        root=expense_root_account(x,accounts_by_id)
+        root_name=root.get("account_name_ar") or ""
+        return "تكلفة" in root_name or "مبيعات" in root_name
     cost_sales=[x for x in data if x["account_type"]=="مصروف" and
-                ("تكلفة" in (x["account_name_ar"] or "") or
-                 "مبيعات" in (x["account_name_ar"] or "")) and abs(x["balance"])>0.005]
+                is_cost_of_sales(x) and abs(x["balance"])>0.005]
     expenses=[x for x in data if x["account_type"]=="مصروف" and x not in cost_sales
               and abs(x["balance"])>0.005]
     total_revenue=round(sum(x["balance"] for x in revenues),2)
@@ -11501,7 +11602,8 @@ def balance_sheet():
     filters=financial_date_filters()
     data=financial_statement_data(filters)
     assets=[x for x in data if x["account_type"]=="أصل" and abs(x["balance"])>0.005]
-    liabilities=[x for x in data if x["account_type"]=="التزام" and abs(x["balance"])>0.005]
+    # "خصم" and "التزام" are both used in this system's data as the Liability type.
+    liabilities=[x for x in data if x["account_type"] in ("التزام","خصم") and abs(x["balance"])>0.005]
     equity=[x for x in data if x["account_type"]=="حقوق ملكية" and abs(x["balance"])>0.005]
     revenue_total=sum(x["balance"] for x in data if x["account_type"]=="إيراد")
     expense_total=sum(x["balance"] for x in data if x["account_type"]=="مصروف")
@@ -11553,8 +11655,9 @@ def financial_statements_export():
     filters=financial_date_filters()
     data=financial_statement_data(filters)
     if statement=="balance":
+        # "خصم" and "التزام" are both used in this system's data as the Liability type.
         records=[[x["account_code"],x["account_name_ar"],x["account_type"],x["balance"]]
-                 for x in data if x["account_type"] in ("أصل","التزام","حقوق ملكية")
+                 for x in data if x["account_type"] in ("أصل","التزام","خصم","حقوق ملكية")
                  and abs(x["balance"])>0.005]
         return xlsx_response("balance_sheet.xlsx","الميزانية العمومية",
           ["الكود","الحساب","النوع","الرصيد"],records)

@@ -10,7 +10,7 @@
 <div class="col-md-3"><label>المورد</label><select class="form-select" name="supplier_id"><option value="">بدون</option>{% for s in suppliers %}<option value="{{s.id}}">{{s.name}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>رقم الفاتورة</label><input class="form-control" name="invoice_number"></div>
 <div class="col-md-2"><label>تاريخ الفاتورة</label><input class="form-control" type="date" name="invoice_date"></div>
-<div class="col-md-4"><label>حساب المصروف</label><select class="form-select" name="expense_account_id" required><option value="">اختر</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
+<div class="col-md-4"><label>حساب المصروف</label><select class="form-select" name="expense_account_id" required><option value="">اختر</option>{% for a in expense_accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
 <div class="col-md-4"><label>حساب السداد</label><select class="form-select" name="payment_account_id" required><option value="">اختر</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>مركز التكلفة</label><select class="form-select" name="cost_center_id"><option value="">بدون</option>{% for c in centers %}<option value="{{c.id}}">{{c.code}} - {{c.name}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>الفرع</label><select class="form-select" name="branch_id">{% for b in branches %}<option value="{{b.id}}">{{b.name}}</option>{% endfor %}</select></div>
