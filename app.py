@@ -6240,11 +6240,17 @@ def journal_entries():
     q = request.args.get("q", "").strip()
     edit_id = request.args.get("edit_id", type=int)
     edit_journal = row("SELECT * FROM journal_entries WHERE id=:id", {"id": edit_id}) if edit_id else None
-    edit_lines = rows("""SELECT l.*,a.account_code,a.account_name_ar,cc.code cost_center_code,cc.name cost_center_name
+    # dict(x): the template does {{edit_lines|tojson}} to seed the edit-form JS.
+    # Flask's JSON encoder can only serialize plain dicts, not SQLAlchemy's
+    # RowMapping - passing rows() output directly here raised an uncaught
+    # TypeError (500) whenever an existing journal was opened for edit.
+    # purchase_requisitions() etc. already convert with dict(x) for the same
+    # reason; this route was missing it.
+    edit_lines = [dict(x) for x in rows("""SELECT l.*,a.account_code,a.account_name_ar,cc.code cost_center_code,cc.name cost_center_name
                          FROM journal_entry_lines l
                          JOIN chart_of_accounts a ON a.id=l.account_id
                          LEFT JOIN cost_centers cc ON cc.id=l.cost_center_id
-                         WHERE l.journal_id=:id ORDER BY l.id""", {"id": edit_id}) if edit_journal else []
+                         WHERE l.journal_id=:id ORDER BY l.id""", {"id": edit_id})] if edit_journal else []
     journal_params = {}
     journal_where = ""
     if q:
