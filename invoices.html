@@ -122,7 +122,7 @@
 <tr>
 <td>{{r.invoice_no}}</td><td>{{r.invoice_date}}</td><td>{{r.customer_name}}</td>
 <td>{{"%.2f"|format(r.subtotal)}}</td><td>{{"%.2f"|format(r.vat)}}</td><td>{{"%.2f"|format(r.total)}}</td>
-<td><span class="badge bg-secondary">{{r.status}}</span></td>
+<td>{{r.status}}</td>
 <td>
 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_view', invoice_id=r.id) }}">عرض</a>
 {% if r.status in ['مسودة','معاد للتعديل'] %}
