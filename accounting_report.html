@@ -4,7 +4,11 @@
 <div><h3 class="mb-1">{{definition.no}}. {{definition.title}}</h3><small class="text-muted">مصدر البيانات: القيود المحاسبية</small></div>
 <div class="d-flex gap-2">
 <a class="btn btn-outline-secondary" href="{{url_for('reports')}}">مركز التقارير</a>
+{% if slug=='vat-report' %}
+<button class="btn btn-success" type="button" onclick="exportVatReportExcel()">Excel</button>
+{% else %}
 <a class="btn btn-success" href="{{url_for('accounting_report_export',slug=slug,**filters)}}">Excel</a>
+{% endif %}
 <button class="btn btn-dark" onclick="window.print()">طباعة / PDF</button>
 </div>
 </div>
@@ -33,11 +37,34 @@
 </div>
 
 {% if slug=='vat-report' %}
+{% set vat_calc = namespace(output_base=0.0, output_vat=0.0, input_base=0.0, input_vat=0.0) %}
+{% for r in data %}
+    {% set raw_base = r.amount_before_tax|float %}
+    {% set raw_vat = r.vat_amount|float %}
+    {% set is_system_sales_invoice = r.tax_direction=='مخرجات' and r.invoice_number and r.invoice_number[:4]=='INV-' and raw_base>0 and raw_vat>0 %}
+    {% if is_system_sales_invoice %}
+        {# System sales posting marks the VAT line taxable; reverse the configured rate from the legacy report calculation. #}
+        {% set row_vat = raw_base %}
+        {% set row_base = (raw_base * raw_base / raw_vat) %}
+    {% else %}
+        {# Manual taxable journal rows already store the before-tax base on the taxable line. #}
+        {% set row_base = raw_base %}
+        {% set row_vat = raw_vat %}
+    {% endif %}
+    {% if r.tax_direction=='مخرجات' %}
+        {% set vat_calc.output_base = vat_calc.output_base + row_base %}
+        {% set vat_calc.output_vat = vat_calc.output_vat + row_vat %}
+    {% elif r.tax_direction=='مدخلات' %}
+        {% set vat_calc.input_base = vat_calc.input_base + row_base %}
+        {% set vat_calc.input_vat = vat_calc.input_vat + row_vat %}
+    {% endif %}
+{% endfor %}
+{% set vat_net = vat_calc.output_vat - vat_calc.input_vat %}
 <div class="row g-3 mb-4 vat-summary">
-<div class="col-xl-3 col-md-6"><div class="erp-kpi"><small>إجمالي ضريبة المخرجات</small><h5>{{"%.2f"|format(summary.output_vat or 0)}}</h5></div></div>
-<div class="col-xl-3 col-md-6"><div class="erp-kpi"><small>إجمالي ضريبة المدخلات</small><h5>{{"%.2f"|format(summary.input_vat or 0)}}</h5></div></div>
-<div class="col-xl-3 col-md-6"><div class="erp-kpi"><small>صافي ضريبة القيمة المضافة</small><h5>{{"%.2f"|format(summary.net_vat or 0)}}</h5></div></div>
-<div class="col-xl-3 col-md-6"><div class="erp-kpi"><small>الحالة</small><h5>{{'مستحق' if (summary.net_vat or 0) >= 0 else 'رصيد ضريبي'}}</h5></div></div>
+<div class="col-xl-3 col-md-6"><div class="erp-kpi"><small>إجمالي ضريبة المخرجات</small><h5>{{"%.2f"|format(vat_calc.output_vat)}}</h5></div></div>
+<div class="col-xl-3 col-md-6"><div class="erp-kpi"><small>إجمالي ضريبة المدخلات</small><h5>{{"%.2f"|format(vat_calc.input_vat)}}</h5></div></div>
+<div class="col-xl-3 col-md-6"><div class="erp-kpi"><small>صافي ضريبة القيمة المضافة</small><h5>{{"%.2f"|format(vat_net)}}</h5></div></div>
+<div class="col-xl-3 col-md-6"><div class="erp-kpi"><small>الحالة</small><h5>{{'مستحق' if vat_net >= 0 else 'رصيد ضريبي'}}</h5></div></div>
 </div>
 {% elif summary %}
 <div class="row g-3 mb-4">
@@ -51,10 +78,10 @@
 <div class="vat-section form-card report-area mb-4">
 <div class="d-flex justify-content-between align-items-center mb-3">
 <div><h4 class="mb-1">مخرجات ضريبة القيمة المضافة</h4><small class="text-muted">المبيعات والفواتير المرحلة</small></div>
-<div class="vat-section-total">الإجمالي قبل الضريبة: <strong>{{"%.2f"|format(summary.output_base or 0)}}</strong> &nbsp; | &nbsp; الضريبة: <strong>{{"%.2f"|format(summary.output_vat or 0)}}</strong></div>
+<div class="vat-section-total">الإجمالي قبل الضريبة: <strong>{{"%.2f"|format(vat_calc.output_base)}}</strong> &nbsp; | &nbsp; الضريبة: <strong>{{"%.2f"|format(vat_calc.output_vat)}}</strong></div>
 </div>
 <div class="table-responsive">
-<table class="table table-bordered table-hover table-sm align-middle vat-table">
+<table id="vatOutputTable" class="table table-bordered table-hover table-sm align-middle vat-table">
 <thead><tr><th>اسم العميل</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th><th>التاريخ</th><th>المبلغ قبل الضريبة</th><th>ضريبة القيمة المضافة</th></tr></thead>
 <tbody>
 {% set output_ns = namespace(count=0) %}
@@ -66,8 +93,16 @@
 <td>{{r.tax_number or '-'}}</td>
 <td>{{r.invoice_number or '-'}}</td>
 <td>{{r.invoice_date or r.journal_date or '-'}}</td>
-<td>{{"%.2f"|format(r.amount_before_tax)}}</td>
-<td>{{"%.2f"|format(r.vat_amount)}}</td>
+{% set raw_base = r.amount_before_tax|float %}
+{% set raw_vat = r.vat_amount|float %}
+{% set is_system_sales_invoice = r.invoice_number and r.invoice_number[:4]=='INV-' and raw_base>0 and raw_vat>0 %}
+{% if is_system_sales_invoice %}
+<td>{{"%.2f"|format(raw_base * raw_base / raw_vat)}}</td>
+<td>{{"%.2f"|format(raw_base)}}</td>
+{% else %}
+<td>{{"%.2f"|format(raw_base)}}</td>
+<td>{{"%.2f"|format(raw_vat)}}</td>
+{% endif %}
 </tr>
 {% endif %}
 {% endfor %}
@@ -76,8 +111,8 @@
 {% endif %}
 <tr class="table-light fw-bold">
 <td colspan="4">الإجمالي</td>
-<td>{{"%.2f"|format(summary.output_base or 0)}}</td>
-<td>{{"%.2f"|format(summary.output_vat or 0)}}</td>
+<td>{{"%.2f"|format(vat_calc.output_base)}}</td>
+<td>{{"%.2f"|format(vat_calc.output_vat)}}</td>
 </tr>
 </tbody>
 </table>
@@ -87,10 +122,10 @@
 <div class="vat-section form-card report-area mb-4">
 <div class="d-flex justify-content-between align-items-center mb-3">
 <div><h4 class="mb-1">مدخلات ضريبة القيمة المضافة</h4><small class="text-muted">المشتريات والمصروفات المرحلة</small></div>
-<div class="vat-section-total">الإجمالي قبل الضريبة: <strong>{{"%.2f"|format(summary.input_base or 0)}}</strong> &nbsp; | &nbsp; الضريبة: <strong>{{"%.2f"|format(summary.input_vat or 0)}}</strong></div>
+<div class="vat-section-total">الإجمالي قبل الضريبة: <strong>{{"%.2f"|format(vat_calc.input_base)}}</strong> &nbsp; | &nbsp; الضريبة: <strong>{{"%.2f"|format(vat_calc.input_vat)}}</strong></div>
 </div>
 <div class="table-responsive">
-<table class="table table-bordered table-hover table-sm align-middle vat-table">
+<table id="vatInputTable" class="table table-bordered table-hover table-sm align-middle vat-table">
 <thead><tr><th>اسم المورد</th><th>الرقم الضريبي</th><th>رقم الفاتورة</th><th>التاريخ</th><th>المبلغ قبل الضريبة</th><th>ضريبة القيمة المضافة</th></tr></thead>
 <tbody>
 {% set input_ns = namespace(count=0) %}
@@ -112,8 +147,8 @@
 {% endif %}
 <tr class="table-light fw-bold">
 <td colspan="4">الإجمالي</td>
-<td>{{"%.2f"|format(summary.input_base or 0)}}</td>
-<td>{{"%.2f"|format(summary.input_vat or 0)}}</td>
+<td>{{"%.2f"|format(vat_calc.input_base)}}</td>
+<td>{{"%.2f"|format(vat_calc.input_vat)}}</td>
 </tr>
 </tbody>
 </table>
@@ -122,11 +157,11 @@
 
 <div class="form-card vat-net-summary mb-4">
 <h4 class="mb-3">ملخص ضريبة القيمة المضافة</h4>
-<table class="table table-bordered mb-0">
+<table id="vatSummaryTable" class="table table-bordered mb-0">
 <tbody>
-<tr><th>إجمالي ضريبة المخرجات</th><td>{{"%.2f"|format(summary.output_vat or 0)}}</td></tr>
-<tr><th>إجمالي ضريبة المدخلات</th><td>{{"%.2f"|format(summary.input_vat or 0)}}</td></tr>
-<tr class="fw-bold"><th>صافي ضريبة القيمة المضافة (المخرجات - المدخلات)</th><td>{{"%.2f"|format(summary.net_vat or 0)}}</td></tr>
+<tr><th>إجمالي ضريبة المخرجات</th><td>{{"%.2f"|format(vat_calc.output_vat)}}</td></tr>
+<tr><th>إجمالي ضريبة المدخلات</th><td>{{"%.2f"|format(vat_calc.input_vat)}}</td></tr>
+<tr class="fw-bold"><th>صافي ضريبة القيمة المضافة (المخرجات - المدخلات)</th><td>{{"%.2f"|format(vat_net)}}</td></tr>
 </tbody>
 </table>
 </div>
@@ -172,5 +207,53 @@
 .print-header{display:flex;justify-content:space-between;align-items:center;gap:20px;background:#fff;border:1px solid #dbe3ec;border-radius:14px;padding:18px;margin-bottom:18px}.print-header img{max-width:120px;max-height:65px}.report-area th{white-space:nowrap;position:sticky;top:0;z-index:2}.report-signatures{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:25px}.report-signatures div{height:80px;border:1px solid #cbd5e1;text-align:center;padding:10px;background:#fff}.vat-section h4{font-weight:700}.vat-section-total{font-size:.95rem}.vat-table th,.vat-table td{text-align:center;vertical-align:middle}.vat-table th:first-child,.vat-table td:first-child{text-align:right}.vat-net-summary{max-width:760px;margin-inline:auto}.vat-net-summary th{width:70%}
 @media print{@page{size:A4 landscape;margin:7mm}.print-header{border:0;padding:0}.report-area{border:0;padding:0}.report-area th{position:static}.report-signatures{page-break-inside:avoid}.vat-section,.vat-net-summary{page-break-inside:avoid}.vat-summary{display:none}}
 </style>
-<script>document.getElementById('reportNow').textContent=new Date().toLocaleString('ar-SA');</script>
+<script>
+document.getElementById('reportNow').textContent=new Date().toLocaleString('ar-SA');
+
+function exportVatReportExcel(){
+    const outputTable = document.getElementById('vatOutputTable');
+    const inputTable = document.getElementById('vatInputTable');
+    const summaryTable = document.getElementById('vatSummaryTable');
+    if(!outputTable || !inputTable || !summaryTable) return;
+
+    const title = 'تقرير ضريبة القيمة المضافة';
+    const period = 'الفترة: {{filters.date_from or "البداية"}} إلى {{filters.date_to or "اليوم"}}';
+    const company = '{{company.company_name_ar|replace("'", "\\'")}}';
+
+    const html = `
+    <html dir="rtl">
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body{font-family:Arial,sans-serif;direction:rtl}
+        h2,h3{text-align:center}
+        table{border-collapse:collapse;width:100%;margin:14px 0}
+        th,td{border:1px solid #777;padding:6px;text-align:center}
+        th{background:#eee}
+      </style>
+    </head>
+    <body>
+      <h2>${company}</h2>
+      <h3>${title}</h3>
+      <div style="text-align:center">${period}</div>
+      <h3>مخرجات ضريبة القيمة المضافة</h3>
+      ${outputTable.outerHTML}
+      <h3>مدخلات ضريبة القيمة المضافة</h3>
+      ${inputTable.outerHTML}
+      <h3>ملخص ضريبة القيمة المضافة</h3>
+      ${summaryTable.outerHTML}
+    </body>
+    </html>`;
+
+    const blob = new Blob(['\ufeff', html], {type:'application/vnd.ms-excel;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'vat_report.xls';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+</script>
 {% endblock %}
