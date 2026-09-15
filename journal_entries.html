@@ -535,7 +535,9 @@ if(editLines.length){
   calc();
 }
 
+{% if not edit_journal %}
 journalDate.value=new Date().toISOString().slice(0,10);
+{% endif %}
 calc();
 
 document.getElementById('journalForm').addEventListener('submit', function(event){
