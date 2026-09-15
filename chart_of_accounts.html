@@ -105,7 +105,7 @@
 <td>{{'نعم' if a.accepts_entries else 'لا'}}</td>
 <td>{{a.entries_count}}</td>
 <td>{{"%.2f"|format(a.balance)}}</td>
-<td><span class="badge {{'bg-success' if a.active else 'bg-secondary'}}">{{'نشط' if a.active else 'غير نشط'}}</span></td>
+<td>{{'نشط' if a.active else 'غير نشط'}}</td>
 
 </tr>
 {% endfor %}

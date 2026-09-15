@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
 <div class="erp-module-page">
 <div class="erp-page-title"><div><h3>دورة المشتريات</h3><small class="text-muted">Procure-to-Pay</small></div><a class="btn btn-primary" href="{{url_for('purchase_requisitions')}}">طلب شراء جديد</a></div>
-<div class="row g-3">
+<div class="row g-3 mb-4">
 {% for title,desc,url,count in [
 ('طلبات الشراء','الإنشاء والموافقة',url_for('purchase_requisitions'),stats.requisitions),
 ('أوامر الشراء','التوريد والأسعار',url_for('purchase_orders'),stats.orders),
