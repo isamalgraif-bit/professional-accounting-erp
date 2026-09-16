@@ -2,25 +2,33 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4 no-print">
   <div><h3 class="mb-0">العملاء</h3><small class="text-muted">Arabic & English Names</small></div>
-  <button type="button" class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('customers')}}">📄 جديد</button>
+  <button type="button" class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('customers')}}"><i class="bi bi-file-earmark-plus"></i> جديد</button>
 </div>
 <div class="form-card mb-4">
-<form method="post" data-track-unsaved="1"><div class="row g-3">
-<div class="col-md-4"><label>اسم العميل بالعربية</label>
+<form method="post" data-track-unsaved="1">
+<div class="erp-section-caption"><strong>بيانات الهوية</strong></div>
+<div class="row g-3 mb-3">
+<div class="col-md-6"><label>اسم العميل بالعربية</label>
 <input class="form-control" id="partyNameAr" name="name" required placeholder="اكتب الاسم العربي"></div>
-<div class="col-md-4"><label>Customer Name in English</label>
+<div class="col-md-6"><label>Customer Name in English</label>
 <div class="input-group"><input class="form-control" id="partyNameEn" name="name_en" placeholder="Generated automatically">
-<button class="btn btn-outline-primary" type="button" id="generateEnglish">🌐 توليد</button></div>
+<button class="btn btn-outline-primary" type="button" id="generateEnglish"><i class="bi bi-translate"></i> توليد</button></div>
 <small class="text-muted">تحويل مجاني محلي ويمكن تعديل الاسم قبل الحفظ.</small></div>
-<div class="col-md-2"><label>الرقم الضريبي</label><input class="form-control" name="vat_number"></div>
-<div class="col-md-2"><label>الجوال</label><input class="form-control" name="phone"></div>
+</div>
+<div class="erp-section-caption"><strong>بيانات التواصل</strong></div>
+<div class="row g-3 mb-3">
+<div class="col-md-4"><label>الرقم الضريبي</label><input class="form-control" name="vat_number"></div>
+<div class="col-md-4"><label>الجوال</label><input class="form-control" name="phone"></div>
 <div class="col-md-4"><label>البريد</label><input class="form-control" name="email"></div>
-<div class="col-md-6"><label>حساب العميل في دليل الحسابات *</label><select class="form-select party-account-selector" name="receivable_account_id" required><option value="">اختر حساب العملاء / الذمم المدينة</option>{% for a in party_accounts %}<option value="{{a.id}}" data-account-name="{{a.account_name_ar}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select><small class="text-muted">اختيار الحساب يوحّد اسم العميل مع اسم الحساب تلقائياً.</small></div>
-<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">💾 حفظ</button></div>
+</div>
+<div class="erp-section-caption"><strong>الربط المحاسبي</strong></div>
+<div class="row g-3">
+<div class="col-md-10"><label>حساب العميل في دليل الحسابات *</label><select class="form-select party-account-selector" name="receivable_account_id" required><option value="">اختر حساب العملاء / الذمم المدينة</option>{% for a in party_accounts %}<option value="{{a.id}}" data-account-name="{{a.account_name_ar}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select><small class="text-muted">اختيار الحساب يوحّد اسم العميل مع اسم الحساب تلقائياً.</small></div>
+<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100"><i class="bi bi-save"></i> حفظ</button></div>
 </div></form></div>
 <div class="form-card"><div class="table-responsive"><table class="table table-striped align-middle">
 <thead><tr><th>الرقم</th><th>الاسم العربي</th><th>English Name</th><th>الرقم الضريبي</th><th>الجوال</th><th>البريد</th><th>حساب العميل</th><th>الإجراءات</th></tr></thead>
-<tbody>{% for r in rows %}<tr><td>{{r.id}}</td><td>{{r.name}}</td><td dir="ltr">{{r.name_en or '-'}}</td><td>{{r.vat_number or '-'}}</td><td>{{r.phone or '-'}}</td><td>{{r.email or '-'}}</td><td>{% if r.receivable_account_id %}<span class="badge bg-success">مرتبط</span>{% else %}<span class="badge bg-danger">غير مرتبط</span>{% endif %}</td><td class="text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{{url_for('party_statements',party_type='customer',party_id=r.id)}}">📄 كشف حساب</a> <a class="btn btn-sm btn-outline-success" href="{{url_for('party_edit',party_type='customer',party_id=r.id)}}">✏️ تعديل</a> <form class="d-inline" method="post" action="{{url_for('party_delete',party_type='customer',party_id=r.id)}}" onsubmit="return confirm('تأكيد حذف العميل؟ لن يتم الحذف إذا كانت له حركات مالية.')"><button class="btn btn-sm btn-outline-danger">🗑️ حذف</button></form></td></tr>{% endfor %}</tbody>
+<tbody>{% for r in rows %}<tr><td>{{r.id}}</td><td>{{r.name}}</td><td dir="ltr">{{r.name_en or '-'}}</td><td>{{r.vat_number or '-'}}</td><td>{{r.phone or '-'}}</td><td>{{r.email or '-'}}</td><td>{% if r.receivable_account_id %}<span class="erp-status-pill success">مرتبط</span>{% else %}<span class="erp-status-pill danger">غير مرتبط</span>{% endif %}</td><td class="text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{{url_for('party_statements',party_type='customer',party_id=r.id)}}"><i class="bi bi-journal-text"></i> كشف حساب</a> <a class="btn btn-sm btn-outline-success" href="{{url_for('party_edit',party_type='customer',party_id=r.id)}}"><i class="bi bi-pencil-square"></i> تعديل</a> <form class="d-inline" method="post" action="{{url_for('party_delete',party_type='customer',party_id=r.id)}}" onsubmit="return confirm('تأكيد حذف العميل؟ لن يتم الحذف إذا كانت له حركات مالية.')"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> حذف</button></form></td></tr>{% endfor %}</tbody>
 </table></div></div>
 <script>
 async function generateEnglishName(){
