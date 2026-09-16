@@ -4,7 +4,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4 no-print">
   <h3 class="mb-0">الموظفون</h3>
   <div class="d-flex gap-2 flex-wrap">
-    <button type="button" class="btn btn-outline-primary" data-new-document="1" data-new-url="{{ url_for('employees') }}">📄 جديد</button>
+    <button type="button" class="btn btn-outline-primary" data-new-document="1" data-new-url="{{ url_for('employees') }}"><i class="bi bi-file-earmark-plus"></i> جديد</button>
   </div>
 </div>
 
@@ -16,7 +16,7 @@
 <div class="col-md-2"><label>الراتب الأساسي</label><input class="form-control" type="number" step="0.01" name="basic_salary"></div>
 <div class="col-md-2"><label>البدلات</label><input class="form-control" type="number" step="0.01" name="allowances"></div>
 <div class="col-md-4"><label>حساب الموظف في دليل الحسابات</label><select class="form-select" name="employee_account_id"><option value="">يستخدم حساب الرواتب العام</option>{% for a in employee_accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select><small class="text-muted">عند تحديده تُرحّل مستحقات هذا الموظف إلى حسابه مباشرة.</small></div>
-<div class="col-md-2"><button class="btn btn-primary w-100 mt-4">💾 حفظ وربط</button></div>
+<div class="col-md-2"><button class="btn btn-primary w-100 mt-4"><i class="bi bi-save"></i> حفظ وربط</button></div>
 </div></form></div>
 <div class="form-card"><table data-erp-list-type="employee" class="table table-striped"><thead><tr><th>الرقم</th><th>الاسم</th><th>الوظيفة</th><th>الفرع</th><th>الراتب</th><th>البدلات</th><th>الحساب المرتبط</th></tr></thead>
 <tbody>{% for r in rows %}<tr><td>{{r.employee_no}}</td><td>{{r.name}}</td><td>{{r.job_title}}</td><td>{{r.branch_name}}</td><td>{{r.basic_salary}}</td><td>{{r.allowances}}</td><td>{% if r.employee_account_id %}{{r.account_code}} - {{r.employee_account_name}}{% else %}<span class="badge bg-secondary">الحساب العام</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>

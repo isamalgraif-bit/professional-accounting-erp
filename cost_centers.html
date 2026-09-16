@@ -3,15 +3,15 @@
 <div class="d-flex justify-content-between align-items-center mb-4 no-print">
   <h3 class="mb-0">مراكز التكلفة</h3>
   <div class="d-flex gap-2 flex-wrap">
-    <button type="button" class="btn btn-outline-primary" data-new-document="1" data-new-url="{{ url_for('cost_centers') }}">📄 جديد</button>
+    <button type="button" class="btn btn-outline-primary" data-new-document="1" data-new-url="{{ url_for('cost_centers') }}"><i class="bi bi-file-earmark-plus"></i> جديد</button>
   </div>
 </div>
 
 <div class="form-card mb-4"><form method="post" class="row g-3" data-track-unsaved="1">
 <div class="col-md-3"><label>الكود</label><input class="form-control" name="code" required></div>
 <div class="col-md-5"><label>اسم مركز التكلفة</label><input class="form-control" name="name" required></div>
-<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100">إضافة</button></div>
+<div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100"><i class="bi bi-plus-lg"></i> إضافة</button></div>
 </form></div>
 <div class="form-card"><table class="table table-striped"><thead><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr></thead>
-<tbody>{% for c in centers %}<tr><td>{{c.code}}</td><td>{{c.name}}</td><td>{{'نشط' if c.active else 'غير نشط'}}</td></tr>{% endfor %}</tbody></table></div>
+<tbody>{% for c in centers %}<tr><td>{{c.code}}</td><td>{{c.name}}</td><td><span class="erp-status-pill {{'success' if c.active else 'danger'}}">{{'نشط' if c.active else 'غير نشط'}}</span></td></tr>{% endfor %}</tbody></table></div>
 {% endblock %}

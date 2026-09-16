@@ -3,11 +3,11 @@
 <div class="erp-sticky-header">
 <div><h3 class="mb-1">الخزينة والسندات</h3><small class="text-muted">Receipts, Payments & Transfers</small></div>
 <div class="erp-toolbar no-print">
-<button class="erp-tool-btn" type="button" data-new-document="1" data-new-url="{{url_for('treasury')}}">📄 جديد</button>
-<button class="erp-tool-btn primary" type="button" id="saveTop">💾 حفظ</button>
-<button class="erp-tool-btn dark" type="button" id="savePrint">🖨️ حفظ وطباعة</button>
-<button class="erp-tool-btn" type="button" id="previewDraft">👁️ معاينة</button>
-<a class="erp-tool-btn success" href="{{url_for('treasury_export')}}">📊 Excel</a>
+<button class="erp-tool-btn" type="button" data-new-document="1" data-new-url="{{url_for('treasury')}}"><i class="bi bi-file-earmark-plus"></i> جديد</button>
+<button class="erp-tool-btn primary" type="button" id="saveTop"><i class="bi bi-save"></i> حفظ</button>
+<button class="erp-tool-btn dark" type="button" id="savePrint"><i class="bi bi-printer"></i> حفظ وطباعة</button>
+<button class="erp-tool-btn" type="button" id="previewDraft"><i class="bi bi-eye"></i> معاينة</button>
+<a class="erp-tool-btn success" href="{{url_for('treasury_export')}}"><i class="bi bi-file-earmark-excel"></i> Excel</a>
 </div></div>
 
 <div class="form-card mb-4">
@@ -29,7 +29,7 @@
 <div class="col-md-2"><label>المبلغ</label><input class="form-control" type="number" step=".01" min=".01" name="amount" required></div>
 <div class="col-md-2"><label>مركز التكلفة</label><select class="form-select" name="cost_center_id"><option value="">بدون</option>{% for c in centers %}<option value="{{c.id}}">{{c.code}} - {{c.name}}</option>{% endfor %}</select></div>
 <div class="col-md-12"><label>البيان</label><input class="form-control" name="description"></div>
-<div class="col-12 text-end"><button class="btn btn-primary">💾 حفظ السند</button></div>
+<div class="col-12 text-end"><button class="btn btn-primary"><i class="bi bi-save"></i> حفظ السند</button></div>
 </div></form></div>
 
 <div class="form-card mb-3"><form method="get"><div class="row g-2"><div class="col-md-9"><input class="form-control" name="q" value="{{q}}" placeholder="بحث برقم السند أو المرجع أو الطرف"></div><div class="col-md-3"><button class="btn btn-primary w-100">بحث</button></div></div></form></div>
@@ -39,10 +39,10 @@
 <tbody>{% for v in vouchers %}<tr>
 <td>{{v.voucher_no}}</td><td>{{v.voucher_type}}</td><td>{{v.voucher_date}}</td><td>{{v.customer_name or v.supplier_name or '-'}}</td><td>{{"%.2f"|format(v.amount)}}</td><td>{{v.cash_account_name}}</td><td>{{v.counter_account_name}}</td><td>{{v.status}}</td>
 <td>{% if v.journal_id %}<a href="{{url_for('journal_view',journal_id=v.journal_id)}}">{{v.journal_no}}</a>{% else %}-{% endif %}</td>
-<td class="text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{{url_for('treasury_view',voucher_id=v.id)}}">عرض</a>
-<a class="btn btn-sm btn-dark" target="_blank" href="{{url_for('treasury_view',voucher_id=v.id,print=1)}}">طباعة/PDF</a>
-{% if not v.journal_id %}<form class="d-inline" method="post" action="{{url_for('treasury_post',voucher_id=v.id)}}"><button class="btn btn-sm btn-success">ترحيل</button></form>
-<form class="d-inline" method="post" action="{{url_for('treasury_delete',voucher_id=v.id)}}" onsubmit="return confirm('تأكيد الحذف؟')"><button class="btn btn-sm btn-danger">حذف</button></form>{% endif %}</td>
+<td class="text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{{url_for('treasury_view',voucher_id=v.id)}}"><i class="bi bi-eye"></i> عرض</a>
+<a class="btn btn-sm btn-dark" target="_blank" href="{{url_for('treasury_view',voucher_id=v.id,print=1)}}"><i class="bi bi-printer"></i> طباعة/PDF</a>
+{% if not v.journal_id %}<form class="d-inline" method="post" action="{{url_for('treasury_post',voucher_id=v.id)}}"><button class="btn btn-sm btn-success"><i class="bi bi-check2-circle"></i> ترحيل</button></form>
+<form class="d-inline" method="post" action="{{url_for('treasury_delete',voucher_id=v.id)}}" onsubmit="return confirm('تأكيد الحذف؟')"><button class="btn btn-sm btn-danger"><i class="bi bi-trash"></i> حذف</button></form>{% endif %}</td>
 </tr>{% endfor %}</tbody></table></div></div>
 
 <style>

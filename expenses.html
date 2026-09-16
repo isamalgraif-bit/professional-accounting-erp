@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block content %}
-<div class="erp-page-title"><div><h3>المصروفات</h3><small class="text-muted">ترحيل محاسبي تلقائي</small></div><button class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('expenses')}}">📄 جديد</button></div>
+<div class="erp-page-title"><div><h3>المصروفات</h3><small class="text-muted">ترحيل محاسبي تلقائي</small></div><button class="btn btn-outline-primary" data-new-document="1" data-new-url="{{url_for('expenses')}}"><i class="bi bi-file-earmark-plus"></i> جديد</button></div>
 <div class="form-card mb-4"><form method="post" data-track-unsaved="1"><div class="row g-3">
 <div class="col-md-2"><label>التاريخ</label><input class="form-control" type="date" name="expense_date" required></div>
 <div class="col-md-2"><label>الحالة</label><select class="form-select" name="status"><option>مسودة</option><option>معتمدة</option></select></div>
@@ -14,7 +14,7 @@
 <div class="col-md-4"><label>حساب السداد</label><select class="form-select" name="payment_account_id" required><option value="">اختر</option>{% for a in accounts %}<option value="{{a.id}}">{{a.account_code}} - {{a.account_name_ar}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>مركز التكلفة</label><select class="form-select" name="cost_center_id"><option value="">بدون</option>{% for c in centers %}<option value="{{c.id}}">{{c.code}} - {{c.name}}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label>الفرع</label><select class="form-select" name="branch_id">{% for b in branches %}<option value="{{b.id}}">{{b.name}}</option>{% endfor %}</select></div>
-<div class="col-12 text-end"><button class="btn btn-primary">💾 حفظ</button></div>
+<div class="col-12 text-end"><button class="btn btn-primary"><i class="bi bi-save"></i> حفظ</button></div>
 </div></form></div>
 <div class="form-card"><div class="table-responsive"><table class="table table-striped"><thead><tr><th>التاريخ</th><th>التصنيف</th><th>المورد</th><th>المصروف</th><th>السداد</th><th>قبل الضريبة</th><th>الضريبة</th><th>الإجمالي</th><th>الحالة</th><th>القيد</th><th></th></tr></thead>
 <tbody>{% for r in rows %}<tr><td>{{r.expense_date}}</td><td>{{r.category}}</td><td>{{r.supplier_name or '-'}}</td><td>{{r.expense_account_name or '-'}}</td><td>{{r.payment_account_name or '-'}}</td><td>{{r.amount}}</td><td>{{r.vat}}</td><td>{{r.total}}</td><td>{{r.status}}</td><td>{% if r.journal_id %}<a href="{{url_for('journal_view',journal_id=r.journal_id)}}">{{r.journal_no}}</a>{% else %}-{% endif %}</td><td>{% if not r.journal_id %}<form method="post" action="{{url_for('expense_post',expense_id=r.id)}}"><button class="btn btn-sm btn-success">ترحيل</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table></div></div>
