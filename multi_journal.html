@@ -6,18 +6,18 @@
   <div>
     <div class="d-flex align-items-center gap-2 flex-wrap">
       <h3 class="mb-0">قيود يومية متعددة</h3>
-      <span class="erp-doc-number">دفعة جديدة — الرقم يُنشأ عند الحفظ</span>
+      <span class="erp-doc-number"><i class="bi bi-file-earmark-plus"></i> دفعة جديدة — الرقم يُنشأ عند الحفظ</span>
     </div>
     <small class="text-muted">إدخال عدة قيود مستقلة في دفعة واحدة بسرعة ووضوح</small>
   </div>
   <div class="multi-toolbar no-print">
-    <button type="button" class="tool-btn" data-new-document="1" data-new-url="{{ url_for('multi_journal') }}">📄 <span>جديد</span></button>
-    <button type="button" class="tool-btn primary" id="saveBatchTop" title="حفظ — Ctrl+S">💾 <span>حفظ</span></button>
+    <button type="button" class="tool-btn" data-new-document="1" data-new-url="{{ url_for('multi_journal') }}"><i class="bi bi-file-earmark-plus"></i> <span>جديد</span></button>
+    <button type="button" class="tool-btn primary" id="saveBatchTop" title="حفظ — Ctrl+S"><i class="bi bi-save"></i> <span>حفظ</span></button>
     <details class="multi-more">
-      <summary class="tool-btn">⋯ <span>المزيد</span></summary>
+      <summary class="tool-btn"><i class="bi bi-three-dots"></i> <span>المزيد</span></summary>
       <div class="multi-more-menu">
-        <button type="button" id="savePrintBatch">🖨️ حفظ وطباعة</button>
-        <button type="button" id="previewDraft">👁️ معاينة المسودة</button>
+        <button type="button" id="savePrintBatch"><i class="bi bi-printer"></i> حفظ وطباعة</button>
+        <button type="button" id="previewDraft"><i class="bi bi-eye"></i> معاينة المسودة</button>
       </div>
     </details>
   </div>
@@ -29,10 +29,8 @@
     <button class="btn btn-primary" type="submit">فتح</button>
   </form>
   <div class="erp-record-nav">
-    {% if batch_nav.first %}<a class="btn btn-outline-secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.first.id)}}">⏮ الأول</a>{% else %}<button class="btn btn-outline-secondary" disabled>⏮ الأول</button>{% endif %}
-    <button class="btn btn-outline-primary" disabled>‹ السابق</button>
-    <button class="btn btn-outline-primary" disabled>التالي ›</button>
-    {% if batch_nav.last %}<a class="btn btn-outline-secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.last.id)}}">الأخير ⏭</a>{% else %}<button class="btn btn-outline-secondary" disabled>الأخير ⏭</button>{% endif %}
+    {% if batch_nav.first %}<a class="btn btn-outline-secondary" title="أول دفعة" href="{{url_for('multi_journal_view',batch_id=batch_nav.first.id)}}"><i class="bi bi-chevron-bar-right"></i> الأول</a>{% else %}<button class="btn btn-outline-secondary" disabled><i class="bi bi-chevron-bar-right"></i> الأول</button>{% endif %}
+    {% if batch_nav.last %}<a class="btn btn-outline-secondary" title="آخر دفعة" href="{{url_for('multi_journal_view',batch_id=batch_nav.last.id)}}">الأخير <i class="bi bi-chevron-bar-left"></i></a>{% else %}<button class="btn btn-outline-secondary" disabled>الأخير <i class="bi bi-chevron-bar-left"></i></button>{% endif %}
   </div>
 </div>
 
@@ -82,7 +80,7 @@
 <datalist id="accountNameList">{% for a in accounts %}<option value="{{a.account_name_ar}}"></option>{% endfor %}</datalist>
 
 <div class="d-flex justify-content-between mt-3">
-<div class="d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addLine" title="F2">+ إضافة سطر</button><button type="button" class="btn btn-outline-secondary" id="newGroup" title="F3">+ مجموعة جديدة</button></div>
+<div class="d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addLine" title="F2"><i class="bi bi-plus-lg"></i> إضافة سطر</button><button type="button" class="btn btn-outline-secondary" id="newGroup" title="F3"><i class="bi bi-folder-plus"></i> مجموعة جديدة</button></div>
 <div class="erp-primary-summary"><div id="groupSummaries" class="multi-group-summaries"></div><div id="groupStatus" class="fw-bold text-danger">لم يتم التحقق بعد</div><div class="erp-entry-help">F2 إضافة سطر • F3 مجموعة جديدة • Ctrl+S حفظ • Ctrl+G فتح دفعة</div></div>
 </div>
 
@@ -96,7 +94,7 @@
         onsubmit="return confirmBulkPost();" class="d-flex align-items-center gap-2 flex-wrap">
     <span class="badge bg-secondary" id="selectedBatchCount">0 محدد</span>
     <button type="button" class="btn btn-sm btn-outline-secondary" id="clearBatchSelection" disabled>إلغاء التحديد</button>
-    <button type="submit" class="btn btn-sm btn-success" id="bulkPostButton" disabled>ترحيل المحدد</button>
+    <button type="submit" class="btn btn-sm btn-success" id="bulkPostButton" disabled><i class="bi bi-check2-circle"></i> ترحيل المحدد</button>
   </form>
 </div>
 <div class="table-responsive">
@@ -106,15 +104,15 @@
 <td class="text-center">
 {% if b.status != 'مرحّل' %}<input class="batch-select" type="checkbox" name="batch_ids" value="{{b.id}}" form="bulkPostForm" aria-label="تحديد الدفعة {{b.batch_no}}">{% else %}<span class="text-muted">—</span>{% endif %}
 </td>
-<td><a class="batch-no-link" href="{{url_for('multi_journal_view',batch_id=b.id)}}">{{b.batch_no}}</a></td><td>{{b.batch_date}}</td><td>{{b.description}}</td><td><span class="badge {% if b.status == 'مرحّل' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{b.status}}</span></td>
+<td><a class="batch-no-link" href="{{url_for('multi_journal_view',batch_id=b.id)}}">{{b.batch_no}}</a></td><td>{{b.batch_date}}</td><td>{{b.description}}</td><td><span class="erp-status-pill {% if b.status == 'مرحّل' %}success{% else %}warning{% endif %}">{{b.status}}</span></td>
 <td class="text-nowrap">
-<a class="btn btn-sm btn-primary" href="{{url_for('multi_journal_view',batch_id=b.id)}}">عرض</a>
-{% if b.status != 'مرحّل' %}<form class="d-inline" method="post" action="{{url_for('multi_journal_post',batch_id=b.id)}}" onsubmit="return confirm('تأكيد ترحيل الدفعة إلى ميزان المراجعة؟')"><button class="btn btn-sm btn-success" type="submit">ترحيل</button></form>{% endif %}
-<details class="d-inline erp-row-more"><summary class="btn btn-sm btn-outline-secondary">المزيد</summary><div class="erp-row-more-menu">
-<a href="{{url_for('multi_journal_view',batch_id=b.id,print=1)}}" target="_blank">طباعة / PDF</a>
-<a href="{{url_for('multi_journal_view',batch_id=b.id)}}#print-each" target="_blank">كل قيد صفحة</a>
-<a href="{{url_for('multi_journal_export',batch_id=b.id)}}">Excel</a>
-{% if b.status != 'مرحّل' %}<form method="post" action="{{url_for('multi_journal_delete',batch_id=b.id)}}" onsubmit="return confirm('تأكيد الحذف؟')"><button class="text-danger">حذف</button></form>{% endif %}
+<a class="btn btn-sm btn-primary" href="{{url_for('multi_journal_view',batch_id=b.id)}}"><i class="bi bi-eye"></i> عرض</a>
+{% if b.status != 'مرحّل' %}<form class="d-inline" method="post" action="{{url_for('multi_journal_post',batch_id=b.id)}}" onsubmit="return confirm('تأكيد ترحيل الدفعة إلى ميزان المراجعة؟')"><button class="btn btn-sm btn-success" type="submit"><i class="bi bi-check2-circle"></i> ترحيل</button></form>{% endif %}
+<details class="d-inline erp-row-more"><summary class="btn btn-sm btn-outline-secondary"><i class="bi bi-three-dots"></i> المزيد</summary><div class="erp-row-more-menu">
+<a href="{{url_for('multi_journal_view',batch_id=b.id,print=1)}}" target="_blank"><i class="bi bi-printer"></i> طباعة / PDF</a>
+<a href="{{url_for('multi_journal_view',batch_id=b.id)}}#print-each" target="_blank"><i class="bi bi-files"></i> كل قيد صفحة</a>
+<a href="{{url_for('multi_journal_export',batch_id=b.id)}}"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+{% if b.status != 'مرحّل' %}<form method="post" action="{{url_for('multi_journal_delete',batch_id=b.id)}}" onsubmit="return confirm('تأكيد الحذف؟')"><button class="text-danger"><i class="bi bi-trash"></i> حذف</button></form>{% endif %}
 </div></details>
 </td></tr>{% else %}<tr><td colspan="6" class="text-center text-muted py-4">لا توجد دفعات محفوظة</td></tr>{% endfor %}</tbody>
 </table>

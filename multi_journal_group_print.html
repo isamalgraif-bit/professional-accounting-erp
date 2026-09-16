@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>{{group.journal_no}}</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
 <style>
 *{box-sizing:border-box}
 body{font-family:Tahoma,Arial,sans-serif;margin:0;background:#eee;color:#111}
@@ -30,7 +31,7 @@ th{background:#f3f3f3}
 </style>
 </head>
 <body>
-<div class="toolbar"><button onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div>
+<div class="toolbar"><button onclick="window.print()"><i class="bi bi-printer"></i> طباعة / حفظ PDF</button></div>
 <div class="sheet">
   <div class="top-grid">
     <div><b>{{company.company_name_ar}}</b><br>{{company.company_name_en}}</div>

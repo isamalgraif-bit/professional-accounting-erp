@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <title>{{batch.batch_no}}</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
 <style>
 *{box-sizing:border-box}
 body{font-family:Tahoma,Arial,sans-serif;background:#eef1f5;margin:0;color:#172033}
 .toolbar{max-width:1200px;margin:18px auto;display:flex;gap:10px;flex-wrap:wrap}
 
-.review-toolbar{align-items:center;background:#fff;padding:10px 12px;border-radius:10px;box-shadow:0 4px 18px rgba(15,23,42,.08)}.batch-identity{display:flex;align-items:center;gap:8px}.batch-identity small{color:#64748b}.batch-identity b{font-size:17px;color:#174ea6}.state{padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800}.state.posted{background:#dcfce7;color:#166534}.state.draft{background:#fef3c7;color:#92400e}
+.review-toolbar{align-items:center;background:#fff;padding:10px 12px;border-radius:10px;box-shadow:0 4px 18px rgba(15,23,42,.08)}.batch-identity{display:flex;align-items:center;gap:8px}.batch-identity small{color:#64748b}.batch-identity b{font-size:17px;color:#174ea6}.erp-status-pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:700;background:#eef2f6;color:#475569}.erp-status-pill.success{background:#e8f8f1;color:#087f5b}.erp-status-pill.warning{background:#fff4e5;color:#b54708}
 .record-nav,.actions{display:flex;gap:5px;align-items:center;flex-wrap:wrap}.batch-search{display:flex;gap:5px}.batch-search input{width:155px;padding:9px 10px;border:1px solid #cbd5e1;border-radius:7px}.view-more{position:relative}.view-more>summary{list-style:none}.view-more>summary::-webkit-details-marker{display:none}.view-more-menu{position:absolute;left:0;top:calc(100% + 5px);z-index:50;min-width:170px;background:#fff;border:1px solid #dbe3ec;border-radius:9px;padding:6px;box-shadow:0 14px 30px rgba(15,23,42,.17)}.view-more-menu button,.view-more-menu a{display:block;width:100%;border:0;background:transparent;text-align:right;padding:8px 9px;border-radius:6px;color:#334155;text-decoration:none}.view-more-menu button:hover,.view-more-menu a:hover{background:#eef4ff}.journal-link{color:#174ea6;font-weight:800;text-decoration:underline;text-underline-offset:3px}
 @media(max-width:900px){.review-toolbar{align-items:stretch}.batch-search{width:100%}.batch-search input{flex:1}.record-nav{width:100%}}
 
@@ -42,25 +43,25 @@ th{background:#edf2f7}
 <body>
 
 <div class="toolbar review-toolbar" id="print-each">
-  <div class="batch-identity"><small>رقم الدفعة</small><b>{{batch.batch_no}}</b><span class="state {{'posted' if batch.status=='مرحّل' else 'draft'}}">{{batch.status}}</span></div>
+  <div class="batch-identity"><small>رقم الدفعة</small><b>{{batch.batch_no}}</b><span class="erp-status-pill {{'success' if batch.status=='مرحّل' else 'warning'}}">{{batch.status}}</span></div>
   <div class="record-nav">
-    {% if batch_nav.first %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.first.id)}}">⏮ الأول</a>{% endif %}
-    {% if batch_nav.previous %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.previous.id)}}">‹ السابق</a>{% endif %}
-    {% if batch_nav.next %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.next.id)}}">التالي ›</a>{% endif %}
-    {% if batch_nav.last %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.last.id)}}">الأخير ⏭</a>{% endif %}
+    {% if batch_nav.first %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.first.id)}}"><i class="bi bi-chevron-bar-right"></i> الأول</a>{% endif %}
+    {% if batch_nav.previous %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.previous.id)}}"><i class="bi bi-chevron-right"></i> السابق</a>{% endif %}
+    {% if batch_nav.next %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.next.id)}}">التالي <i class="bi bi-chevron-left"></i></a>{% endif %}
+    {% if batch_nav.last %}<a class="btn secondary" href="{{url_for('multi_journal_view',batch_id=batch_nav.last.id)}}">الأخير <i class="bi bi-chevron-bar-left"></i></a>{% endif %}
   </div>
   <form class="batch-search" method="get" action="{{url_for('multi_journal')}}">
     <input name="batch_no" placeholder="رقم الدفعة" aria-label="البحث برقم الدفعة"><button class="btn" type="submit">فتح</button>
   </form>
   <div class="actions">
-    <a class="btn" href="{{url_for('multi_journal')}}">+ دفعة جديدة</a>
-    <details class="view-more"><summary class="btn secondary">المزيد ⋯</summary><div class="view-more-menu">
-      <button onclick="window.print()">طباعة / PDF</button>
-      <button id="printEachButton" onclick="printEachGroup()">كل قيد في صفحة</button>
-      <a href="{{url_for('multi_journal_export',batch_id=batch.id)}}">Excel</a>
+    <a class="btn" href="{{url_for('multi_journal')}}"><i class="bi bi-file-earmark-plus"></i> دفعة جديدة</a>
+    <details class="view-more"><summary class="btn secondary"><i class="bi bi-three-dots"></i> المزيد</summary><div class="view-more-menu">
+      <button onclick="window.print()"><i class="bi bi-printer"></i> طباعة / PDF</button>
+      <button id="printEachButton" onclick="printEachGroup()"><i class="bi bi-files"></i> كل قيد في صفحة</button>
+      <a href="{{url_for('multi_journal_export',batch_id=batch.id)}}"><i class="bi bi-file-earmark-excel"></i> Excel</a>
     </div></details>
     <form method="post" action="{{url_for('multi_journal_post',batch_id=batch.id)}}" onsubmit="return confirm('تأكيد فحص/استكمال ترحيل جميع قيود الدفعة؟')">
-      <button class="btn success" type="submit">{{'فحص واستكمال الترحيل' if batch.status=='مرحّل' else 'ترحيل الدفعة'}}</button>
+      <button class="btn success" type="submit"><i class="bi bi-check2-circle"></i> {{'فحص واستكمال الترحيل' if batch.status=='مرحّل' else 'ترحيل الدفعة'}}</button>
     </form>
   </div>
 </div>
@@ -98,7 +99,7 @@ th{background:#edf2f7}
 <div class="group-tools">
 <a class="btn secondary" target="_blank"
    href="{{url_for('multi_journal_group_print',batch_id=batch.id,group_no=g.group_no)}}">
-طباعة هذا القيد فقط
+<i class="bi bi-printer"></i> طباعة هذا القيد فقط
 </a>
 </div>
 
