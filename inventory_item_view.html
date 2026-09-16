@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block content %}
-<div class="erp-page-title"><div><h3>{{item.sku or ''}} — {{item.name}}</h3><small>{{item.name_en or ''}}</small></div><button class="btn btn-dark" onclick="window.print()">🖨️ طباعة/PDF</button></div>
+<div class="erp-page-title"><div><h3>{{item.sku or ''}} — {{item.name}}</h3><small>{{item.name_en or ''}}</small></div><button class="btn btn-dark" onclick="window.print()"><i class="bi bi-printer"></i> طباعة/PDF</button></div>
 <div class="row g-3 mb-4">
 <div class="col-md-3"><div class="erp-kpi"><small>إجمالي الرصيد</small><h4>{{"%.3f"|format(item.quantity)}}</h4></div></div>
 <div class="col-md-3"><div class="erp-kpi"><small>متوسط التكلفة</small><h4>{{"%.4f"|format(item.cost)}}</h4></div></div>
