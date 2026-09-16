@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block content %}
-<div class="erp-page-title"><div><h3>التسلسل الكامل للمستند</h3><small>Document Timeline</small></div><button class="btn btn-dark" onclick="window.print()">🖨️ طباعة/PDF</button></div>
+<div class="erp-page-title"><div><h3>التسلسل الكامل للمستند</h3><small>Document Timeline</small></div><button class="btn btn-dark" onclick="window.print()"><i class="bi bi-printer"></i> طباعة/PDF</button></div>
 <div class="timeline-wrap">
 <div class="timeline-step {{'done' if timeline.quotation else ''}}"><div class="circle">1</div><div class="form-card"><h5>عرض السعر</h5>{% if timeline.quotation %}<a href="{{url_for('sales_quotation_view',quotation_id=timeline.quotation.id)}}">{{timeline.quotation.quotation_no}}</a><p>{{timeline.quotation.quotation_date}} — {{timeline.quotation.status}}</p>{% else %}<p>إنشاء مباشر دون عرض سعر</p>{% endif %}</div></div>
 <div class="timeline-step {{'done' if timeline.order else ''}}"><div class="circle">2</div><div class="form-card"><h5>أمر البيع</h5>{% if timeline.order %}<a href="{{url_for('sales_order_view',order_id=timeline.order.id)}}">{{timeline.order.order_no}}</a><p>{{timeline.order.order_date}} — {{timeline.order.status}}</p>{% else %}<p>غير موجود</p>{% endif %}</div></div>

@@ -3,12 +3,12 @@
 <div class="erp-sticky-header">
   <div><h3 class="mb-1">فواتير المبيعات</h3><small class="text-muted">Sales Invoices</small></div>
   <div class="erp-toolbar no-print">
-    <button type="button" class="erp-tool-btn" data-new-document="1" data-new-url="{{url_for('invoices')}}">📄 <span>مستند جديد</span></button>
-    <button type="button" class="erp-tool-btn primary" id="saveInvoiceTop">💾 <span>حفظ كمسودة</span></button>
-    <button type="button" class="erp-tool-btn dark" id="savePrintInvoice">🖨️ <span>حفظ وطباعة</span></button>
-    <button type="button" class="erp-tool-btn" id="previewInvoice">👁️ <span>معاينة</span></button>
-    <button type="button" class="erp-tool-btn" id="addInvoiceRowTop">➕ <span>إضافة مادة</span></button>
-    <a class="erp-tool-btn success" href="{{url_for('export_invoices')}}">📊 <span>Excel</span></a>
+    <button type="button" class="erp-tool-btn" data-new-document="1" data-new-url="{{url_for('invoices')}}"><i class="bi bi-file-earmark-plus"></i> <span>مستند جديد</span></button>
+    <button type="button" class="erp-tool-btn primary" id="saveInvoiceTop"><i class="bi bi-save"></i> <span>حفظ كمسودة</span></button>
+    <button type="button" class="erp-tool-btn dark" id="savePrintInvoice"><i class="bi bi-printer"></i> <span>حفظ وطباعة</span></button>
+    <button type="button" class="erp-tool-btn" id="previewInvoice"><i class="bi bi-eye"></i> <span>معاينة</span></button>
+    <button type="button" class="erp-tool-btn" id="addInvoiceRowTop"><i class="bi bi-plus-lg"></i> <span>إضافة مادة</span></button>
+    <a class="erp-tool-btn success" href="{{url_for('export_invoices')}}"><i class="bi bi-file-earmark-excel"></i> <span>Excel</span></a>
   </div>
 </div>
 
@@ -123,18 +123,21 @@
 <td>{{r.invoice_no}}</td><td>{{r.invoice_date}}</td><td>{{r.customer_name}}</td>
 <td>{{"%.2f"|format(r.subtotal)}}</td><td>{{"%.2f"|format(r.vat)}}</td><td>{{"%.2f"|format(r.total)}}</td>
 <td>{{r.status}}</td>
-<td>
-<a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_view', invoice_id=r.id) }}">عرض</a>
+<td class="text-nowrap">
+<a class="btn btn-sm btn-outline-primary" href="{{ url_for('invoice_view', invoice_id=r.id) }}"><i class="bi bi-eye"></i> عرض</a>
 {% if r.status in ['مسودة','معاد للتعديل'] %}
-<a class="btn btn-sm btn-outline-success" href="{{url_for('invoice_edit',invoice_id=r.id)}}">تعديل</a>
-<form class="d-inline" method="post" action="{{url_for('invoice_approve',invoice_id=r.id)}}" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn btn-sm btn-success">اعتماد</button></form>
+<a class="btn btn-sm btn-outline-success" href="{{url_for('invoice_edit',invoice_id=r.id)}}"><i class="bi bi-pencil-square"></i> تعديل</a>
+<form class="d-inline" method="post" action="{{url_for('invoice_approve',invoice_id=r.id)}}" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn btn-sm btn-success"><i class="bi bi-check2-circle"></i> اعتماد</button></form>
 {% elif r.status=='بانتظار الاعتماد' %}
-<form class="d-inline" method="post" action="{{url_for('invoice_approve',invoice_id=r.id)}}" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn btn-sm btn-success">اعتماد</button></form>
+<form class="d-inline" method="post" action="{{url_for('invoice_approve',invoice_id=r.id)}}" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn btn-sm btn-success"><i class="bi bi-check2-circle"></i> اعتماد</button></form>
 {% endif %}
-<form class="d-inline" method="post" action="{{url_for('invoice_copy',invoice_id=r.id)}}"><button class="btn btn-sm btn-outline-secondary">نسخ</button></form>
-<a class="btn btn-sm btn-outline-secondary" href="{{url_for('invoice_commercial_data',invoice_id=r.id)}}">بيانات تجارية</a>
-<a class="btn btn-sm btn-outline-info" href="{{url_for('sales_timeline',invoice_id=r.id)}}">تتبع</a>
-<a class="btn btn-sm btn-outline-dark" target="_blank" href="{{ url_for('invoice_view', invoice_id=r.id) }}?print=1">طباعة / PDF</a> {% if r.status in ['مسودة','معاد للتعديل'] %}<form class="d-inline" method="post" action="{{url_for('invoice_delete',invoice_id=r.id)}}" onsubmit="return confirm('تأكيد حذف الفاتورة المسودة؟')"><button class="btn btn-sm btn-outline-danger">حذف</button></form>{% endif %}
+<a class="btn btn-sm btn-outline-dark" target="_blank" href="{{ url_for('invoice_view', invoice_id=r.id) }}?print=1"><i class="bi bi-printer"></i> طباعة</a>
+<details class="d-inline erp-row-more"><summary class="btn btn-sm btn-outline-secondary"><i class="bi bi-three-dots"></i> المزيد</summary><div class="erp-row-more-menu">
+<form method="post" action="{{url_for('invoice_copy',invoice_id=r.id)}}"><button type="submit"><i class="bi bi-copy"></i> نسخ</button></form>
+<a href="{{url_for('invoice_commercial_data',invoice_id=r.id)}}"><i class="bi bi-file-earmark-text"></i> بيانات تجارية</a>
+<a href="{{url_for('sales_timeline',invoice_id=r.id)}}"><i class="bi bi-diagram-3"></i> تتبع</a>
+{% if r.status in ['مسودة','معاد للتعديل'] %}<form method="post" action="{{url_for('invoice_delete',invoice_id=r.id)}}" onsubmit="return confirm('تأكيد حذف الفاتورة المسودة؟')"><button class="text-danger" type="submit"><i class="bi bi-trash"></i> حذف</button></form>{% endif %}
+</div></details>
 </td>
 </tr>
 {% endfor %}

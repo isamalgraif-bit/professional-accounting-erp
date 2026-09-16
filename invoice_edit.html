@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
 <div class="erp-page-title">
 <div><h3>تعديل مسودة الفاتورة {{invoice.invoice_no}}</h3><small>Draft Invoice Editing</small></div>
-<div><a class="btn btn-outline-secondary" href="{{url_for('invoice_view',invoice_id=invoice.id)}}">إلغاء والعودة</a><button class="btn btn-primary" form="editInvoiceForm">حفظ التعديلات</button></div>
+<div><a class="btn btn-outline-secondary" href="{{url_for('invoice_view',invoice_id=invoice.id)}}"><i class="bi bi-x-lg"></i> إلغاء والعودة</a><button class="btn btn-primary" form="editInvoiceForm"><i class="bi bi-save"></i> حفظ التعديلات</button></div>
 </div>
 <div class="alert alert-info">يمكن تعديل هذه الفاتورة لأنها ما زالت <b>{{invoice.status}}</b>. بعد الاعتماد والترحيل سيتم قفلها.</div>
 <div class="form-card">
@@ -36,7 +36,7 @@
 <div class="d-flex justify-content-between flex-wrap gap-3"><button type="button" class="btn btn-outline-primary" id="addEditRow">+ إضافة بند</button>
 <div class="summary-box"><div><span>الإجمالي قبل الخصم</span><strong id="gross">0.00</strong></div><div><span>الخصم</span><strong id="discountTotal">0.00</strong></div><div><span>قبل الضريبة</span><strong id="netSubtotal">0.00</strong></div><div><span>الضريبة</span><strong id="vatTotal">0.00</strong></div><div class="grand"><span>الإجمالي</span><strong id="grandTotal">0.00</strong></div></div></div>
 <div class="mt-3"><label>ملاحظات</label><textarea class="form-control" name="notes">{{invoice.notes or ''}}</textarea></div>
-<div class="text-end mt-3"><button class="btn btn-primary btn-lg">حفظ التعديلات</button></div>
+<div class="text-end mt-3"><button class="btn btn-primary btn-lg"><i class="bi bi-save"></i> حفظ التعديلات</button></div>
 </form></div>
 <style>.summary-box{min-width:360px;border:1px solid #ddd;border-radius:10px;padding:12px}.summary-box div{display:flex;justify-content:space-between;padding:5px}.summary-box .grand{border-top:2px solid #ddd;font-size:18px}</style>
 <script>

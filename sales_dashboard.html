@@ -12,7 +12,7 @@
 </div>
 {% endif %}
 
-<div class="erp-page-title"><div><h3>لوحة المبيعات</h3><small>Sales Dashboard & Profitability</small></div><a class="btn btn-success" href="{{url_for('sales_reports_export')}}">📊 Excel</a></div>
+<div class="erp-page-title"><div><h3>لوحة المبيعات</h3><small>Sales Dashboard & Profitability</small></div><a class="btn btn-success" href="{{url_for('sales_reports_export')}}"><i class="bi bi-file-earmark-excel"></i> Excel</a></div>
 <div class="row g-3 mb-4">
 <div class="col-md-3"><div class="erp-kpi"><small>إجمالي الفواتير</small><h4>{{"%.2f"|format(summary.total_sales)}}</h4></div></div>
 <div class="col-md-3"><div class="erp-kpi"><small>مرتجعات المبيعات</small><h4>{{"%.2f"|format(return_summary.total_returns)}}</h4></div></div>

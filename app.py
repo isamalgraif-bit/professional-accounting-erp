@@ -7382,8 +7382,15 @@ def sales_quotations():
               :line_subtotal,:line_discount,:line_vat,:line_total)""",{"qid":qid,**x})
         flash(f"تم إنشاء عرض السعر {no}","success")
         return redirect(url_for("sales_quotation_view",quotation_id=qid))
+    search_q = request.args.get("q","").strip()
+    where = ""
+    params = {}
+    if search_q:
+        where = " WHERE q.quotation_no ILIKE :q OR c.name ILIKE :q"
+        params["q"] = f"%{search_q}%"
     return render_template("sales_quotations.html",
-      docs=rows("""SELECT q.*,c.name customer_name FROM sales_quotations q JOIN customers c ON c.id=q.customer_id ORDER BY q.id DESC"""),
+      docs=rows(f"""SELECT q.*,c.name customer_name FROM sales_quotations q JOIN customers c ON c.id=q.customer_id{where} ORDER BY q.id DESC""", params),
+      q=search_q,
       customers=rows("SELECT id,name,name_en FROM customers ORDER BY name"),
       items=rows("SELECT id,sku,name,unit,sale_price,quantity FROM inventory WHERE active=1 ORDER BY name"),
       branches=rows("SELECT id,name FROM branches WHERE active=1 ORDER BY name"),
@@ -7445,9 +7452,16 @@ def sales_orders():
               VALUES(:oid,:item_id,:item_name,:quantity,:unit,:unit_price,:discount_rate,:vat_rate,
               :line_subtotal,:line_discount,:line_vat,:line_total)""",{"oid":oid,**x})
         return redirect(url_for("sales_order_view",order_id=oid))
+    search_q = request.args.get("q","").strip()
+    where = ""
+    params = {}
+    if search_q:
+        where = " WHERE o.order_no ILIKE :q OR c.name ILIKE :q"
+        params["q"] = f"%{search_q}%"
     return render_template("sales_orders.html",
-      docs=rows("""SELECT o.*,c.name customer_name,w.name warehouse_name FROM sales_orders o
-                   JOIN customers c ON c.id=o.customer_id LEFT JOIN warehouses w ON w.id=o.warehouse_id ORDER BY o.id DESC"""),
+      docs=rows(f"""SELECT o.*,c.name customer_name,w.name warehouse_name FROM sales_orders o
+                   JOIN customers c ON c.id=o.customer_id LEFT JOIN warehouses w ON w.id=o.warehouse_id{where} ORDER BY o.id DESC""", params),
+      q=search_q,
       customers=rows("SELECT id,name,name_en FROM customers ORDER BY name"),
       items=rows("SELECT id,sku,name,unit,sale_price,quantity FROM inventory WHERE active=1 ORDER BY name"),
       branches=rows("SELECT id,name FROM branches WHERE active=1 ORDER BY name"),
@@ -7633,15 +7647,24 @@ def sales_returns():
         flash(f"تم إنشاء المرتجع {no} وإعادة المخزون وترحيل القيد","success")
         return redirect(url_for("sales_return_view",return_id=return_id))
 
+    search_q = request.args.get("q","").strip()
+    sr_where = ""
+    sr_params = {}
+    if search_q:
+        sr_where = " WHERE r.return_no ILIKE :q OR i.invoice_no ILIKE :q OR c.name ILIKE :q"
+        sr_params["q"] = f"%{search_q}%"
     return render_template("sales_returns.html",
+      q=search_q,
       invoices=rows("""SELECT i.id,i.invoice_no,i.invoice_date,c.name customer_name
                        FROM invoices i JOIN customers c ON c.id=i.customer_id
                        WHERE i.status='معتمدة' ORDER BY i.id DESC"""),
       warehouses=rows("SELECT id,code,name FROM warehouses WHERE active=1 ORDER BY code"),
-      docs=rows("""SELECT r.*,i.invoice_no,c.name customer_name,j.journal_no
+      docs=rows(f"""SELECT r.*,i.invoice_no,c.name customer_name,j.journal_no
                    FROM sales_returns r JOIN invoices i ON i.id=r.invoice_id
                    JOIN customers c ON c.id=r.customer_id
-                   LEFT JOIN journal_entries j ON j.id=r.journal_id ORDER BY r.id DESC"""))
+                   LEFT JOIN journal_entries j ON j.id=r.journal_id
+                   {sr_where}
+                   ORDER BY r.id DESC""", sr_params))
 
 @app.route("/sales/invoices/<int:invoice_id>/return-items")
 @login_required
@@ -7936,12 +7959,19 @@ def purchase_requisitions():
         audit("CREATE","PURCHASE_REQUISITION",f"إنشاء طلب شراء {no}")
         flash(f"تم إنشاء طلب الشراء {no}","success")
         return redirect(url_for("purchase_requisition_view",req_id=req_id))
-    reqs=rows("""SELECT pr.*,b.name branch_name,cc.name cost_center_name
+    search_q = request.args.get("q","").strip()
+    where = ""
+    params = {}
+    if search_q:
+        where = " WHERE pr.requisition_no ILIKE :q OR pr.requested_by ILIKE :q"
+        params["q"] = f"%{search_q}%"
+    reqs=rows(f"""SELECT pr.*,b.name branch_name,cc.name cost_center_name
                  FROM purchase_requisitions pr
                  LEFT JOIN branches b ON b.id=pr.branch_id
                  LEFT JOIN cost_centers cc ON cc.id=pr.cost_center_id
-                 ORDER BY pr.requisition_date DESC,pr.id DESC""")
-    return render_template("purchase_requisitions.html",reqs=reqs,
+                 {where}
+                 ORDER BY pr.requisition_date DESC,pr.id DESC""", params)
+    return render_template("purchase_requisitions.html",reqs=reqs,q=search_q,
       branches=rows("SELECT * FROM branches WHERE active=1 ORDER BY name"),
       centers=rows("SELECT * FROM cost_centers WHERE active=1 ORDER BY code"),
       suppliers=[dict(x) for x in rows("SELECT id,name,name_en,vat_number FROM suppliers ORDER BY name")],
@@ -8082,10 +8112,18 @@ def purchase_orders():
         audit("CREATE","PURCHASE_ORDER",f"إنشاء أمر شراء {no}")
         flash(f"تم إنشاء أمر الشراء {no}","success")
         return redirect(url_for("purchase_order_view",po_id=po_id))
+    search_q = request.args.get("q","").strip()
+    po_where = ""
+    po_params = {}
+    if search_q:
+        po_where = " WHERE po.po_no ILIKE :q OR s.name ILIKE :q"
+        po_params["q"] = f"%{search_q}%"
     return render_template("purchase_orders.html",
-      orders=rows("""SELECT po.*,s.name supplier_name FROM purchase_orders po
+      orders=rows(f"""SELECT po.*,s.name supplier_name FROM purchase_orders po
                      JOIN suppliers s ON s.id=po.supplier_id
-                     ORDER BY po.po_date DESC,po.id DESC"""),
+                     {po_where}
+                     ORDER BY po.po_date DESC,po.id DESC""", po_params),
+      q=search_q,
       requisitions=rows("""SELECT id,requisition_no,total_estimated,status FROM purchase_requisitions
                            WHERE status IN ('معتمد','تم إصدار أمر شراء جزئيًا') ORDER BY requisition_date DESC"""),
       suppliers=rows("SELECT id,name,name_en,vat_number FROM suppliers ORDER BY name"),
@@ -8265,11 +8303,19 @@ def supplier_invoices():
         return redirect(url_for("supplier_invoice_view",invoice_id=inv_id))
     accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
                      WHERE active=1 AND accepts_entries=1 ORDER BY account_code""")
+    search_q = request.args.get("q","").strip()
+    si_where = ""
+    si_params = {}
+    if search_q:
+        si_where = " WHERE si.internal_no ILIKE :q OR si.supplier_invoice_no ILIKE :q OR s.name ILIKE :q"
+        si_params["q"] = f"%{search_q}%"
     return render_template("supplier_invoices.html",
-      invoices=rows("""SELECT si.*,s.name supplier_name,j.journal_no FROM supplier_invoices si
+      invoices=rows(f"""SELECT si.*,s.name supplier_name,j.journal_no FROM supplier_invoices si
                        JOIN suppliers s ON s.id=si.supplier_id
                        LEFT JOIN journal_entries j ON j.id=si.journal_id
-                       ORDER BY si.invoice_date DESC,si.id DESC"""),
+                       {si_where}
+                       ORDER BY si.invoice_date DESC,si.id DESC""", si_params),
+      q=search_q,
       suppliers=rows("SELECT id,name,name_en FROM suppliers ORDER BY name"),
       pos=rows("SELECT id,po_no,supplier_id,total FROM purchase_orders ORDER BY po_date DESC"),
       grns=rows("SELECT id,grn_no,supplier_id,po_id FROM goods_receipts ORDER BY grn_date DESC"),
@@ -8438,7 +8484,13 @@ def receivables():
             flash(str(exc),"danger")
             return redirect(url_for("receivables"))
 
-    open_invoices=rows("""SELECT i.id,i.invoice_no,i.invoice_date,
+    search_q = request.args.get("q","").strip()
+    search_condition = ""
+    search_params = {}
+    if search_q:
+        search_condition = " AND (i.invoice_no ILIKE :q OR c.name ILIKE :q)"
+        search_params["q"] = f"%{search_q}%"
+    open_invoices=rows(f"""SELECT i.id,i.invoice_no,i.invoice_date,
       COALESCE(i.due_date,i.invoice_date) due_date,i.customer_id,c.name customer_name,
       i.total,COALESCE((SELECT SUM(a.allocated_amount)
         FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0) paid,
@@ -8449,11 +8501,12 @@ def receivables():
       WHERE i.status='معتمدة'
         AND i.total-COALESCE((SELECT SUM(a.allocated_amount)
           FROM invoice_payment_allocations a WHERE a.invoice_id=i.id),0)>0.005
-      ORDER BY c.name,i.invoice_date,i.id""")
+        {search_condition}
+      ORDER BY c.name,i.invoice_date,i.id""", search_params)
     accounts=rows("""SELECT id,account_code,account_name_ar FROM chart_of_accounts
                      WHERE active=1 AND accepts_entries=1
                      AND account_type='أصل' ORDER BY account_code""")
-    return render_template("receivables.html",open_invoices=open_invoices,accounts=accounts,
+    return render_template("receivables.html",open_invoices=open_invoices,accounts=accounts,q=search_q,
       customers=rows("SELECT id,name,name_en FROM customers ORDER BY name"))
 
 @app.route("/receivables/customer/<int:customer_id>/open-invoices")

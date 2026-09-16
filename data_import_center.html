@@ -15,10 +15,10 @@
 </div>
 <div class="alert alert-info">يتضمن الإصدار {{app_version}} طابور معالجة قابلًا للاستئناف، تنفيذًا على دفعات، متابعة مباشرة، سجل أحداث، وإلغاء الصفوف المتبقية دون تجميد الواجهة.</div>
 <div id="modules" class="row g-3 mb-4">
-{% set icons={'customers':'👥','suppliers':'🏭','inventory':'📦','employees':'👨‍💼','accounts':'💰','cost_centers':'🏢'} %}
+{% set icons={'customers':'bi-people','suppliers':'bi-truck','inventory':'bi-boxes','employees':'bi-person-badge','accounts':'bi-cash-coin','cost_centers':'bi-building'} %}
 {% for key,definition in modules.items() %}
 <div class="col-lg-4 col-md-6"><div class="import-card">
-  <div class="d-flex gap-3 align-items-start"><div class="module-icon">{{icons.get(key,'📄')}}</div><div class="flex-grow-1"><h5 class="mb-1">{{definition.title}}</h5><p class="text-muted small">استيراد ذكي مع التحقق ومنع الأخطاء</p></div></div>
+  <div class="d-flex gap-3 align-items-start"><div class="module-icon"><i class="bi {{icons.get(key,'bi-file-earmark-text')}}"></i></div><div class="flex-grow-1"><h5 class="mb-1">{{definition.title}}</h5><p class="text-muted small">استيراد ذكي مع التحقق ومنع الأخطاء</p></div></div>
   <div class="d-grid gap-2 mt-3"><div class="d-flex gap-2"><a class="btn btn-outline-success flex-fill" href="{{url_for('data_import_template',module_name=key)}}">قالب فارغ</a><a class="btn btn-outline-primary flex-fill" href="{{url_for('data_import_export_current',module_name=key)}}">تنزيل البيانات الحالية</a></div><a class="btn btn-primary w-100" href="{{url_for('data_import_upload',module_name=key)}}">استيراد / إعادة رفع الملف</a></div>
 </div></div>
 {% endfor %}

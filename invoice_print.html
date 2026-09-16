@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{"Tax Invoice" if print_lang=="en" else "فاتورة ضريبية"}} {{invoice.invoice_no}}</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
 <style>
 *{box-sizing:border-box}
 body{font-family:Tahoma,Arial,sans-serif;background:#eef1f5;margin:0;color:#172033}
@@ -48,17 +49,17 @@ th{background:#174ea6;color:white}
 <a class="btn secondary" href="{{url_for('invoice_view',invoice_id=invoice.id,lang='ar')}}">العربية</a>
 <a class="btn secondary" href="{{url_for('invoice_view',invoice_id=invoice.id,lang='en')}}">English</a>
 <a class="btn secondary" href="{{url_for('invoice_view',invoice_id=invoice.id,lang='bi')}}">عربي / English</a>
-<button class="btn" onclick="window.print()">طباعة أو حفظ PDF</button>
+<button class="btn" onclick="window.print()"><i class="bi bi-printer"></i> طباعة أو حفظ PDF</button>
 {% if invoice.status in ['مسودة','معاد للتعديل'] %}
-<a class="btn" href="{{url_for('invoice_edit',invoice_id=invoice.id)}}">تعديل المسودة</a>
-<form method="post" action="{{url_for('invoice_submit_approval',invoice_id=invoice.id)}}" style="display:inline"><button class="btn" type="submit">إرسال للاعتماد</button></form>
-<form method="post" action="{{url_for('invoice_approve',invoice_id=invoice.id)}}" style="display:inline" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn" type="submit">اعتماد وترحيل</button></form>
+<a class="btn" href="{{url_for('invoice_edit',invoice_id=invoice.id)}}"><i class="bi bi-pencil-square"></i> تعديل المسودة</a>
+<form method="post" action="{{url_for('invoice_submit_approval',invoice_id=invoice.id)}}" style="display:inline"><button class="btn" type="submit"><i class="bi bi-send"></i> إرسال للاعتماد</button></form>
+<form method="post" action="{{url_for('invoice_approve',invoice_id=invoice.id)}}" style="display:inline" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn" type="submit"><i class="bi bi-check2-circle"></i> اعتماد وترحيل</button></form>
 {% elif invoice.status=='بانتظار الاعتماد' %}
-<form method="post" action="{{url_for('invoice_approve',invoice_id=invoice.id)}}" style="display:inline" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn" type="submit">اعتماد وترحيل</button></form>
-<form method="post" action="{{url_for('invoice_return_to_draft',invoice_id=invoice.id)}}" style="display:inline"><button class="btn secondary" type="submit">إعادة للتعديل</button></form>
+<form method="post" action="{{url_for('invoice_approve',invoice_id=invoice.id)}}" style="display:inline" onsubmit="return confirm('اعتماد وترحيل الفاتورة؟')"><button class="btn" type="submit"><i class="bi bi-check2-circle"></i> اعتماد وترحيل</button></form>
+<form method="post" action="{{url_for('invoice_return_to_draft',invoice_id=invoice.id)}}" style="display:inline"><button class="btn secondary" type="submit"><i class="bi bi-arrow-counterclockwise"></i> إعادة للتعديل</button></form>
 {% endif %}
-<form method="post" action="{{url_for('invoice_copy',invoice_id=invoice.id)}}" style="display:inline"><button class="btn secondary" type="submit">نسخ إلى مسودة جديدة</button></form>
-<a class="btn secondary" href="{{ url_for('invoices') }}">العودة للفواتير</a>
+<form method="post" action="{{url_for('invoice_copy',invoice_id=invoice.id)}}" style="display:inline"><button class="btn secondary" type="submit"><i class="bi bi-copy"></i> نسخ إلى مسودة جديدة</button></form>
+<a class="btn secondary" href="{{ url_for('invoices') }}"><i class="bi bi-arrow-return-right"></i> العودة للفواتير</a>
 </div>
 
 <div class="invoice">
